@@ -47,121 +47,123 @@ export default function HomePage() {
           <p className="text-sm font-mono text-slate-600 mt-2">Three steps. Infinite possibilities.</p>
         </div>
 
-        {/* ─── STEP 1: SCRAPE ─── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-0 mb-2">
-          <div className="boxy-panel p-8 md:p-12 flex flex-col justify-center">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="step-number">01</div>
-              <h3 className="text-2xl md:text-3xl font-black text-white uppercase tracking-tight">Scrape</h3>
-            </div>
-            <p className="text-slate-500 font-mono text-sm leading-relaxed mb-6">
-              Point OCMS at any website. Our scraper extracts structured content — text, images, links, metadata — cleanly and precisely.
-            </p>
-            <div className="flex items-center gap-2 text-[var(--ocms-accent)] text-xs font-mono">
-              <Globe className="w-4 h-4" />
-              <span>Any URL → Structured Data</span>
-            </div>
-          </div>
-          <div className="boxy-panel p-6 md:p-8 bg-black/40">
-            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--ocms-border)]">
-              <ScanLine className="w-4 h-4 text-[var(--ocms-accent)]" />
-              <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">Live Scraping</span>
-              <span className="ml-auto w-2 h-2 bg-emerald-500 animate-blink" />
-            </div>
-            <div className="code-block p-4 text-slate-400">
-              <div className="text-emerald-400">$ ocms scrape https://example.com</div>
-              <div className="mt-2 text-slate-600">→ Fetching DOM...</div>
-              <div className="text-slate-600">→ Parsing 247 nodes...</div>
-              <div className="text-slate-600">→ Extracting 12 content blocks...</div>
-              <div className="mt-2 text-[var(--ocms-accent)]">✓ Scraped successfully (1.2s)</div>
-              <div className="text-slate-600 mt-2">
-                {`{ title: "Example Domain",`}<br />
-                {`  headings: ["Example Domain"],`}<br />
-                {`  paragraphs: 3,`}<br />
-                {`  images: 0,`}<br />
-                {`  links: 1 }`}
+        <div className="group/list flex flex-col gap-4">
+          {/* ─── STEP 1: SCRAPE ─── */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-0 transition-all duration-500 group-hover/list:blur-[4px] group-hover/list:opacity-30 hover:!blur-none hover:!opacity-100 hover:scale-[1.02] hover:z-10 relative">
+            <div className="boxy-panel p-8 md:p-12 flex flex-col justify-center">
+              <div className="flex items-center gap-4 mb-6">
+                <div className="step-number">01</div>
+                <h3 className="text-2xl md:text-3xl font-black text-white uppercase tracking-tight">Scrape</h3>
+              </div>
+              <p className="text-slate-500 font-mono text-sm leading-relaxed mb-6">
+                Point OCMS at any website. Our scraper extracts structured content — text, images, links, metadata — cleanly and precisely.
+              </p>
+              <div className="flex items-center gap-2 text-[var(--ocms-accent)] text-xs font-mono">
+                <Globe className="w-4 h-4" />
+                <span>Any URL → Structured Data</span>
               </div>
             </div>
-          </div>
-        </div>
-
-        {/* ─── STEP 2: AI SCHEMA ─── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-0 mb-2">
-          <div className="boxy-panel p-6 md:p-8 bg-black/40 order-2 md:order-1">
-            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--ocms-border)]">
-              <Terminal className="w-4 h-4 text-amber-400" />
-              <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">AI Schema Generator</span>
-            </div>
-            <div className="code-block p-4 text-slate-400">
-              <div className="text-amber-400">{`// AI-generated strict schema`}</div>
-              <div className="mt-1">
-                {`{`}<br />
-                {`  "fields": [`}<br />
-                {`    {`}<br />
-                {`      "id": "hero-title",`}<br />
-                {`      "type": "text",`}<br />
-                {`      "value": "Example Domain",`}<br />
-                {`      "selector": "h1",`}<br />
-                <span className="text-[var(--ocms-accent)]">{`      "ai_confidence": 0.99`}</span><br />
-                {`    },`}<br />
-                {`    {`}<br />
-                {`      "id": "hero-img",`}<br />
-                {`      "type": "image",`}<br />
-                <span className="text-emerald-400">{`      "inject_3d": true`}</span><br />
-                {`    }`}<br />
-                {`  ]`}<br />
-                {`}`}
+            <div className="boxy-panel p-6 md:p-8 bg-black/40">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--ocms-border)]">
+                <ScanLine className="w-4 h-4 text-[var(--ocms-accent)]" />
+                <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">Live Scraping</span>
+                <span className="ml-auto w-2 h-2 bg-emerald-500 animate-blink" />
               </div>
-            </div>
-          </div>
-          <div className="boxy-panel p-8 md:p-12 flex flex-col justify-center order-1 md:order-2">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="step-number">02</div>
-              <h3 className="text-2xl md:text-3xl font-black text-white uppercase tracking-tight">AI Schema</h3>
-            </div>
-            <p className="text-slate-500 font-mono text-sm leading-relaxed mb-6">
-              Our AI analyzes the scraped data and generates a strict, editable JSON schema. Every field is typed, labeled, and ready for your live workspace.
-            </p>
-            <div className="flex items-center gap-2 text-amber-400 text-xs font-mono">
-              <Braces className="w-4 h-4" />
-              <span>Raw Data → Strict JSON Schema</span>
-            </div>
-          </div>
-        </div>
-
-        {/* ─── STEP 3: LIVE WORKSPACE ─── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
-          <div className="boxy-panel p-8 md:p-12 flex flex-col justify-center">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="step-number">03</div>
-              <h3 className="text-2xl md:text-3xl font-black text-white uppercase tracking-tight">Live Workspace</h3>
-            </div>
-            <p className="text-slate-500 font-mono text-sm leading-relaxed mb-6">
-              Edit every field in real-time. Drag-and-drop 3D models (.glb/.gltf) to replace 2D images. See changes instantly in the live preview iframe.
-            </p>
-            <div className="flex items-center gap-2 text-emerald-400 text-xs font-mono">
-              <Box className="w-4 h-4" />
-              <span>Edit → Inject 3D → Ship</span>
-            </div>
-          </div>
-          <div className="boxy-panel p-6 md:p-8 bg-black/40">
-            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--ocms-border)]">
-              <Cpu className="w-4 h-4 text-emerald-400" />
-              <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">Workspace Preview</span>
-            </div>
-            <div className="grid grid-cols-[1fr_2fr] gap-2 h-48">
-              <div className="border border-[var(--ocms-border)] p-3 flex flex-col gap-2">
-                <div className="h-3 w-3/4 bg-slate-800" />
-                <div className="h-3 w-1/2 bg-slate-800" />
-                <div className="h-3 w-full bg-slate-800" />
-                <div className="mt-auto h-6 border border-[var(--ocms-accent)] flex items-center justify-center">
-                  <span className="text-[8px] font-mono text-[var(--ocms-accent)]">.glb dropzone</span>
+              <div className="code-block p-4 text-slate-400">
+                <div className="text-emerald-400">$ ocms scrape https://example.com</div>
+                <div className="mt-2 text-slate-600">→ Fetching DOM...</div>
+                <div className="text-slate-600">→ Parsing 247 nodes...</div>
+                <div className="text-slate-600">→ Extracting 12 content blocks...</div>
+                <div className="mt-2 text-[var(--ocms-accent)]">✓ Scraped successfully (1.2s)</div>
+                <div className="text-slate-600 mt-2">
+                  {`{ title: "Example Domain",`}<br />
+                  {`  headings: ["Example Domain"],`}<br />
+                  {`  paragraphs: 3,`}<br />
+                  {`  images: 0,`}<br />
+                  {`  links: 1 }`}
                 </div>
               </div>
-              <div className="border border-[var(--ocms-border)] flex items-center justify-center bg-black/30">
-                <div className="text-center">
-                  <Box className="w-8 h-8 text-[var(--ocms-accent)] mx-auto mb-2 opacity-60" />
-                  <span className="text-[10px] font-mono text-slate-600">Live Preview</span>
+            </div>
+          </div>
+
+          {/* ─── STEP 2: AI SCHEMA ─── */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-0 transition-all duration-500 group-hover/list:blur-[4px] group-hover/list:opacity-30 hover:!blur-none hover:!opacity-100 hover:scale-[1.02] hover:z-10 relative">
+            <div className="boxy-panel p-6 md:p-8 bg-black/40 order-2 md:order-1">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--ocms-border)]">
+                <Terminal className="w-4 h-4 text-amber-400" />
+                <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">AI Schema Generator</span>
+              </div>
+              <div className="code-block p-4 text-slate-400">
+                <div className="text-amber-400">{`// AI-generated strict schema`}</div>
+                <div className="mt-1">
+                  {`{`}<br />
+                  {`  "fields": [`}<br />
+                  {`    {`}<br />
+                  {`      "id": "hero-title",`}<br />
+                  {`      "type": "text",`}<br />
+                  {`      "value": "Example Domain",`}<br />
+                  {`      "selector": "h1",`}<br />
+                  <span className="text-[var(--ocms-accent)]">{`      "ai_confidence": 0.99`}</span><br />
+                  {`    },`}<br />
+                  {`    {`}<br />
+                  {`      "id": "hero-img",`}<br />
+                  {`      "type": "image",`}<br />
+                  <span className="text-emerald-400">{`      "inject_3d": true`}</span><br />
+                  {`    }`}<br />
+                  {`  ]`}<br />
+                  {`}`}
+                </div>
+              </div>
+            </div>
+            <div className="boxy-panel p-8 md:p-12 flex flex-col justify-center order-1 md:order-2">
+              <div className="flex items-center gap-4 mb-6">
+                <div className="step-number">02</div>
+                <h3 className="text-2xl md:text-3xl font-black text-white uppercase tracking-tight">AI Schema</h3>
+              </div>
+              <p className="text-slate-500 font-mono text-sm leading-relaxed mb-6">
+                Our AI analyzes the scraped data and generates a strict, editable JSON schema. Every field is typed, labeled, and ready for your live workspace.
+              </p>
+              <div className="flex items-center gap-2 text-amber-400 text-xs font-mono">
+                <Braces className="w-4 h-4" />
+                <span>Raw Data → Strict JSON Schema</span>
+              </div>
+            </div>
+          </div>
+
+          {/* ─── STEP 3: LIVE WORKSPACE ─── */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-0 transition-all duration-500 group-hover/list:blur-[4px] group-hover/list:opacity-30 hover:!blur-none hover:!opacity-100 hover:scale-[1.02] hover:z-10 relative">
+            <div className="boxy-panel p-8 md:p-12 flex flex-col justify-center">
+              <div className="flex items-center gap-4 mb-6">
+                <div className="step-number">03</div>
+                <h3 className="text-2xl md:text-3xl font-black text-white uppercase tracking-tight">Live Workspace</h3>
+              </div>
+              <p className="text-slate-500 font-mono text-sm leading-relaxed mb-6">
+                Edit every field in real-time. Drag-and-drop 3D models (.glb/.gltf) to replace 2D images. See changes instantly in the live preview iframe.
+              </p>
+              <div className="flex items-center gap-2 text-emerald-400 text-xs font-mono">
+                <Box className="w-4 h-4" />
+                <span>Edit → Inject 3D → Ship</span>
+              </div>
+            </div>
+            <div className="boxy-panel p-6 md:p-8 bg-black/40">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--ocms-border)]">
+                <Cpu className="w-4 h-4 text-emerald-400" />
+                <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">Workspace Preview</span>
+              </div>
+              <div className="grid grid-cols-[1fr_2fr] gap-2 h-48">
+                <div className="border border-[var(--ocms-border)] p-3 flex flex-col gap-2">
+                  <div className="h-3 w-3/4 bg-slate-800" />
+                  <div className="h-3 w-1/2 bg-slate-800" />
+                  <div className="h-3 w-full bg-slate-800" />
+                  <div className="mt-auto h-6 border border-[var(--ocms-accent)] flex items-center justify-center">
+                    <span className="text-[8px] font-mono text-[var(--ocms-accent)]">.glb dropzone</span>
+                  </div>
+                </div>
+                <div className="border border-[var(--ocms-border)] flex items-center justify-center bg-black/30">
+                  <div className="text-center">
+                    <Box className="w-8 h-8 text-[var(--ocms-accent)] mx-auto mb-2 opacity-60" />
+                    <span className="text-[10px] font-mono text-slate-600">Live Preview</span>
+                  </div>
                 </div>
               </div>
             </div>

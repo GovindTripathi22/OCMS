@@ -89,11 +89,11 @@ export default function ContentEditor({
             </div>
 
             {/* Schema Fields */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-4 group/list">
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
                 {schema.map((field) => (
                     <div
                         key={field.id}
-                        className="group rounded-xl border border-[var(--ocms-border)] bg-white/[0.02] backdrop-blur-sm p-4 transition-all duration-300 group-hover/list:blur-[2px] group-hover/list:opacity-40 hover:!blur-none hover:!opacity-100 hover:scale-[1.02] hover:bg-white/[0.06] hover:border-[var(--ocms-accent)]/50"
+                        className="group rounded-xl border border-[var(--ocms-border)] bg-white/[0.02] backdrop-blur-sm p-4 transition-all duration-200 hover:border-[var(--ocms-accent)]/30 hover:bg-white/[0.04]"
                     >
                         {/* Field Label */}
                         <div className="flex items-center gap-2 mb-3">

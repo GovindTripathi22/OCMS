@@ -6,7 +6,7 @@ export default function Navbar() {
         <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-3 bg-[var(--ocms-bg)]/95 backdrop-blur-sm border-b-2 border-[var(--ocms-border)]">
             <Link href="/" className="flex items-center gap-4 group">
                 <div className="relative w-12 h-12 border-2 border-[var(--ocms-border)] overflow-hidden transition-transform duration-300 group-hover:scale-105 group-hover:border-[var(--ocms-accent)] group-hover:shadow-[4px_4px_0px_var(--ocms-accent-glow)]">
-                    <Image src="/ocms_logo.png" alt="OCMS Logo" fill className="object-cover" />
+                    <Image src="/ocms_logo.png" alt="OCMS Logo" fill sizes="32px" className="object-cover" />
                 </div>
                 <div className="flex flex-col justify-center">
                     <span className="text-xl font-black tracking-tight leading-none text-white uppercase group-hover:text-[var(--ocms-accent)] transition-colors duration-300">OCMS</span>

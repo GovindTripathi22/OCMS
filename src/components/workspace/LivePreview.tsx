@@ -98,7 +98,7 @@ export default function LivePreview({ previewUrl, onUrlChange, iframeRef }: Live
                         setIsLoading(false);
                         setHasError(true);
                     }}
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                    sandbox="allow-scripts allow-forms allow-popups"
                     title="Live Website Preview"
                 />
             </div>

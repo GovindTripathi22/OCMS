@@ -28,7 +28,7 @@ export default function NewWorkspacePage() {
             {/* Animated Logo Container */}
             <div className="mb-12 animate-slide-up opacity-0 [animation-fill-mode:forwards]">
                 <div className="relative w-24 h-24 border-4 border-[var(--ocms-border)] overflow-hidden group hover:border-[var(--ocms-accent)] hover:shadow-[8px_8px_0px_var(--ocms-accent-glow)] transition-all duration-300 mx-auto">
-                    <Image src="/ocms_logo.png" alt="OCMS Logo" fill className="object-cover group-hover:scale-110 transition-transform duration-500" />
+                    <Image src="/ocms_logo.png" alt="OCMS Logo" fill sizes="80px" className="object-cover group-hover:scale-110 transition-transform duration-500" />
                 </div>
                 <h1 className="text-4xl md:text-5xl font-black text-center mt-6 tracking-tighter uppercase">
                     New <span className="text-[var(--ocms-accent)]">Workspace</span>

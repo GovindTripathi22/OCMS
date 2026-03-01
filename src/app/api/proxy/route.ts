@@ -10,23 +10,36 @@ export async function GET(req: NextRequest) {
     try {
         const response = await fetch(url);
         const html = await response.text();
-
-        // 1. Determine the base URL so relative assets (images, css, js) don't break
         const baseUrl = new URL(url).origin;
 
-        // 2. Inject a <base> tag right after <head> to fix all relative paths
+        // Patch script: Override history.pushState/replaceState to prevent
+        // SecurityError when the proxied site's JS tries to navigate with
+        // its own origin while running inside our localhost iframe.
+        const patchScript = `
+<script>
+(function() {
+    var origPush = history.pushState;
+    var origReplace = history.replaceState;
+    history.pushState = function() {
+        try { return origPush.apply(this, arguments); } catch(e) {}
+    };
+    history.replaceState = function() {
+        try { return origReplace.apply(this, arguments); } catch(e) {}
+    };
+})();
+</script>`;
+
+        // Inject <base> for relative asset loading + the history patch
         const modifiedHtml = html.replace(
             /<head[^>]*>/i,
-            `$&<base href="${baseUrl}/">`
+            `$&<base href="${baseUrl}/">${patchScript}`
         );
 
-        // 3. Return the HTML, effectively stripping the original server's X-Frame-Options
-        // and Content-Security-Policy headers which block iframes.
         return new NextResponse(modifiedHtml, {
             status: response.status,
             headers: {
                 "Content-Type": "text/html; charset=utf-8",
-                "Access-Control-Allow-Origin": "*", // Allow our workspace to interact with it
+                "Access-Control-Allow-Origin": "*",
             },
         });
     } catch {

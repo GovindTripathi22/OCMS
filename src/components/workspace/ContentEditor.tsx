@@ -1,0 +1,108 @@
+"use client";
+
+import { Type, ImageIcon, Link2, Box } from "lucide-react";
+import dynamic from "next/dynamic";
+import ModelDropzone from "./ModelDropzone";
+import type { SchemaField } from "@/app/workspace/[projectId]/page";
+
+const ModelViewer = dynamic(() => import("./ModelViewer"), {
+    ssr: false,
+    loading: () => (
+        <div className="w-full h-full flex items-center justify-center bg-slate-900 rounded-lg">
+            <div className="w-6 h-6 border-2 border-[var(--ocms-accent)] border-t-transparent rounded-full animate-spin" />
+        </div>
+    ),
+});
+
+interface ContentEditorProps {
+    projectId: string;
+    schema: SchemaField[];
+    onFieldChange: (fieldId: string, newValue: string) => void;
+    onModelInjected: (targetFieldId: string, modelPath: string) => void;
+}
+
+const fieldIcons: Record<SchemaField["type"], React.ReactNode> = {
+    text: <Type className="w-4 h-4" />,
+    image: <ImageIcon className="w-4 h-4" />,
+    link: <Link2 className="w-4 h-4" />,
+    "3d-model": <Box className="w-4 h-4" />,
+};
+
+export default function ContentEditor({
+    projectId,
+    schema,
+    onFieldChange,
+    onModelInjected,
+}: ContentEditorProps) {
+    return (
+        <div className="flex flex-col h-full">
+            {/* Header */}
+            <div className="p-5 border-b border-[var(--ocms-border)]">
+                <h2 className="text-lg font-bold text-white tracking-tight">Content Editor</h2>
+                <p className="text-xs text-slate-500 mt-1">
+                    Edit fields below to update the live preview.
+                </p>
+            </div>
+
+            {/* Schema Fields */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                {schema.map((field) => (
+                    <div
+                        key={field.id}
+                        className="group rounded-xl border border-[var(--ocms-border)] bg-white/[0.02] backdrop-blur-sm p-4 transition-all duration-200 hover:border-[var(--ocms-accent)]/30 hover:bg-white/[0.04]"
+                    >
+                        {/* Field Label */}
+                        <div className="flex items-center gap-2 mb-3">
+                            <span className="text-[var(--ocms-accent)]">
+                                {fieldIcons[field.type]}
+                            </span>
+                            <label className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+                                {field.label}
+                            </label>
+                            <span className="ml-auto text-[10px] font-mono text-slate-600 bg-white/5 px-2 py-0.5 rounded-full">
+                                {field.type}
+                            </span>
+                        </div>
+
+                        {/* Field Input */}
+                        {field.type === "3d-model" ? (
+                            <div className="rounded-lg overflow-hidden border border-[var(--ocms-border)] h-48">
+                                <ModelViewer modelPath={field.value} />
+                            </div>
+                        ) : field.type === "image" ? (
+                            <div className="space-y-3">
+                                <input
+                                    type="text"
+                                    value={field.value}
+                                    onChange={(e) => onFieldChange(field.id, e.target.value)}
+                                    className="w-full bg-white/[0.03] border border-[var(--ocms-border)] rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-[var(--ocms-accent)] focus:ring-1 focus:ring-[var(--ocms-accent)]/30 transition-all"
+                                    placeholder="Image URL..."
+                                />
+                                <ModelDropzone
+                                    projectId={projectId}
+                                    targetFieldId={field.id}
+                                    onModelInjected={onModelInjected}
+                                />
+                            </div>
+                        ) : (
+                            <input
+                                type="text"
+                                value={field.value}
+                                onChange={(e) => onFieldChange(field.id, e.target.value)}
+                                className="w-full bg-white/[0.03] border border-[var(--ocms-border)] rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-[var(--ocms-accent)] focus:ring-1 focus:ring-[var(--ocms-accent)]/30 transition-all"
+                                placeholder={`Enter ${field.label.toLowerCase()}...`}
+                            />
+                        )}
+                    </div>
+                ))}
+            </div>
+
+            {/* Footer Action */}
+            <div className="p-5 border-t border-[var(--ocms-border)]">
+                <button className="w-full py-3 rounded-xl font-bold text-sm bg-gradient-to-r from-[var(--ocms-accent)] to-emerald-400 text-[var(--ocms-bg)] hover:opacity-90 active:scale-[0.98] transition-all">
+                    Save & Sync to GitHub
+                </button>
+            </div>
+        </div>
+    );
+}

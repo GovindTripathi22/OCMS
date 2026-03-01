@@ -1,0 +1,163 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --ocms-bg: #0a0a0a;
+    --ocms-surface: rgba(255, 255, 255, 0.03);
+    --ocms-border: rgba(255, 255, 255, 0.12);
+    --ocms-accent: #3b82f6;
+    --ocms-accent-glow: rgba(59, 130, 246, 0.2);
+  }
+}
+
+@layer components {
+
+  /* Boxy Panel — Sharp edges, thick borders, solid shadows */
+  .boxy-panel {
+    background: var(--ocms-surface);
+    border: 2px solid var(--ocms-border);
+    border-radius: 0px;
+    box-shadow: 4px 4px 0px rgba(255, 255, 255, 0.04);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .boxy-panel-hover:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px var(--ocms-accent-glow);
+    border-color: var(--ocms-accent);
+  }
+
+  /* Step number indicator */
+  .step-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border: 2px solid var(--ocms-accent);
+    color: var(--ocms-accent);
+    font-weight: 800;
+    font-size: 1rem;
+    font-family: ui-monospace, monospace;
+  }
+
+  /* Code block styling */
+  .code-block {
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid var(--ocms-border);
+    border-radius: 0px;
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    overflow-x: auto;
+  }
+
+  .boxy-input {
+    background: rgba(255, 255, 255, 0.03);
+    border: 2px solid var(--ocms-border);
+    border-radius: 0px;
+    padding: 0.75rem 1rem;
+    transition: all 0.15s ease;
+  }
+
+  .boxy-input:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--ocms-accent);
+    box-shadow: 0 0 0 1px var(--ocms-accent);
+  }
+
+  /* Boxy button */
+  .boxy-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.875rem 2rem;
+    border: 2px solid currentColor;
+    border-radius: 0px;
+    font-weight: 700;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all 0.15s ease;
+  }
+
+  .boxy-btn:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 4px 4px 0px currentColor;
+  }
+
+  .boxy-btn:active {
+    transform: translate(0, 0);
+    box-shadow: none;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Animations — sharp and decisive */
+@keyframes slide-in-left {
+  from { transform: translateX(-20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { transform: translateY(16px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes type-cursor {
+  from { border-right-color: var(--ocms-accent); }
+  to { border-right-color: transparent; }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.5s ease-out forwards;
+}
+
+.animate-slide-left {
+  animation: slide-in-left 0.5s ease-out forwards;
+}
+
+.animate-slide-right {
+  animation: slide-in-right 0.5s ease-out forwards;
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* Monospaced scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--ocms-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 0px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}

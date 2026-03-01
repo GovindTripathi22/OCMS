@@ -1,0 +1,126 @@
+// Prisma Schema for OCMS — AI-Powered Headless CMS
+// =================================================
+// Models: User, Account, Session, VerificationToken, Project
+// Enums: SubscriptionType
+
+generator client {
+  provider = "prisma-client-js"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────
+// AUTH.JS (NextAuth) MODELS — @auth/prisma-adapter
+// ─────────────────────────────────────────────────
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+
+  // GitHub OAuth tokens — stored securely for Octokit API calls
+  refresh_token      String?  @db.Text
+  access_token       String?  @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?  @db.Text
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─────────────────────────────────────────────────
+// CORE OCMS MODELS
+// ─────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+
+  // Auth relationships
+  accounts      Account[]
+  sessions      Session[]
+
+  // OCMS-specific
+  subscription  SubscriptionType @default(FREE)
+  projects      Project[]
+
+  // Rate Limiting — simple DB counter approach
+  generationsUsed  Int       @default(0)
+  generationsReset DateTime  @default(now()) // Reset timestamp for the current billing cycle
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Project {
+  id        String   @id @default(cuid())
+  name      String
+  userId    String
+
+  // GitHub Integration
+  githubRepoUrl   String?  // e.g., "https://github.com/user/repo"
+  githubOwner     String?  // extracted owner from URL
+  githubRepo      String?  // extracted repo name from URL
+  githubBranch    String   @default("main")
+  targetFilePath  String?  // e.g., "src/app/page.tsx" or "index.html"
+
+  // Scraped source
+  sourceUrl       String?  // The original URL that was scraped
+
+  // AI-Generated schema — the editable fields JSON
+  // Format: [{ id, type, value, originalHtmlTag, selector }]
+  generatedSchema Json?
+
+  // Brand guidelines for AI context
+  // Format: { colors, fonts, tone, ... }
+  brandGuidelines Json?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────
+
+enum SubscriptionType {
+  FREE  // 10 generations/month, basic features
+  PRO   // 100 generations/month, GitHub sync, priority AI
+}

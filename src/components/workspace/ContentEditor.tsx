@@ -1,6 +1,7 @@
 "use client";
 
-import { Type, ImageIcon, Link2, Box } from "lucide-react";
+import { useState } from "react";
+import { Type, ImageIcon, Link2, Box, Loader2, Check, AlertCircle } from "lucide-react";
 import dynamic from "next/dynamic";
 import ModelDropzone from "./ModelDropzone";
 import type { SchemaField } from "@/app/workspace/[projectId]/page";
@@ -28,12 +29,55 @@ const fieldIcons: Record<SchemaField["type"], React.ReactNode> = {
     "3d-model": <Box className="w-4 h-4" />,
 };
 
+type SyncStatus = "idle" | "syncing" | "success" | "error";
+
 export default function ContentEditor({
     projectId,
     schema,
     onFieldChange,
     onModelInjected,
 }: ContentEditorProps) {
+    const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
+    const [errorMessage, setErrorMessage] = useState("");
+
+    const handleSaveAndSync = async () => {
+        setSyncStatus("syncing");
+        setErrorMessage("");
+
+        // Build the changes array from the current schema
+        const changes = schema
+            .filter((f) => f.type !== "3d-model")
+            .map((f) => ({ fieldId: f.id, newValue: f.value }));
+
+        try {
+            const res = await fetch("/api/publish-changes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    repoOwner: "GovindTripathi22",  // TODO: Pull from project config
+                    repoName: "OCMS",               // TODO: Pull from project config
+                    filePath: "src/app/page.tsx",    // TODO: Pull from project config
+                    changes,
+                }),
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                throw new Error(data.error || "Unknown error occurred");
+            }
+
+            setSyncStatus("success");
+            // Reset to idle after 3 seconds
+            setTimeout(() => setSyncStatus("idle"), 3000);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : "Failed to sync";
+            setErrorMessage(message);
+            setSyncStatus("error");
+            setTimeout(() => setSyncStatus("idle"), 5000);
+        }
+    };
+
     return (
         <div className="flex flex-col h-full">
             {/* Header */}
@@ -97,10 +141,42 @@ export default function ContentEditor({
                 ))}
             </div>
 
-            {/* Footer Action */}
+            {/* Footer Action — Wired Save & Sync */}
             <div className="p-5 border-t border-[var(--ocms-border)]">
-                <button className="w-full py-3 rounded-xl font-bold text-sm bg-gradient-to-r from-[var(--ocms-accent)] to-emerald-400 text-[var(--ocms-bg)] hover:opacity-90 active:scale-[0.98] transition-all">
-                    Save & Sync to GitHub
+                {syncStatus === "error" && errorMessage && (
+                    <div className="mb-3 flex items-center gap-2 text-xs text-red-400 font-mono bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        <span className="truncate">{errorMessage}</span>
+                    </div>
+                )}
+                <button
+                    onClick={handleSaveAndSync}
+                    disabled={syncStatus === "syncing"}
+                    className={`boxy-btn w-full py-3 text-sm transition-all duration-200 ${syncStatus === "success"
+                            ? "bg-emerald-500 text-white border-emerald-500"
+                            : syncStatus === "error"
+                                ? "bg-red-500/20 text-red-400 border-red-500/50"
+                                : "bg-[var(--ocms-accent)] text-white border-[var(--ocms-accent)] hover:bg-[var(--ocms-accent)]/90"
+                        } disabled:opacity-60 disabled:cursor-not-allowed`}
+                >
+                    {syncStatus === "syncing" ? (
+                        <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>AI is modifying code...</span>
+                        </>
+                    ) : syncStatus === "success" ? (
+                        <>
+                            <Check className="w-4 h-4" />
+                            <span>Pushed to GitHub!</span>
+                        </>
+                    ) : syncStatus === "error" ? (
+                        <>
+                            <AlertCircle className="w-4 h-4" />
+                            <span>Sync Failed — Retry</span>
+                        </>
+                    ) : (
+                        <span>Save & Sync to GitHub</span>
+                    )}
                 </button>
             </div>
         </div>

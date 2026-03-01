@@ -1,18 +1,18 @@
 "use client";
 
 import { Globe, RefreshCw, ExternalLink, AlertTriangle } from "lucide-react";
-import { useState, useRef, useCallback } from "react";
+import { useState, useCallback, RefObject } from "react";
 
 interface LivePreviewProps {
     previewUrl: string;
     onUrlChange: (url: string) => void;
+    iframeRef: RefObject<HTMLIFrameElement | null>;
 }
 
-export default function LivePreview({ previewUrl, onUrlChange }: LivePreviewProps) {
+export default function LivePreview({ previewUrl, onUrlChange, iframeRef }: LivePreviewProps) {
     const [inputUrl, setInputUrl] = useState(previewUrl);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
-    const iframeRef = useRef<HTMLIFrameElement>(null);
 
     const handleNavigate = useCallback(() => {
         let url = inputUrl.trim();
@@ -31,7 +31,7 @@ export default function LivePreview({ previewUrl, onUrlChange }: LivePreviewProp
             setHasError(false);
             iframeRef.current.src = previewUrl;
         }
-    }, [previewUrl]);
+    }, [previewUrl, iframeRef]);
 
     return (
         <div className="flex flex-col h-full">

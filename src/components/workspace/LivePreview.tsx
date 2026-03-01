@@ -29,7 +29,7 @@ export default function LivePreview({ previewUrl, onUrlChange, iframeRef }: Live
         if (iframeRef.current) {
             setIsLoading(true);
             setHasError(false);
-            iframeRef.current.src = previewUrl;
+            iframeRef.current.src = `/api/proxy?url=${encodeURIComponent(previewUrl)}`;
         }
     }, [previewUrl, iframeRef]);
 
@@ -91,7 +91,7 @@ export default function LivePreview({ previewUrl, onUrlChange, iframeRef }: Live
 
                 <iframe
                     ref={iframeRef}
-                    src={previewUrl}
+                    src={`/api/proxy?url=${encodeURIComponent(previewUrl)}`}
                     className="w-full h-full border-0"
                     onLoad={() => setIsLoading(false)}
                     onError={() => {

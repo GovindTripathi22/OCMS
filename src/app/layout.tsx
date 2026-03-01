@@ -33,10 +33,20 @@ export default function RootLayout({
       >
         <Providers>
           <Navbar />
-          {/* Subtle architectural grid background */}
+          {/* Premium atmospheric background */}
           <div className="fixed inset-0 -z-10 bg-[var(--ocms-bg)]">
+            {/* Background Image */}
             <div
-              className="absolute inset-0 opacity-[0.03]"
+              className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-40"
+              style={{ backgroundImage: `url('/bg-hero.png')` }}
+            />
+            {/* Top fade gradient to blend into the navbar */}
+            <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-[var(--ocms-bg)] to-transparent" />
+            {/* Bottom fade gradient */}
+            <div className="absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-[var(--ocms-bg)] to-transparent" />
+            {/* Subtle grid overlay */}
+            <div
+              className="absolute inset-0 opacity-[0.02]"
               style={{
                 backgroundImage: `linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)`,
                 backgroundSize: '64px 64px',

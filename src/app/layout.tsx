@@ -33,25 +33,23 @@ export default function RootLayout({
       >
         <Providers>
           <Navbar />
-          {/* Premium atmospheric background */}
-          <div className="fixed inset-0 -z-10 bg-[var(--ocms-bg)]">
-            {/* Background Image */}
-            <div
-              className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-40"
-              style={{ backgroundImage: `url('/bg-hero.png')` }}
-            />
-            {/* Top fade gradient to blend into the navbar */}
-            <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-[var(--ocms-bg)] to-transparent" />
-            {/* Bottom fade gradient */}
-            <div className="absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-[var(--ocms-bg)] to-transparent" />
-            {/* Subtle grid overlay */}
-            <div
-              className="absolute inset-0 opacity-[0.02]"
+          {/* Premium animated CSS background */}
+          <div className="fixed inset-0 -z-10 bg-[var(--ocms-bg)] overflow-hidden">
+            {/* Ambient glowing flares */}
+            <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-[var(--ocms-accent)] rounded-[100%] blur-[140px] mix-blend-screen animate-pulse-glow" style={{ animationDelay: '0s' }} />
+            <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-emerald-500 rounded-[100%] blur-[140px] mix-blend-screen opacity-50 animate-pulse-glow" style={{ animationDelay: '3s' }} />
+
+            {/* Animated Grid overlay */}
+            <div className="absolute inset-0 top-[-64px] h-[calc(100%+64px)] opacity-[0.06] animate-grid-move"
               style={{
-                backgroundImage: `linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)`,
+                backgroundImage: `linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)`,
                 backgroundSize: '64px 64px',
               }}
             />
+
+            {/* Fade gradients */}
+            <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-[var(--ocms-bg)] to-transparent" />
+            <div className="absolute inset-x-0 bottom-0 h-80 bg-gradient-to-t from-[var(--ocms-bg)] via-[var(--ocms-bg)]/80 to-transparent" />
           </div>
           {children}
         </Providers>

@@ -144,6 +144,24 @@
   animation: blink 1s step-end infinite;
 }
 
+@keyframes gridMove {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(64px); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.15; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(1.1); }
+}
+
+.animate-grid-move {
+  animation: gridMove 3s linear infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 6s ease-in-out infinite;
+}
+
 /* Monospaced scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

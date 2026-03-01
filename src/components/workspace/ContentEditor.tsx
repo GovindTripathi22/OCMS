@@ -89,11 +89,11 @@ export default function ContentEditor({
             </div>
 
             {/* Schema Fields */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+            <div className="flex-1 overflow-y-auto p-5 space-y-4 group/list">
                 {schema.map((field) => (
                     <div
                         key={field.id}
-                        className="group rounded-xl border border-[var(--ocms-border)] bg-white/[0.02] backdrop-blur-sm p-4 transition-all duration-200 hover:border-[var(--ocms-accent)]/30 hover:bg-white/[0.04]"
+                        className="group rounded-xl border border-[var(--ocms-border)] bg-white/[0.02] backdrop-blur-sm p-4 transition-all duration-300 group-hover/list:blur-[2px] group-hover/list:opacity-40 hover:!blur-none hover:!opacity-100 hover:scale-[1.02] hover:bg-white/[0.06] hover:border-[var(--ocms-accent)]/50"
                     >
                         {/* Field Label */}
                         <div className="flex items-center gap-2 mb-3">
@@ -153,10 +153,10 @@ export default function ContentEditor({
                     onClick={handleSaveAndSync}
                     disabled={syncStatus === "syncing"}
                     className={`boxy-btn w-full py-3 text-sm transition-all duration-200 ${syncStatus === "success"
-                            ? "bg-emerald-500 text-white border-emerald-500"
-                            : syncStatus === "error"
-                                ? "bg-red-500/20 text-red-400 border-red-500/50"
-                                : "bg-[var(--ocms-accent)] text-white border-[var(--ocms-accent)] hover:bg-[var(--ocms-accent)]/90"
+                        ? "bg-emerald-500 text-white border-emerald-500"
+                        : syncStatus === "error"
+                            ? "bg-red-500/20 text-red-400 border-red-500/50"
+                            : "bg-[var(--ocms-accent)] text-white border-[var(--ocms-accent)] hover:bg-[var(--ocms-accent)]/90"
                         } disabled:opacity-60 disabled:cursor-not-allowed`}
                 >
                     {syncStatus === "syncing" ? (

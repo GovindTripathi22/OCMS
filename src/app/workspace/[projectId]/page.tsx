@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useSearchParams } from "next/navigation";
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, Suspense } from "react";
 import ContentEditor from "@/components/workspace/ContentEditor";
 import LivePreview from "@/components/workspace/LivePreview";
 
@@ -14,7 +14,7 @@ export interface SchemaField {
     originalHtmlTag?: string;
 }
 
-export default function WorkspacePage() {
+function WorkspaceClient() {
     const params = useParams();
     const searchParams = useSearchParams();
     const projectId = params.projectId as string;
@@ -33,8 +33,6 @@ export default function WorkspacePage() {
     const iframeRef = useRef<HTMLIFrameElement>(null);
 
     // ── postMessage Live Bridge ──
-    // Every time a schema field changes, fire a message into the iframe
-    // so the target website can update its DOM in real-time.
     useEffect(() => {
         const iframe = iframeRef.current;
         if (!iframe || !iframe.contentWindow) return;
@@ -92,5 +90,13 @@ export default function WorkspacePage() {
                 />
             </div>
         </div>
+    );
+}
+
+export default function WorkspacePage() {
+    return (
+        <Suspense fallback={<div className="fixed inset-0 pt-[56px] flex items-center justify-center text-slate-400">Loading workspace...</div>}>
+            <WorkspaceClient />
+        </Suspense>
     );
 }

@@ -18,14 +18,18 @@ export async function GET(req: NextRequest) {
         const patchScript = `
 <script>
 (function() {
-    var origPush = history.pushState;
-    var origReplace = history.replaceState;
-    history.pushState = function() {
-        try { return origPush.apply(this, arguments); } catch(e) {}
-    };
-    history.replaceState = function() {
-        try { return origReplace.apply(this, arguments); } catch(e) {}
-    };
+    try {
+        Object.defineProperty(window.history, 'pushState', {
+            value: function() {},
+            writable: false,
+            configurable: true
+        });
+        Object.defineProperty(window.history, 'replaceState', {
+            value: function() {},
+            writable: false,
+            configurable: true
+        });
+    } catch(e) {}
 })();
 </script>`;
 

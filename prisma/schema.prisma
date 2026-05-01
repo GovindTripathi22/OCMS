@@ -5,11 +5,11 @@
 
 generator client {
   provider = "prisma-client-js"
-  engineType = "library"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ─────────────────────────────────────────────────
@@ -113,8 +113,63 @@ model Project {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  // 3D Engine Assets
+  assets    Asset3D[]
 }
+
+// ─────────────────────────────────────────────────
+// 3D ENGINE MODELS
+// ─────────────────────────────────────────────────
+
+model Asset3D {
+  id              String         @id @default(cuid())
+  name            String
+  
+  // Level-of-Detail (LOD) Files for performance optimization
+  urlHighPoly     String?
+  urlMediumPoly   String?
+  urlLowPoly      String?
+  
+  // Relations
+  variants        ModelVariant[]
+  sceneGraphs     SceneGraph[]   @relation("SceneGraphAssets")
+  
+  // CMS context
+  projectId       String?
+  project         Project?       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([projectId])
+}
+
+model ModelVariant {
+  id                 String   @id @default(cuid())
+  assetId            String
+  variantName        String
+  textureUrl         String?
+  materialProperties Json?    // Stores PBR values: { "roughness": 0.5, "metalness": 1.0, "color": "#hex" }
+  
+  asset              Asset3D  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([assetId])
+}
+
+model SceneGraph {
+  id         String   @id @default(cuid())
+  name       String
+  sceneData  Json     // Layout: { positions: [...], lighting: {...}, environment: "hdr-path" }
+  
+  assets     Asset3D[] @relation("SceneGraphAssets")
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
 
 // ─────────────────────────────────────────────────
 // ENUMS

@@ -33,10 +33,13 @@ export async function GET(req: NextRequest) {
 })();
 </script>`;
 
-        // Inject <base> for relative asset loading + the history patch
-        const modifiedHtml = html.replace(
-            /<head[^>]*>/i,
-            `$&<base href="${baseUrl}/">${patchScript}`
+        // Replace relative asset paths with absolute paths
+        let modifiedHtml = html.replace(/(src|href|srcset)="\//g, `$1="${baseUrl}/`);
+
+        // Inject script right before closing body tag to avoid strict hydration mismatch
+        modifiedHtml = modifiedHtml.replace(
+            /<\/body>/i,
+            `${patchScript}</body>`
         );
 
         return new NextResponse(modifiedHtml, {
@@ -44,6 +47,7 @@ export async function GET(req: NextRequest) {
             headers: {
                 "Content-Type": "text/html; charset=utf-8",
                 "Access-Control-Allow-Origin": "*",
+                "Content-Security-Policy": "frame-ancestors *",
             },
         });
     } catch {

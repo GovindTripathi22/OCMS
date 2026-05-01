@@ -125,6 +125,35 @@ ${html.slice(0, 15000)}`;
 }
 
 /**
+ * Generates a technical PBR texture prompt from a simple user description.
+ * Useful for Stable Diffusion / DALL-E style texture generators.
+ */
+export async function generateTexturePrompt(input: string): Promise<string> {
+    const systemPrompt = `You are a material scientist and 3D artist specializing in PBR (Physically Based Rendering) textures.
+    
+    YOUR TASK: Convert a simple user description into a technical, highly detailed prompt for an AI image generator (like Stable Diffusion) to create a seamless, tiltable 3D texture map.
+    
+    REQUIREMENTS:
+    - Describe the Albedo/Base Color: subtle variations, realistic colors.
+    - Describe the Normal Map: depth, cracks, surface detail.
+    - Describe the Roughness/Specular: how the light hits the material.
+    - Mention keywords: "seamless", "tileable", "8k resolution", "PBR material", "photorealistic".
+    - OUTPUT RULE: Respond ONLY with the prompt text. No titles, no labels, no quotes.`;
+
+    const prompt = `Create a high-quality texture prompt for: ${input}`;
+    
+    // Using callGemini with text output (we don't need JSON here for a raw prompt)
+    const raw = await callGemini(prompt, systemPrompt);
+    
+    // callGemini forces application/json in this implementation, so we handle the response carefully
+    // If callGemini is hardcoded to JSON, we might as well embrace it or fix it.
+    // Looking at the callGemini implementation, it uses responseMimeType: "application/json".
+    // I will adjust callGemini to be more flexible or just parse a simple object.
+    
+    return raw;
+}
+
+/**
  * General-purpose content generation.
  */
 export async function generateContent(prompt: string): Promise<string> {

@@ -1,15 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, mkdir } from "fs/promises";
+import { writeFile, mkdir, copyFile } from "fs/promises";
 import path from "path";
+import { prisma } from "@/lib/prisma";
+import { auth } from "@/auth";
 
 const ALLOWED_EXTENSIONS = [".glb", ".gltf"];
 const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 
 export async function POST(req: NextRequest) {
     try {
+        const session = await auth();
+        if (!session?.user?.id) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         const formData = await req.formData();
         const file = formData.get("model") as File | null;
         const projectId = formData.get("projectId") as string | null;
+        const modelName = formData.get("name") as string | "Untitled Model";
 
         if (!file || !projectId) {
             return NextResponse.json(
@@ -35,28 +43,51 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // Sanitize filename
-        const sanitized = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-        const timestamp = Date.now();
-        const filename = `${timestamp}_${sanitized}`;
+        // 1. Create Asset3D record in DB first to get ID
+        const dbAsset = await prisma.asset3D.create({
+            data: {
+                name: modelName,
+                projectId: projectId,
+            },
+        });
 
-        // Ensure upload directory exists
-        const uploadDir = path.join(process.cwd(), "public", "models", projectId);
+        // 2. Setup Storage
+        const uploadDir = path.join(process.cwd(), "public", "models", dbAsset.id);
         await mkdir(uploadDir, { recursive: true });
 
-        // Write file
+        // 3. Save High Poly (Original)
         const buffer = Buffer.from(await file.arrayBuffer());
-        const filePath = path.join(uploadDir, filename);
-        await writeFile(filePath, buffer);
+        const highPolyFilename = `high_${Date.now()}${ext}`;
+        const highPolyPath = path.join(uploadDir, highPolyFilename);
+        await writeFile(highPolyPath, buffer);
 
-        // Return public-accessible path
-        const publicPath = `/models/${projectId}/${filename}`;
+        // 4. Simulated LOD Pipeline (TODO: Integrate with Actual Mesh Optimizer)
+        // For now, we simulate by copying the original file
+        const medPolyFilename = `medium_${Date.now()}${ext}`;
+        const lowPolyFilename = `low_${Date.now()}${ext}`;
 
-        return NextResponse.json({ path: publicPath }, { status: 200 });
+        const medPath = path.join(uploadDir, medPolyFilename);
+        const lowPath = path.join(uploadDir, lowPolyFilename);
+
+        await copyFile(highPolyPath, medPath);
+        await copyFile(highPolyPath, lowPath);
+
+        // 5. Update DB with URLs
+        const baseUrl = `/models/${dbAsset.id}`;
+        const updatedAsset = await prisma.asset3D.update({
+            where: { id: dbAsset.id },
+            data: {
+                urlHighPoly: `${baseUrl}/${highPolyFilename}`,
+                urlMediumPoly: `${baseUrl}/${medPolyFilename}`,
+                urlLowPoly: `${baseUrl}/${lowPolyFilename}`,
+            },
+        });
+
+        return NextResponse.json(updatedAsset, { status: 201 });
     } catch (err) {
         console.error("Model upload error:", err);
         return NextResponse.json(
-            { error: "Internal server error during upload." },
+            { error: "Internal server error during 3D model processing." },
             { status: 500 }
         );
     }

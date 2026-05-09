@@ -25,6 +25,13 @@ interface ContentEditorProps {
     schema: SchemaField[];
     onFieldChange: (fieldId: string, newValue: string) => void;
     onModelInjected: (targetFieldId: string, modelPath: string) => void;
+    githubOwner?: string;
+    githubRepo?: string;
+    targetFilePath?: string;
+    onHistorySeek?: (percent: number) => void;
+    historyCount?: number;
+    onSchemaReplace?: (newSchema: SchemaField[]) => void;
+    broadcastGhostEvent?: (type: "AI_EDIT_START" | "AI_EDIT_END", selector?: string, text?: string) => void;
 }
 
 const fieldIcons: Record<SchemaField["type"], React.ReactNode> = {
@@ -61,6 +68,12 @@ export default function ContentEditor({
     schema,
     onFieldChange,
     onModelInjected,
+    githubOwner = "GovindTripathi22",
+    githubRepo = "OCMS",
+    targetFilePath = "src/app/page.tsx",
+    onHistorySeek,
+    historyCount = 1,
+    onSchemaReplace,
 }: ContentEditorProps) {
     const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
     const [errorMessage, setErrorMessage] = useState("");
@@ -69,8 +82,17 @@ export default function ContentEditor({
     const [showCode, setShowCode] = useState(false);
     const [timelinePos, setTimelinePos] = useState(100);
     const [lighthouseScore] = useState(92);
+    
+    // Feature States
     const [componentUrl, setComponentUrl] = useState("");
+    const [isStealing, setIsStealing] = useState(false);
     const [abTarget, setAbTarget] = useState("gen-z");
+    const [isGeneratingVariant, setIsGeneratingVariant] = useState(false);
+    const [brandDescription, setBrandDescription] = useState("");
+    const [currentColors, setCurrentColors] = useState(["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"]);
+    const [isExtractingColors, setIsExtractingColors] = useState(false);
+    const [isGhostModeActive, setIsGhostModeActive] = useState(true);
+    
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleSaveAndSync = async () => {
@@ -80,19 +102,30 @@ export default function ContentEditor({
             .filter((f) => f.type !== "3d-model")
             .map((f) => ({ fieldId: f.id, newValue: f.value }));
         try {
+            if (isGhostModeActive && broadcastGhostEvent && changes.length > 0) {
+                const firstField = schema.find(f => f.id === changes[0].fieldId);
+                if (firstField?.selector) {
+                    broadcastGhostEvent("AI_EDIT_START", firstField.selector, "Committing...");
+                }
+            }
+
             const res = await fetch("/api/publish-changes", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    repoOwner: "GovindTripathi22",
-                    repoName: "OCMS",
-                    filePath: "src/app/page.tsx",
+                    repoOwner: githubOwner,
+                    repoName: githubRepo,
+                    filePath: targetFilePath,
                     changes,
                 }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Unknown error");
             setSyncStatus("success");
+            
+            if (isGhostModeActive && broadcastGhostEvent) {
+                broadcastGhostEvent("AI_EDIT_END");
+            }
             setTimeout(() => setSyncStatus("idle"), 3000);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : "Failed to sync";
@@ -106,14 +139,140 @@ export default function ContentEditor({
         if (isListening) {
             setIsListening(false);
             setVoiceText("");
-        } else {
+            return;
+        }
+
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            setErrorMessage("Speech recognition not supported in this browser.");
+            setSyncStatus("error");
+            setTimeout(() => setSyncStatus("idle"), 3000);
+            return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.lang = "en-US";
+
+        recognition.onstart = () => {
             setIsListening(true);
             setVoiceText("Listening...");
-            // Simulated voice recognition for demo
-            setTimeout(() => {
-                setVoiceText("\"Make the hero title bolder\"");
-                setTimeout(() => { setIsListening(false); setVoiceText(""); }, 3000);
-            }, 2000);
+        };
+
+        recognition.onresult = (event: any) => {
+            const transcript = event.results[0][0].transcript;
+            setVoiceText(`"${transcript}"`);
+        };
+
+        recognition.onend = async () => {
+            setIsListening(false);
+            const finalTranscript = voiceText.replace(/"/g, "");
+            if (finalTranscript && finalTranscript !== "Listening...") {
+                // Process with AI
+                setSyncStatus("syncing");
+                try {
+                    const res = await fetch("/api/generate-voice-edit", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ prompt: finalTranscript, schema }),
+                    });
+                    const data = await res.json();
+                    if (data.fieldId && data.newValue) {
+                        if (isGhostModeActive && broadcastGhostEvent) {
+                            const field = schema.find(f => f.id === data.fieldId);
+                            if (field?.selector) {
+                                broadcastGhostEvent("AI_EDIT_START", field.selector, "Voice AI");
+                            }
+                        }
+                        
+                        onFieldChange(data.fieldId, data.newValue);
+                        setSyncStatus("success");
+                        
+                        if (isGhostModeActive && broadcastGhostEvent) {
+                            setTimeout(() => broadcastGhostEvent("AI_EDIT_END"), 2000);
+                        }
+                    } else {
+                        throw new Error("AI couldn't understand the command");
+                    }
+                } catch (err) {
+                    setErrorMessage("Voice edit failed");
+                    setSyncStatus("error");
+                }
+                setTimeout(() => { setSyncStatus("idle"); setVoiceText(""); }, 3000);
+            }
+        };
+
+        recognition.onerror = () => {
+            setIsListening(false);
+            setVoiceText("");
+        };
+
+        recognition.start();
+    };
+
+    const handleGenerateVariant = async () => {
+        setIsGeneratingVariant(true);
+        setErrorMessage("");
+        try {
+            const res = await fetch("/api/generate-ab-variant", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ schema, targetAudience: abTarget }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to generate variant");
+            if (data.schema && onSchemaReplace) {
+                onSchemaReplace(data.schema);
+            }
+        } catch (err: unknown) {
+            setErrorMessage(err instanceof Error ? err.message : "Failed to generate variant");
+        } finally {
+            setIsGeneratingVariant(false);
+        }
+    };
+
+    const handleExtractColors = async () => {
+        if (!brandDescription) return;
+        setIsExtractingColors(true);
+        setErrorMessage("");
+        try {
+            const res = await fetch("/api/extract-colors", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ brandDescription }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to extract colors");
+            if (data.colors) setCurrentColors(data.colors);
+        } catch (err: unknown) {
+            setErrorMessage(err instanceof Error ? err.message : "Failed to extract colors");
+        } finally {
+            setIsExtractingColors(false);
+        }
+    };
+
+    const handleStealComponent = async () => {
+        if (!componentUrl) return;
+        setIsStealing(true);
+        setErrorMessage("");
+        try {
+            const res = await fetch("/api/steal-component", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ url: componentUrl }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to steal component");
+            // In a real implementation, this code would be saved to a file or injected.
+            // For now, we'll just show it in the sandbox/alert.
+            alert("Component stolen successfully! (Code logged to console)");
+            console.log("STOLEN COMPONENT CODE:\n", data.code);
+        } catch (err: unknown) {
+            setErrorMessage(err instanceof Error ? err.message : "Failed to steal component");
+        } finally {
+            setIsStealing(false);
+            setComponentUrl("");
         }
     };
 
@@ -175,41 +334,84 @@ export default function ContentEditor({
 
                 {/* ════ 1. 3D MODEL INJECTOR ════ */}
                 <FeaturePanel icon={<Box className="w-3.5 h-3.5" />} title="3D Model Injector" tag="New">
-                    <p className="text-[10px] text-slate-500 mb-2">Drag & drop .gltf or .spline files to inject a Three.js canvas into the live code.</p>
-                    <div className="border-2 border-dashed border-white/[0.12] rounded-lg px-4 py-6 text-center cursor-pointer hover:border-[var(--ocms-accent)]/40 transition-colors"
-                        onClick={() => fileInputRef.current?.click()}>
-                        <Box className="w-6 h-6 text-slate-500 mx-auto mb-2" />
-                        <p className="text-[10px] text-slate-400">Drop 3D model here or click to browse</p>
-                        <p className="text-[9px] text-slate-600 mt-1">.gltf, .glb, .spline</p>
-                    </div>
-                    <input ref={fileInputRef} type="file" accept=".gltf,.glb,.spline" className="hidden" />
+                    <p className="text-[10px] text-slate-500 mb-2">Drag & drop .glb files to inject a 3D asset into the live code.</p>
+                    <ModelDropzone projectId={projectId} targetFieldId="new-3d-asset" onModelInjected={onModelInjected} />
                 </FeaturePanel>
+
+                {/* ════ 1.1 3D MATERIAL EDITOR ════ */}
+                {schema.some(f => f.type === "3d-model") && (
+                    <FeaturePanel icon={<Palette className="w-3.5 h-3.5" />} title="3D Material Editor" tag="PBR" defaultOpen>
+                        <div className="space-y-3 mt-1">
+                            <div className="flex items-center justify-between">
+                                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-tighter">Selected Model</span>
+                                <span className="text-[9px] text-[var(--ocms-accent)] font-mono">Hero Asset</span>
+                            </div>
+                            
+                            <div className="space-y-2">
+                                <label className="text-[9px] text-slate-500 uppercase font-bold">Base Texture (AI Generated)</label>
+                                <div className="flex gap-2">
+                                    <input type="text" placeholder="e.g. Vintage Leather" className="flex-1 bg-white/[0.03] border border-white/[0.08] rounded px-2 py-1 text-[10px] text-slate-200 outline-none focus:border-[var(--ocms-accent)]" />
+                                    <button className="px-2 py-1 bg-[var(--ocms-accent)]/20 text-[var(--ocms-accent)] rounded text-[9px] font-bold hover:bg-[var(--ocms-accent)]/30 transition-colors">GENERATE</button>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <label className="text-[8px] text-slate-500 uppercase font-bold flex justify-between">
+                                        Roughness <span>0.5</span>
+                                    </label>
+                                    <input type="range" className="w-full h-1 bg-white/[0.06] rounded-full accent-[var(--ocms-accent)]" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[8px] text-slate-500 uppercase font-bold flex justify-between">
+                                        Metalness <span>1.0</span>
+                                    </label>
+                                    <input type="range" className="w-full h-1 bg-white/[0.06] rounded-full accent-[var(--ocms-accent)]" />
+                                </div>
+                            </div>
+
+                            <button className="w-full py-2 bg-white/5 border border-white/10 rounded text-[9px] font-bold text-slate-300 hover:bg-white/10 transition-colors">
+                                APPLY MATERIAL VARIANT
+                            </button>
+                        </div>
+                    </FeaturePanel>
+                )}
 
                 {/* ════ 2. TIME TRAVEL PREVIEW ════ */}
                 <FeaturePanel icon={<Clock className="w-3.5 h-3.5" />} title="Time Travel Preview" tag="New">
                     <p className="text-[10px] text-slate-500 mb-2">Scrub through your edit history and watch the preview rewind.</p>
                     <div className="flex items-center gap-2">
-                        <span className="text-[9px] text-slate-600 font-[family-name:var(--font-jetbrains-mono)]">0:00</span>
+                        <span className="text-[9px] text-slate-600 font-[family-name:var(--font-jetbrains-mono)]">START</span>
                         <input type="range" min={0} max={100} value={timelinePos}
-                            onChange={(e) => setTimelinePos(Number(e.target.value))}
+                            onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setTimelinePos(val);
+                                onHistorySeek?.(val);
+                            }}
                             className="flex-1 h-1 bg-white/[0.06] rounded-full accent-[var(--ocms-accent)] cursor-pointer" />
                         <span className="text-[9px] text-slate-600 font-[family-name:var(--font-jetbrains-mono)]">NOW</span>
                     </div>
                     <div className="flex items-center justify-between mt-2">
                         <span className="text-[9px] text-slate-500">{timelinePos}% of session</span>
-                        <span className="text-[9px] text-emerald-400 font-[family-name:var(--font-jetbrains-mono)]">4 edits</span>
+                        <span className="text-[9px] text-emerald-400 font-[family-name:var(--font-jetbrains-mono)]">{historyCount} edits</span>
                     </div>
                 </FeaturePanel>
 
                 {/* ════ 3. AI COLOR PALETTE EXTRACTOR ════ */}
                 <FeaturePanel icon={<Palette className="w-3.5 h-3.5" />} title="AI Color Extractor" tag="AI">
-                    <p className="text-[10px] text-slate-500 mb-2">Upload a logo or image. AI rewrites your CSS variables to match the brand.</p>
-                    <button className="w-full text-xs bg-white/[0.04] border border-white/[0.08] rounded-md py-2 text-slate-300 hover:bg-white/[0.06] hover:border-[var(--ocms-accent)]/30 transition-all flex items-center justify-center gap-1.5">
-                        <Palette className="w-3 h-3" /> Upload Brand Asset
+                    <p className="text-[10px] text-slate-500 mb-2">Describe your brand to generate a custom CSS variable palette.</p>
+                    <div className="flex gap-1.5 mb-2.5">
+                        <input type="text" value={brandDescription} onChange={(e) => setBrandDescription(e.target.value)}
+                            className="flex-1 bg-white/[0.03] border border-white/[0.08] rounded-md px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-[var(--ocms-accent)] font-[family-name:var(--font-jetbrains-mono)]"
+                            placeholder="e.g., Luxury minimalist coffee shop" />
+                    </div>
+                    <button onClick={handleExtractColors} disabled={isExtractingColors || !brandDescription} className="w-full text-xs bg-white/[0.04] border border-white/[0.08] rounded-md py-2 text-slate-300 hover:bg-white/[0.06] hover:border-[var(--ocms-accent)]/30 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50">
+                        {isExtractingColors ? <Loader2 className="w-3 h-3 animate-spin" /> : <Palette className="w-3 h-3" />} 
+                        {isExtractingColors ? "Extracting..." : "Generate Colors"}
                     </button>
                     <div className="flex gap-1.5 mt-2.5">
-                        {["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"].map((c) => (
-                            <div key={c} className="w-6 h-6 rounded border border-white/[0.1] cursor-pointer hover:scale-110 transition-transform" style={{ background: c }} />
+                        {currentColors.map((c) => (
+                            <div key={c} className="w-6 h-6 rounded border border-white/[0.1] cursor-pointer hover:scale-110 transition-transform" style={{ background: c }} title={c} />
                         ))}
                         <span className="text-[9px] text-slate-600 self-center ml-1">Current</span>
                     </div>
@@ -220,9 +422,11 @@ export default function ContentEditor({
                     <p className="text-[10px] text-slate-500 mb-2">When AI edits code, a ghost cursor appears in the live preview showing what it touches.</p>
                     <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                        <span className="text-[10px] text-emerald-400 font-[family-name:var(--font-jetbrains-mono)]">Ghost mode: Active</span>
+                        <span className="text-[10px] text-emerald-400 font-[family-name:var(--font-jetbrains-mono)]">
+                            Ghost mode: {isGhostModeActive ? "Active" : "Inactive"}
+                        </span>
                         <label className="ml-auto relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" defaultChecked className="sr-only peer" />
+                            <input type="checkbox" checked={isGhostModeActive} onChange={(e) => setIsGhostModeActive(e.target.checked)} className="sr-only peer" />
                             <div className="w-7 h-4 bg-white/[0.1] peer-checked:bg-[var(--ocms-accent)] rounded-full transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-3" />
                         </label>
                     </div>
@@ -238,8 +442,9 @@ export default function ContentEditor({
                         <option value="casual">Casual / Friendly</option>
                         <option value="luxury">Luxury / Premium</option>
                     </select>
-                    <button className="w-full text-xs bg-white/[0.04] border border-white/[0.08] rounded-md py-2 text-slate-300 hover:bg-white/[0.06] hover:border-[var(--ocms-accent)]/30 transition-all flex items-center justify-center gap-1.5">
-                        <Sparkles className="w-3 h-3" /> Generate A/B Variant
+                    <button onClick={handleGenerateVariant} disabled={isGeneratingVariant} className="w-full text-xs bg-white/[0.04] border border-white/[0.08] rounded-md py-2 text-slate-300 hover:bg-white/[0.06] hover:border-[var(--ocms-accent)]/30 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50">
+                        {isGeneratingVariant ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                        {isGeneratingVariant ? "Generating..." : "Generate A/B Variant"}
                     </button>
                 </FeaturePanel>
 
@@ -267,8 +472,8 @@ export default function ContentEditor({
                         <input type="text" value={componentUrl} onChange={(e) => setComponentUrl(e.target.value)}
                             className="flex-1 bg-white/[0.03] border border-white/[0.08] rounded-md px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-[var(--ocms-accent)] font-[family-name:var(--font-jetbrains-mono)]"
                             placeholder="https://stripe.com" />
-                        <button className="px-3 rounded-md bg-[var(--ocms-accent)]/20 border border-[var(--ocms-accent)]/30 text-[var(--ocms-accent)] text-xs hover:bg-[var(--ocms-accent)]/30 transition-colors">
-                            Steal
+                        <button onClick={handleStealComponent} disabled={isStealing || !componentUrl} className="px-3 rounded-md bg-[var(--ocms-accent)]/20 border border-[var(--ocms-accent)]/30 text-[var(--ocms-accent)] text-xs hover:bg-[var(--ocms-accent)]/30 transition-colors disabled:opacity-50">
+                            {isStealing ? <Loader2 className="w-3 h-3 animate-spin" /> : "Steal"}
                         </button>
                     </div>
                 </FeaturePanel>

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghost SDK Test Target</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f8fafc;
+            color: #0f172a;
+        }
+        .hero {
+            padding: 100px 20px;
+            text-align: center;
+            background: white;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: #1e293b;
+        }
+        p.subtitle {
+            font-size: 1.25rem;
+            color: #64748b;
+            max-width: 600px;
+            margin: 0 auto 2rem auto;
+            line-height: 1.6;
+        }
+        .btn {
+            display: inline-block;
+            background: #3b82f6;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        .btn:hover {
+            background: #2563eb;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="hero">
+        <h1 id="hero-title">Welcome to Ghost Testing</h1>
+        <p class="subtitle" id="hero-subtitle">
+            This is a dummy website designed to test the OCMS Ghost Cursor SDK. When AI starts editing, you should see a ghost cursor fly to these elements.
+        </p>
+        <a href="#" class="btn" id="cta-link">Get Started</a>
+    </header>
+
+    <!-- INLINE GHOST SDK FOR TESTING WITHOUT BUILD STEP -->
+    <script>
+        class GhostCursor {
+            constructor() {
+                this.cursorEl = document.createElement("div");
+                this.highlightEl = document.createElement("div");
+                this.isInitialized = false;
+            }
+
+            init() {
+                if (this.isInitialized) return;
+                this.injectStyles();
+                this.createElements();
+                this.setupListener();
+                this.isInitialized = true;
+                console.log("[OCMS Ghost SDK Test] Initialized.");
+            }
+
+            injectStyles() {
+                const style = document.createElement("style");
+                style.textContent = `
+                    .ocms-ghost-cursor {
+                        position: fixed;
+                        top: 0;
+                        left: 0;
+                        z-index: 999999;
+                        pointer-events: none;
+                        transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease;
+                        opacity: 0;
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                    }
+                    .ocms-ghost-cursor svg {
+                        width: 24px;
+                        height: 24px;
+                        fill: none;
+                        stroke: #10b981;
+                        stroke-width: 2;
+                        stroke-linecap: round;
+                        stroke-linejoin: round;
+                        filter: drop-shadow(0 4px 6px rgba(16, 185, 129, 0.4));
+                    }
+                    .ocms-ghost-label {
+                        background: #10b981;
+                        color: white;
+                        font-family: monospace;
+                        font-size: 11px;
+                        font-weight: bold;
+                        padding: 4px 8px;
+                        border-radius: 4px;
+                        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+                    }
+                    .ocms-ghost-highlight {
+                        position: fixed;
+                        z-index: 999998;
+                        pointer-events: none;
+                        border: 2px dashed #10b981;
+                        background: rgba(16, 185, 129, 0.1);
+                        transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+                        opacity: 0;
+                        border-radius: 4px;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+
+            createElements() {
+                this.cursorEl.className = "ocms-ghost-cursor";
+                this.cursorEl.innerHTML = `
+                    <svg viewBox="0 0 24 24">
+                        <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
+                        <path d="M13 13l6 6" />
+                    </svg>
+                    <div class="ocms-ghost-label">Gemini AI</div>
+                `;
+                document.body.appendChild(this.cursorEl);
+
+                this.highlightEl.className = "ocms-ghost-highlight";
+                document.body.appendChild(this.highlightEl);
+            }
+
+            setupListener() {
+                window.addEventListener("message", (event) => {
+                    const data = event.data;
+                    if (data?.source !== "ocms-editor") return;
+
+                    if (data.type === "AI_EDIT_START" && data.selector) {
+                        this.moveToElement(data.selector, data.text);
+                    } else if (data.type === "AI_EDIT_END") {
+                        this.hide();
+                    }
+                });
+            }
+
+            moveToElement(selector, text) {
+                try {
+                    const el = document.querySelector(selector);
+                    if (!el) return;
+
+                    const rect = el.getBoundingClientRect();
+                    
+                    this.highlightEl.style.top = \`\${rect.top}px\`;
+                    this.highlightEl.style.left = \`\${rect.left}px\`;
+                    this.highlightEl.style.width = \`\${rect.width}px\`;
+                    this.highlightEl.style.height = \`\${rect.height}px\`;
+                    this.highlightEl.style.opacity = "1";
+
+                    const cursorX = rect.left + rect.width / 2;
+                    const cursorY = rect.top + rect.height / 2;
+                    
+                    this.cursorEl.style.transform = \`translate(\${cursorX}px, \${cursorY}px)\`;
+                    this.cursorEl.style.opacity = "1";
+
+                    if (text) {
+                        const label = this.cursorEl.querySelector('.ocms-ghost-label');
+                        if (label) label.textContent = text;
+                    }
+                } catch (e) {
+                    console.error("[OCMS Ghost SDK] Error moving to element:", e);
+                }
+            }
+
+            hide() {
+                this.cursorEl.style.opacity = "0";
+                this.highlightEl.style.opacity = "0";
+            }
+        }
+
+        setTimeout(() => {
+            const ghost = new GhostCursor();
+            ghost.init();
+        }, 100);
+    </script>
+</body>
+</html>

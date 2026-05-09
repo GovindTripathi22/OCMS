@@ -7,9 +7,10 @@ interface LivePreviewProps {
     previewUrl: string;
     onUrlChange: (url: string) => void;
     iframeRef: RefObject<HTMLIFrameElement>;
+    onLoad?: () => void;
 }
 
-export default function LivePreview({ previewUrl, onUrlChange, iframeRef }: LivePreviewProps) {
+export default function LivePreview({ previewUrl, onUrlChange, iframeRef, onLoad }: LivePreviewProps) {
     const [inputUrl, setInputUrl] = useState(previewUrl);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
@@ -93,7 +94,10 @@ export default function LivePreview({ previewUrl, onUrlChange, iframeRef }: Live
                     ref={iframeRef}
                     src={previewUrl}
                     className="w-full h-full border-0"
-                    onLoad={() => setIsLoading(false)}
+                    onLoad={() => {
+                        setIsLoading(false);
+                        onLoad?.();
+                    }}
                     onError={() => {
                         setIsLoading(false);
                         setHasError(true);

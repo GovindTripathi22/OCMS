@@ -1,9 +1,7 @@
-"use client";
-
-import { useParams, useSearchParams } from "next/navigation";
-import { useState, useCallback, useRef, useEffect, Suspense } from "react";
-import ContentEditor from "@/components/workspace/ContentEditor";
-import LivePreview from "@/components/workspace/LivePreview";
+import { Suspense } from "react";
+import WorkspaceClient from "./WorkspaceClient";
+import { prisma } from "@/lib/prisma";
+import { notFound } from "next/navigation";
 
 export interface SchemaField {
     id: string;
@@ -14,89 +12,48 @@ export interface SchemaField {
     originalHtmlTag?: string;
 }
 
-function WorkspaceClient() {
-    const params = useParams();
-    const searchParams = useSearchParams();
-    const projectId = params.projectId as string;
+// WorkspaceClient logic moved to its own file.
 
-    const [schema, setSchema] = useState<SchemaField[]>([
-        { id: "hero-title", type: "text", label: "Hero Title", value: "Welcome to Our Site", selector: "h1" },
-        { id: "hero-subtitle", type: "text", label: "Subtitle", value: "Build something amazing today.", selector: ".subtitle" },
-        { id: "hero-image", type: "image", label: "Hero Image", value: "/placeholder.jpg", selector: "img.hero" },
-        { id: "cta-link", type: "link", label: "CTA Link", value: "/get-started", selector: "a.cta" },
-    ]);
+export default async function WorkspacePage({ params }: { params: { projectId: string } }) {
+    const project = await prisma.project.findUnique({
+        where: { id: params.projectId }
+    });
 
-    const initialUrl = searchParams.get("target") || "https://example.com";
-    const [previewUrl, setPreviewUrl] = useState(initialUrl);
+    if (!project) {
+        notFound();
+    }
 
-    // Ref to the iframe inside LivePreview
-    const iframeRef = useRef<HTMLIFrameElement>(null);
+    // Safely parse the schema or use fallback
+    let initialSchema: SchemaField[] = [];
+    try {
+        if (project.generatedSchema) {
+            initialSchema = project.generatedSchema as unknown as SchemaField[];
+        }
+    } catch (e) {
+        console.error("Failed to parse schema", e);
+    }
 
-    // ── postMessage Live Bridge ──
-    useEffect(() => {
-        const iframe = iframeRef.current;
-        if (!iframe || !iframe.contentWindow) return;
+    // Default schema if none generated
+    if (!initialSchema || initialSchema.length === 0) {
+        initialSchema = [
+            { id: "hero-title", type: "text", label: "Hero Title", value: "Welcome to Our Site", selector: "h1" },
+            { id: "hero-subtitle", type: "text", label: "Subtitle", value: "Build something amazing today.", selector: ".subtitle" },
+            { id: "hero-image", type: "image", label: "Hero Image", value: "/placeholder.jpg", selector: "img.hero" },
+            { id: "cta-link", type: "link", label: "CTA Link", value: "/get-started", selector: "a.cta" },
+        ];
+    }
 
-        const changesPayload = schema.map((f) => ({
-            fieldId: f.id,
-            selector: f.selector,
-            type: f.type,
-            value: f.value,
-        }));
+    const projectData = {
+        id: project.id,
+        githubOwner: project.githubOwner || "GovindTripathi22",
+        githubRepo: project.githubRepo || "OCMS",
+        targetFilePath: project.targetFilePath || "src/app/page.tsx",
+        sourceUrl: project.sourceUrl || "https://example.com"
+    };
 
-        iframe.contentWindow.postMessage(
-            { source: "ocms-live-bridge", changes: changesPayload },
-            "*"
-        );
-    }, [schema]);
-
-    const handleFieldChange = useCallback((fieldId: string, newValue: string) => {
-        setSchema((prev) =>
-            prev.map((f) => (f.id === fieldId ? { ...f, value: newValue } : f))
-        );
-    }, []);
-
-    const handleModelInjected = useCallback(
-        (targetFieldId: string, modelPath: string) => {
-            setSchema((prev) =>
-                prev.map((f) =>
-                    f.id === targetFieldId
-                        ? { ...f, type: "3d-model", value: modelPath }
-                        : f
-                )
-            );
-        },
-        []
-    );
-
-    return (
-        <div className="fixed inset-0 pt-[56px] flex bg-[var(--ocms-bg)]">
-            {/* Left Panel — Content Editor (30%) */}
-            <div className="w-[30%] min-w-[320px] h-full border-r border-[var(--ocms-border)] overflow-y-auto">
-                <ContentEditor
-                    projectId={projectId}
-                    schema={schema}
-                    onFieldChange={handleFieldChange}
-                    onModelInjected={handleModelInjected}
-                />
-            </div>
-
-            {/* Right Panel — Live Preview (70%) */}
-            <div className="flex-1 h-full relative">
-                <LivePreview
-                    previewUrl={previewUrl}
-                    onUrlChange={setPreviewUrl}
-                    iframeRef={iframeRef}
-                />
-            </div>
-        </div>
-    );
-}
-
-export default function WorkspacePage() {
     return (
         <Suspense fallback={<div className="fixed inset-0 pt-[56px] flex items-center justify-center text-slate-400">Loading workspace...</div>}>
-            <WorkspaceClient />
+            <WorkspaceClient project={projectData} initialSchema={initialSchema} />
         </Suspense>
     );
 }

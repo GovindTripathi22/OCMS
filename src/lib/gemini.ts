@@ -3,7 +3,11 @@
  *
  * All AI interactions go through this module:
  * - Schema generation from scraped HTML (strict system prompt)
- * - General content generation (future)
+ * - A/B content generation
+ * - Component replication
+ * - Voice command parsing
+ * - Color palette extraction
+ * - PBR texture prompt generation
  */
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
@@ -20,7 +24,7 @@ interface GeminiResponse {
 
 export interface SchemaField {
     id: string;
-    type: "string" | "image" | "link" | "list";
+    type: "text" | "image" | "link" | "list" | "3d-model";
     value: string;
     originalHtmlTag: string;
     selector: string;
@@ -28,10 +32,12 @@ export interface SchemaField {
 
 /**
  * Low-level call to Gemini API with system instruction support.
+ * @param expectJson - when true, forces application/json MIME type for structured output.
  */
-async function callGemini(
+export async function callGemini(
     prompt: string,
-    systemInstruction?: string
+    systemInstruction?: string,
+    expectJson: boolean = false
 ): Promise<string> {
     if (!GEMINI_API_KEY) {
         throw new Error(
@@ -41,10 +47,13 @@ async function callGemini(
 
     const requestBody: Record<string, unknown> = {
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-            responseMimeType: "application/json",
-        },
     };
+
+    if (expectJson) {
+        requestBody.generationConfig = {
+            responseMimeType: "application/json",
+        };
+    }
 
     if (systemInstruction) {
         requestBody.systemInstruction = {
@@ -82,7 +91,7 @@ STRICT OUTPUT RULES:
 1. Output ONLY a valid JSON array. No markdown, no explanation, no code fences.
 2. Each object in the array MUST have exactly these fields:
    - "id": A unique, kebab-case identifier derived from the element's content or position (e.g., "hero-title", "nav-link-1", "footer-copyright")
-   - "type": One of "string", "image", "link", or "list"
+   - "type": One of "text", "image", "link", or "list"
    - "value": The actual text content, image src, or href value
    - "originalHtmlTag": The HTML tag name in lowercase (e.g., "h1", "p", "a", "img")
    - "selector": A CSS selector path that can uniquely target this element (e.g., "header > h1", "section.hero p.subtitle")
@@ -108,7 +117,7 @@ export async function generateSchema(
 
 ${html.slice(0, 15000)}`;
 
-    const raw = await callGemini(prompt, SCHEMA_SYSTEM_PROMPT);
+    const raw = await callGemini(prompt, SCHEMA_SYSTEM_PROMPT, true);
 
     // Strip potential markdown code fences (safety fallback)
     const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -126,12 +135,11 @@ ${html.slice(0, 15000)}`;
 
 /**
  * Generates a technical PBR texture prompt from a simple user description.
- * Useful for Stable Diffusion / DALL-E style texture generators.
  */
 export async function generateTexturePrompt(input: string): Promise<string> {
     const systemPrompt = `You are a material scientist and 3D artist specializing in PBR (Physically Based Rendering) textures.
     
-    YOUR TASK: Convert a simple user description into a technical, highly detailed prompt for an AI image generator (like Stable Diffusion) to create a seamless, tiltable 3D texture map.
+    YOUR TASK: Convert a simple user description into a technical, highly detailed prompt for an AI image generator to create a seamless, tileable 3D texture map.
     
     REQUIREMENTS:
     - Describe the Albedo/Base Color: subtle variations, realistic colors.
@@ -141,16 +149,7 @@ export async function generateTexturePrompt(input: string): Promise<string> {
     - OUTPUT RULE: Respond ONLY with the prompt text. No titles, no labels, no quotes.`;
 
     const prompt = `Create a high-quality texture prompt for: ${input}`;
-    
-    // Using callGemini with text output (we don't need JSON here for a raw prompt)
-    const raw = await callGemini(prompt, systemPrompt);
-    
-    // callGemini forces application/json in this implementation, so we handle the response carefully
-    // If callGemini is hardcoded to JSON, we might as well embrace it or fix it.
-    // Looking at the callGemini implementation, it uses responseMimeType: "application/json".
-    // I will adjust callGemini to be more flexible or just parse a simple object.
-    
-    return raw;
+    return callGemini(prompt, systemPrompt);
 }
 
 /**

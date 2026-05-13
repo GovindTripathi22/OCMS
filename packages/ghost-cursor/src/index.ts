@@ -120,17 +120,17 @@ class GhostCursor {
             const rect = el.getBoundingClientRect();
             
             // Show highlight
-            this.highlightEl.style.top = \`\${rect.top}px\`;
-            this.highlightEl.style.left = \`\${rect.left}px\`;
-            this.highlightEl.style.width = \`\${rect.width}px\`;
-            this.highlightEl.style.height = \`\${rect.height}px\`;
+            this.highlightEl.style.top = `${rect.top}px`;
+            this.highlightEl.style.left = `${rect.left}px`;
+            this.highlightEl.style.width = `${rect.width}px`;
+            this.highlightEl.style.height = `${rect.height}px`;
             this.highlightEl.style.opacity = "1";
 
             // Move cursor to center of element
             const cursorX = rect.left + rect.width / 2;
             const cursorY = rect.top + rect.height / 2;
             
-            this.cursorEl.style.transform = \`translate(\${cursorX}px, \${cursorY}px)\`;
+            this.cursorEl.style.transform = `translate(${cursorX}px, ${cursorY}px)`;
             this.cursorEl.style.opacity = "1";
 
             if (text) {

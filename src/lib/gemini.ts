@@ -11,7 +11,7 @@
  */
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-1.5-pro";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 interface GeminiResponse {
@@ -94,7 +94,7 @@ STRICT OUTPUT RULES:
    - "type": One of "text", "image", "link", or "list"
    - "value": The actual text content, image src, or href value
    - "originalHtmlTag": The HTML tag name in lowercase (e.g., "h1", "p", "a", "img")
-   - "selector": A CSS selector path that can uniquely target this element (e.g., "header > h1", "section.hero p.subtitle")
+   - "selector": A valid CSS selector string that document.querySelector can execute and that uniquely targets this exact element (e.g., "header > h1", "section.hero p.subtitle")
 
 EXTRACTION RULES:
 - Extract ALL visible text content: headings (h1-h6), paragraphs (p), links (a), list items (li), spans with meaningful text, buttons
@@ -103,6 +103,8 @@ EXTRACTION RULES:
 - SKIP navigation boilerplate like "Home", "About", "Contact" unless they have unique content
 - SKIP empty elements, whitespace-only elements, and icon fonts
 - Generate unique IDs — if duplicates would occur, append a numeric suffix (e.g., "section-title-2")
+- Prefer stable class/id/attribute selectors over positional selectors. Use :nth-of-type only when there is no stable attribute or class.
+- Every selector MUST be syntactically valid for document.querySelector. Do not invent Tailwind variants, pseudo-elements, or text selectors.
 
 RESPOND WITH ONLY THE JSON ARRAY.`;
 

@@ -83,7 +83,13 @@ export async function POST(req: NextRequest) {
             },
         });
 
-        return NextResponse.json(updatedAsset, { status: 201 });
+        return NextResponse.json(
+            {
+                ...updatedAsset,
+                path: updatedAsset.urlHighPoly,
+            },
+            { status: 201 }
+        );
     } catch (err) {
         console.error("Model upload error:", err);
         return NextResponse.json(

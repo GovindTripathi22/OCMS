@@ -37,33 +37,22 @@ export default function RootLayout({
       >
         <Providers>
           <Navbar />
-          {/* Premium animated CSS background */}
-          <div className="fixed inset-0 -z-10 bg-[var(--ocms-bg)] overflow-hidden perspective-[1000px]">
-            {/* Base Grain Texture */}
-            <div className="absolute inset-[-200%] w-[400%] h-[400%] opacity-[0.03] mix-blend-overlay pointer-events-none animate-grain" />
-
-            {/* Ambient glowing flares */}
-            <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-[var(--ocms-accent)] rounded-[100%] blur-[120px] mix-blend-screen animate-pulse-glow" style={{ animationDelay: '0s' }} />
-            <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-emerald-500 rounded-[100%] blur-[140px] mix-blend-screen opacity-40 animate-pulse-glow" style={{ animationDelay: '4s' }} />
-
-            {/* 3D Perspective Grid overlay */}
-            <div className="absolute inset-x-[-50%] bottom-[-50%] h-[150%] w-[200%]"
+          {/* Premium Ambient Background */}
+          <div className="fixed inset-0 -z-10 bg-[#080b14] overflow-hidden">
+            {/* Subtle Grid */}
+            <div className="absolute inset-0 opacity-[0.025]"
               style={{
-                transform: 'rotateX(60deg) translateY(100px) translateZ(-200px)',
-                transformOrigin: 'bottom center',
+                backgroundImage: `linear-gradient(rgba(139,92,246,1) 1px, transparent 1px), linear-gradient(90deg, rgba(139,92,246,1) 1px, transparent 1px)`,
+                backgroundSize: '60px 60px',
               }}
-            >
-              <div className="absolute inset-0 opacity-[0.08] animate-grid-move"
-                style={{
-                  backgroundImage: `linear-gradient(rgba(255,255,255,0.8) 2px, transparent 2px), linear-gradient(90deg, rgba(255,255,255,0.8) 2px, transparent 2px)`,
-                  backgroundSize: '100px 100px',
-                }}
-              />
-            </div>
-
-            {/* Fade gradients for smooth grid blending */}
-            <div className="absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-[var(--ocms-bg)] to-transparent" />
-            <div className="absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-[var(--ocms-bg)] via-[var(--ocms-bg)]/90 to-transparent" />
+            />
+            {/* Ambient Orbs */}
+            <div className="animate-orb-pulse absolute -top-40 -left-40 w-[600px] h-[600px] rounded-full pointer-events-none"
+              style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.12) 0%, transparent 70%)' }} />
+            <div className="animate-orb-pulse absolute top-1/2 -right-60 w-[500px] h-[500px] rounded-full pointer-events-none"
+              style={{ background: 'radial-gradient(circle, rgba(34,211,238,0.08) 0%, transparent 70%)', animationDelay: '4s' }} />
+            <div className="animate-orb-pulse absolute -bottom-60 left-1/3 w-[500px] h-[500px] rounded-full pointer-events-none"
+              style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.08) 0%, transparent 70%)', animationDelay: '8s' }} />
           </div>
           {children}
         </Providers>

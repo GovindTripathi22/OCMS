@@ -23,6 +23,7 @@ const ModelViewer = dynamic(() => import("./ModelViewer"), {
 interface ContentEditorProps {
     projectId: string;
     schema: SchemaField[];
+    initialSchema?: SchemaField[];
     onFieldChange: (fieldId: string, newValue: string) => void;
     onModelInjected: (targetFieldId: string, modelPath: string) => void;
     githubOwner?: string;
@@ -42,6 +43,36 @@ const fieldIcons: Record<SchemaField["type"], React.ReactNode> = {
 };
 
 type SyncStatus = "idle" | "syncing" | "success" | "error";
+
+interface SpeechRecognitionResultLike {
+    0: {
+        transcript: string;
+    };
+}
+
+interface SpeechRecognitionEventLike {
+    results: ArrayLike<SpeechRecognitionResultLike>;
+}
+
+interface SpeechRecognitionLike {
+    continuous: boolean;
+    interimResults: boolean;
+    lang: string;
+    onstart: (() => void) | null;
+    onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+    onend: (() => void) | null;
+    onerror: (() => void) | null;
+    start: () => void;
+}
+
+interface SpeechRecognitionConstructor {
+    new (): SpeechRecognitionLike;
+}
+
+type SpeechWindow = Window & typeof globalThis & {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+};
 
 /* ─── Collapsible Feature Panel ─── */
 function FeaturePanel({ icon, title, tag, children, defaultOpen = false }: {
@@ -66,6 +97,7 @@ function FeaturePanel({ icon, title, tag, children, defaultOpen = false }: {
 export default function ContentEditor({
     projectId,
     schema,
+    initialSchema = [],
     onFieldChange,
     onModelInjected,
     githubOwner = "GovindTripathi22",
@@ -74,6 +106,7 @@ export default function ContentEditor({
     onHistorySeek,
     historyCount = 1,
     onSchemaReplace,
+    broadcastGhostEvent,
 }: ContentEditorProps) {
     const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
     const [errorMessage, setErrorMessage] = useState("");
@@ -93,14 +126,41 @@ export default function ContentEditor({
     const [isExtractingColors, setIsExtractingColors] = useState(false);
     const [isGhostModeActive, setIsGhostModeActive] = useState(true);
     
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const voiceTranscriptRef = useRef("");
 
     const handleSaveAndSync = async () => {
+        const changedFields = schema.filter((field) => {
+            const original = initialSchema.find((item) => item.id === field.id);
+            return !original || original.value !== field.value || original.type !== field.type;
+        });
+
+        if (changedFields.length === 0) {
+            setErrorMessage("No changes to sync.");
+            setSyncStatus("error");
+            setTimeout(() => setSyncStatus("idle"), 3000);
+            return;
+        }
+
+        const summary = changedFields
+            .map((field) => {
+                const original = initialSchema.find((item) => item.id === field.id);
+                const fromValue = original?.value ?? "(new field)";
+                return `${field.id}: "${fromValue.slice(0, 80)}" -> "${field.value.slice(0, 80)}"`;
+            })
+            .join("\n");
+
+        const confirmed = window.confirm(`Save & Sync will commit these changes:\n\n${summary}`);
+        if (!confirmed) return;
+
+        const changes = changedFields.map((f) => ({
+            fieldId: f.id,
+            selector: f.selector,
+            type: f.type,
+            newValue: f.value,
+        }));
+
         setSyncStatus("syncing");
         setErrorMessage("");
-        const changes = schema
-            .filter((f) => f.type !== "3d-model")
-            .map((f) => ({ fieldId: f.id, newValue: f.value }));
         try {
             if (isGhostModeActive && broadcastGhostEvent && changes.length > 0) {
                 const firstField = schema.find(f => f.id === changes[0].fieldId);
@@ -142,7 +202,9 @@ export default function ContentEditor({
             return;
         }
 
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        const speechWindow = window as SpeechWindow;
+        const SpeechRecognition =
+            speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
         if (!SpeechRecognition) {
             setErrorMessage("Speech recognition not supported in this browser.");
             setSyncStatus("error");
@@ -157,17 +219,22 @@ export default function ContentEditor({
 
         recognition.onstart = () => {
             setIsListening(true);
+            voiceTranscriptRef.current = "";
             setVoiceText("Listening...");
         };
 
-        recognition.onresult = (event: any) => {
-            const transcript = event.results[0][0].transcript;
+        recognition.onresult = (event) => {
+            const transcript = Array.from(
+                event.results,
+                (result) => result[0].transcript
+            ).join(" ");
+            voiceTranscriptRef.current = transcript;
             setVoiceText(`"${transcript}"`);
         };
 
         recognition.onend = async () => {
             setIsListening(false);
-            const finalTranscript = voiceText.replace(/"/g, "");
+            const finalTranscript = voiceTranscriptRef.current.trim();
             if (finalTranscript && finalTranscript !== "Listening...") {
                 // Process with AI
                 setSyncStatus("syncing");
@@ -195,7 +262,7 @@ export default function ContentEditor({
                     } else {
                         throw new Error("AI couldn't understand the command");
                     }
-                } catch (err) {
+                } catch {
                     setErrorMessage("Voice edit failed");
                     setSyncStatus("error");
                 }
@@ -298,12 +365,15 @@ export default function ContentEditor({
                 {/* ════ SCHEMA FIELDS ════ */}
                 <FeaturePanel icon={<Type className="w-3.5 h-3.5" />} title="Content Fields" tag="Live" defaultOpen>
                     <div className="space-y-2.5 mt-1">
-                        {schema.map((field) => (
+                        {schema.map((field) => {
+                            const fieldLabel = field.label ?? field.id;
+
+                            return (
                             <div key={field.id} className="group">
                                 <div className="flex items-center gap-1.5 mb-1.5">
                                     <span className="text-[var(--ocms-accent)] opacity-60">{fieldIcons[field.type]}</span>
                                     <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
-                                        {field.label}
+                                        {fieldLabel}
                                     </label>
                                     <span className="ml-auto text-[9px] font-[family-name:var(--font-jetbrains-mono)] text-slate-600 bg-white/[0.04] px-1.5 py-0.5 rounded">
                                         {field.type}
@@ -325,10 +395,11 @@ export default function ContentEditor({
                                     <input type="text" value={field.value}
                                         onChange={(e) => onFieldChange(field.id, e.target.value)}
                                         className="w-full bg-white/[0.03] border border-white/[0.08] rounded-md px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-[var(--ocms-accent)] focus:ring-1 focus:ring-[var(--ocms-accent)]/20 transition-all font-[family-name:var(--font-jetbrains-mono)]"
-                                        placeholder={`Enter ${field.label.toLowerCase()}...`} />
+                                        placeholder={`Enter ${fieldLabel.toLowerCase()}...`} />
                                 )}
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 </FeaturePanel>
 

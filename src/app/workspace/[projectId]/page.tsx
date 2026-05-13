@@ -14,10 +14,35 @@ export interface SchemaField {
 
 // WorkspaceClient logic moved to its own file.
 
-export default async function WorkspacePage({ params }: { params: { projectId: string } }) {
-    const project = await prisma.project.findUnique({
+export default async function WorkspacePage({ 
+    params,
+    searchParams 
+}: { 
+    params: { projectId: string },
+    searchParams: { target?: string }
+}) {
+    let project = await prisma.project.findUnique({
         where: { id: params.projectId }
     });
+
+    const targetUrl = searchParams.target;
+
+    if (!project && targetUrl) {
+        // Find or create Guest User
+        let guestUser = await prisma.user.findFirst({ where: { email: "guest@ocms.ai" } });
+        if (!guestUser) {
+            guestUser = await prisma.user.create({ data: { name: "Guest User", email: "guest@ocms.ai" } });
+        }
+
+        project = await prisma.project.create({
+            data: {
+                id: params.projectId, 
+                name: "Auto-Recovered Project",
+                sourceUrl: targetUrl,
+                userId: guestUser.id
+            }
+        });
+    }
 
     if (!project) {
         notFound();

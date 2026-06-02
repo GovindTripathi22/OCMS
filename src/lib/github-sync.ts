@@ -10,7 +10,8 @@
 
 import { Octokit } from "@octokit/rest";
 import { prisma } from "@/lib/prisma";
-import type { SchemaField } from "@/lib/gemini";
+import type { SchemaField } from "@/types/schema";
+
 
 export interface SyncInput {
     userId: string;

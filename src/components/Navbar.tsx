@@ -17,18 +17,18 @@ export default function Navbar() {
     return (
         <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
             scrolled
-                ? "bg-[rgba(8,11,20,0.85)] backdrop-blur-xl border-b border-white/[0.06] shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
-                : "bg-transparent border-b border-transparent"
+                ? "bg-[#f6f4ee]/95 backdrop-blur-xl border-b-[3px] border-black shadow-[4px_4px_0px_#000]"
+                : "bg-transparent border-b-3 border-transparent"
         }`}>
             <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
                 {/* Logo */}
                 <Link href="/" className="flex items-center gap-3 group">
-                    <div className="relative w-9 h-9 rounded-xl overflow-hidden border border-white/10 group-hover:border-violet-500/50 transition-all duration-300 group-hover:shadow-[0_0_20px_rgba(139,92,246,0.3)]">
+                    <div className="relative w-9 h-9 rounded-md overflow-hidden border-2 border-black group-hover:shadow-[3px_3px_0px_var(--ocms-orange)] transition-all duration-300">
                         <Image src="/ocms_logo.png" alt="OCMS Logo" fill sizes="36px" className="object-cover" />
                     </div>
                     <div>
-                        <span className="text-base font-black tracking-tight text-white group-hover:text-violet-300 transition-colors duration-300">OCMS</span>
-                        <span className="hidden sm:inline text-[10px] font-mono text-slate-600 ml-2">by SPACHT</span>
+                        <span className="text-base font-black tracking-tight text-black group-hover:text-[var(--ocms-orange)] transition-colors duration-300">OCMS</span>
+                        <span className="hidden sm:inline text-[10px] font-mono text-slate-700 ml-2">by SPACHT</span>
                     </div>
                 </Link>
 
@@ -36,9 +36,9 @@ export default function Navbar() {
                 <nav className="hidden md:flex items-center gap-1">
                     {["How it Works", "Features", "Pricing"].map((item) => (
                         <Link
-                            key={item}
-                            href={`#${item.toLowerCase().replace(/ /g, "-")}`}
-                            className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors duration-200 rounded-lg hover:bg-white/[0.04]"
+                             key={item}
+                             href={`#${item.toLowerCase().replace(/ /g, "-")}`}
+                             className="px-4 py-2 text-sm text-slate-700 hover:text-black font-semibold transition-colors duration-200 rounded-md hover:bg-black/5"
                         >
                             {item}
                         </Link>
@@ -48,8 +48,8 @@ export default function Navbar() {
                 {/* Actions */}
                 <div className="flex items-center gap-3">
                     <Link
-                        href="/login"
-                        className="hidden sm:inline-flex text-sm text-slate-400 hover:text-white transition-colors duration-200 px-4 py-2 rounded-lg hover:bg-white/[0.04]"
+                        href="/api/auth/signin"
+                        className="hidden sm:inline-flex text-sm text-slate-700 hover:text-black font-semibold transition-colors duration-200 px-4 py-2 rounded-md hover:bg-black/5"
                     >
                         Sign In
                     </Link>

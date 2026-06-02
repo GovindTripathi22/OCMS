@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { callGemini, SchemaField } from "@/lib/gemini";
+import { callGemini, safeJsonParse } from "@/lib/gemini";
+import type { SchemaField } from "@/types/schema";
+
+
 
 /**
  * POST /api/generate-ab-variant
@@ -28,7 +31,7 @@ RULES:
         const prompt = `Rewrite this schema for audience: ${targetAudience}\n\n${JSON.stringify(schema, null, 2)}`;
 
         const response = await callGemini(prompt, systemPrompt, true);
-        const newSchema = JSON.parse(response) as SchemaField[];
+        const newSchema = safeJsonParse<SchemaField[]>(response);
 
         return NextResponse.json({ schema: newSchema });
     } catch (err) {

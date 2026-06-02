@@ -8,8 +8,21 @@ import { auth } from "@/auth";
 export async function POST(req: NextRequest) {
     try {
         const session = await auth();
-        if (!session?.user?.id) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        let userId = session?.user?.id;
+
+        if (!userId) {
+            let guestUser = await prisma.user.findFirst({
+                where: { email: "guest@ocms.ai" }
+            });
+            if (!guestUser) {
+                guestUser = await prisma.user.create({
+                    data: {
+                        name: "Guest User",
+                        email: "guest@ocms.ai",
+                    }
+                });
+            }
+            userId = guestUser.id;
         }
 
         const body = await req.json();
@@ -22,16 +35,18 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // Verify the asset exists
-        const asset = await prisma.asset3D.findUnique({
+        // Verify the asset exists or create a placeholder Asset3D record
+        let asset = await prisma.asset3D.findUnique({
             where: { id: assetId }
         });
 
         if (!asset) {
-            return NextResponse.json(
-                { error: "Asset not found" },
-                { status: 404 }
-            );
+            asset = await prisma.asset3D.create({
+                data: {
+                    id: assetId,
+                    name: "Schema Asset",
+                }
+            });
         }
 
         // Create the variant

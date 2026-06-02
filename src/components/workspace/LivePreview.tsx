@@ -1,6 +1,6 @@
 "use client";
 
-import { Globe, RefreshCw, ExternalLink, AlertTriangle, Loader2, Monitor } from "lucide-react";
+import { Globe, RefreshCw, ExternalLink, AlertTriangle, Loader2, Monitor, Code2 } from "lucide-react";
 import { useState, useCallback, RefObject, useEffect } from "react";
 
 interface LivePreviewProps {
@@ -8,13 +8,21 @@ interface LivePreviewProps {
     onUrlChange: (url: string) => void;
     iframeRef: RefObject<HTMLIFrameElement>;
     onLoad?: () => void;
+    projectId?: string;
 }
 
-export default function LivePreview({ previewUrl, onUrlChange, iframeRef, onLoad }: LivePreviewProps) {
+export default function LivePreview({ previewUrl, onUrlChange, iframeRef, onLoad, projectId }: LivePreviewProps) {
     const [inputUrl, setInputUrl] = useState(previewUrl);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
     const [loadProgress, setLoadProgress] = useState(0);
+    const [scriptMode, setScriptMode] = useState<"static" | "dynamic">("static");
+
+    const buildProxyUrl = useCallback((targetUrl: string) => {
+        const params = new URLSearchParams({ url: targetUrl, scriptMode });
+        if (projectId) params.set("projectId", projectId);
+        return `/api/proxy?${params.toString()}`;
+    }, [projectId, scriptMode]);
 
     // Simulate loading progress
     useEffect(() => {
@@ -41,88 +49,112 @@ export default function LivePreview({ previewUrl, onUrlChange, iframeRef, onLoad
         if (iframeRef.current) {
             setIsLoading(true);
             setHasError(false);
-            iframeRef.current.src = `/api/proxy?url=${encodeURIComponent(previewUrl)}`;
+            iframeRef.current.src = buildProxyUrl(previewUrl);
         }
-    }, [previewUrl, iframeRef]);
+    }, [previewUrl, iframeRef, buildProxyUrl]);
+
+    useEffect(() => {
+        if (!iframeRef.current) return;
+        setIsLoading(true);
+        setHasError(false);
+        iframeRef.current.src = buildProxyUrl(previewUrl);
+    }, [scriptMode, previewUrl, iframeRef, buildProxyUrl]);
 
     return (
-        <div className="flex flex-col h-full bg-[#080b14]">
-            {/* URL Bar */}
-            <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2.5 sm:py-3 bg-[rgba(8,11,20,0.95)] border-b border-white/[0.06] backdrop-blur-xl">
-                {/* Browser dots */}
-                <div className="hidden sm:flex items-center gap-1.5 mr-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-red-500/40 border border-red-500/20" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/40 border border-yellow-500/20" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-green-500/40 border border-green-500/20" />
+        <div className="flex flex-col h-full bg-[var(--ocms-bg)]">
+            {/* ─── Boxy Browser Bar ─── */}
+            <div className="flex items-center gap-2 sm:gap-3 px-4 sm:px-5 py-3 bg-white border-b-[3px] border-black relative">
+                {/* Browser dots — Poppy Colors */}
+                <div className="hidden sm:flex items-center gap-2.5 mr-3">
+                    <div className="w-3 h-3 rounded-[3px] border-2 border-black bg-[var(--ocms-orange)] cursor-pointer hover:-translate-y-[1px] transition-transform" />
+                    <div className="w-3 h-3 rounded-[3px] border-2 border-black bg-[var(--ocms-yellow)] cursor-pointer hover:-translate-y-[1px] transition-transform" />
+                    <div className="w-3 h-3 rounded-[3px] border-2 border-black bg-[var(--ocms-green)] cursor-pointer hover:-translate-y-[1px] transition-transform" />
                 </div>
 
-                <Globe className="hidden sm:block w-4 h-4 text-slate-600 shrink-0" />
-                
+                <Globe className="hidden sm:block w-4 h-4 text-black shrink-0" />
+
                 <div className="flex-1 relative">
                     <input
                         type="text"
                         value={inputUrl}
                         onChange={(e) => setInputUrl(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && handleNavigate()}
-                        className="w-full bg-white/[0.04] border border-white/[0.06] rounded-lg px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs text-slate-300 placeholder-slate-600 outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20 transition-all font-mono hover:border-white/10"
+                        className="w-full bg-white border-[3px] border-black rounded-md px-4 py-2 text-[11px] sm:text-xs text-black placeholder-slate-500 outline-none focus:shadow-[3px_3px_0px_var(--ocms-blue)] transition-all font-mono font-bold"
                         placeholder="Enter URL to preview..."
                     />
                 </div>
 
                 <button
                     onClick={handleRefresh}
-                    className="p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-slate-300 transition-all"
+                    className="p-2 bg-white border-[3px] border-black rounded-md text-black hover:bg-[var(--ocms-orange)] hover:text-white transition-all transform active:scale-95 shadow-[2px_2px_0px_#000] hover:shadow-[3px_3px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px]"
                     title="Refresh"
                 >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin text-violet-400" : ""}`} />
+                    <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
                 </button>
 
                 <a
                     href={previewUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-slate-300 transition-all"
+                    className="p-2 bg-white border-[3px] border-black rounded-md text-black hover:bg-[var(--ocms-orange)] hover:text-white transition-all transform active:scale-95 shadow-[2px_2px_0px_#000] hover:shadow-[3px_3px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px]"
                     title="Open in new tab"
                 >
-                    <ExternalLink className="w-3.5 h-3.5" />
+                    <ExternalLink className="w-4 h-4" />
                 </a>
 
-                <div className="hidden sm:flex items-center gap-1.5 ml-2 px-2 py-1 rounded-md bg-white/[0.03] border border-white/[0.05]">
-                    <Monitor className="w-3 h-3 text-slate-600" />
-                    <span className="text-[9px] text-slate-600 font-mono uppercase">Preview</span>
+                <div className="hidden sm:flex items-center gap-1.5 ml-2 px-3 py-1 rounded-[4px] bg-[var(--ocms-green)] text-black border-2 border-black shadow-[2px_2px_0px_#000]">
+                    <Monitor className="w-3 h-3 text-black" />
+                    <span className="text-[8px] text-black font-extrabold uppercase tracking-wider">Live Preview</span>
+                </div>
+
+                <div className="hidden md:flex items-center rounded-md border-[3px] border-black overflow-hidden shadow-[2px_2px_0px_#000]">
+                    <button
+                        type="button"
+                        onClick={() => setScriptMode("static")}
+                        className={`px-3 py-2 text-[9px] font-black uppercase border-r-[3px] border-black transition-colors ${scriptMode === "static" ? "bg-[var(--ocms-yellow)] text-black" : "bg-white text-slate-700 hover:bg-slate-100"}`}
+                        title="Static preview mode"
+                    >
+                        Static
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setScriptMode("dynamic")}
+                        className={`px-3 py-2 text-[9px] font-black uppercase transition-colors flex items-center gap-1 ${scriptMode === "dynamic" ? "bg-[var(--ocms-blue)] text-black" : "bg-white text-slate-700 hover:bg-slate-100"}`}
+                        title="Dynamic preview mode"
+                    >
+                        <Code2 className="w-3 h-3" />
+                        JS
+                    </button>
                 </div>
             </div>
 
-            {/* Loading Progress Bar */}
+            {/* ─── Loading Progress Bar — Rainbow Gradient ─── */}
             {isLoading && (
-                <div className="h-0.5 bg-white/[0.03] relative overflow-hidden">
+                <div className="h-1.5 bg-white border-b-2 border-black relative overflow-hidden">
                     <div
                         className="h-full transition-all duration-300 ease-out"
                         style={{
                             width: `${loadProgress}%`,
-                            background: 'linear-gradient(90deg, #8b5cf6, #22d3ee)',
-                            boxShadow: '0 0 10px rgba(139,92,246,0.8)',
+                            background: 'linear-gradient(90deg, #f97316, #fbbf24, #22c55e, #3b82f6, #ec4899)',
                         }}
                     />
                 </div>
             )}
 
-            {/* Iframe Container */}
+            {/* ─── Iframe Container ─── */}
             <div className="flex-1 relative bg-white overflow-hidden">
                 {/* Loading State */}
                 {isLoading && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#080b14]">
-                        <div className="flex flex-col items-center gap-4 text-center">
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--ocms-bg)]">
+                        <div className="flex flex-col items-center gap-5 text-center p-8 bg-white border-[3px] border-black rounded-md shadow-[5px_5px_0px_#000]">
                             <div className="relative">
-                                <div className="w-12 h-12 rounded-full border border-violet-500/20 flex items-center justify-center">
-                                    <Loader2 className="w-5 h-5 text-violet-400 animate-spin" />
+                                <div className="w-14 h-14 rounded-md border-[3px] border-black flex items-center justify-center bg-[var(--ocms-yellow)] shadow-[3px_3px_0px_#000]">
+                                    <Loader2 className="w-6 h-6 text-black animate-spin" />
                                 </div>
-                                {/* Pulse rings */}
-                                <div className="absolute inset-0 rounded-full border border-violet-500/10 animate-ping" />
                             </div>
                             <div>
-                                <p className="text-sm text-slate-300 font-medium">Loading preview</p>
-                                <p className="text-xs text-slate-600 mt-1 font-mono">{previewUrl.slice(0, 40)}...</p>
+                                <p className="text-sm text-black font-extrabold uppercase tracking-wide">Loading preview</p>
+                                <p className="text-xs text-slate-800 mt-1.5 font-mono font-bold break-all max-w-[250px]">{previewUrl}</p>
                             </div>
                         </div>
                     </div>
@@ -130,21 +162,21 @@ export default function LivePreview({ previewUrl, onUrlChange, iframeRef, onLoad
 
                 {/* Error State */}
                 {hasError && !isLoading && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#080b14]">
-                        <div className="flex flex-col items-center gap-4 text-center max-w-sm px-8">
-                            <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
-                                <AlertTriangle className="w-6 h-6 text-amber-400" />
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--ocms-bg)]">
+                        <div className="flex flex-col items-center gap-5 text-center max-w-sm p-8 bg-white border-[3px] border-black rounded-md shadow-[5px_5px_0px_#000] mx-4">
+                            <div className="w-16 h-16 rounded-md bg-[var(--ocms-orange)] border-[3px] border-black flex items-center justify-center shadow-[3px_3px_0px_#000]">
+                                <AlertTriangle className="w-7 h-7 text-black" />
                             </div>
                             <div>
-                                <p className="text-sm text-slate-200 font-semibold">Can&apos;t load preview</p>
-                                <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                                    This site blocks embedding. Try opening it in a new tab or use a local development URL like{" "}
-                                    <code className="text-violet-400 bg-violet-400/10 px-1 rounded">localhost:3001</code>
+                                <p className="text-sm text-black font-extrabold uppercase tracking-wide">Can&apos;t load preview</p>
+                                <p className="text-xs text-slate-800 mt-2 leading-relaxed font-bold">
+                                    This site blocks embedding. Try opening it in a new tab or use a local dev URL like{" "}
+                                    <code className="text-black bg-[var(--ocms-yellow)] border border-black px-1.5 py-0.5 rounded font-mono font-extrabold">localhost:3001</code>
                                 </p>
                             </div>
                             <button
                                 onClick={handleRefresh}
-                                className="text-xs text-violet-400 hover:text-violet-300 border border-violet-500/30 hover:border-violet-400/50 px-4 py-2 rounded-lg transition-all hover:bg-violet-500/5"
+                                className="text-xs bg-white text-black border-[3px] border-black hover:bg-[var(--ocms-orange)] hover:text-white shadow-[3px_3px_0px_#000] hover:shadow-[5px_5px_0px_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] px-5 py-2.5 rounded-md transition-all font-black uppercase"
                             >
                                 Try again
                             </button>
@@ -154,7 +186,7 @@ export default function LivePreview({ previewUrl, onUrlChange, iframeRef, onLoad
 
                 <iframe
                     ref={iframeRef}
-                    src={`/api/proxy?url=${encodeURIComponent(previewUrl)}`}
+                    src={buildProxyUrl(previewUrl)}
                     className="w-full h-full border-0"
                     onLoad={() => {
                         setIsLoading(false);
@@ -165,7 +197,7 @@ export default function LivePreview({ previewUrl, onUrlChange, iframeRef, onLoad
                         setIsLoading(false);
                         setHasError(true);
                     }}
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
                     title="Live Website Preview"
                 />
             </div>

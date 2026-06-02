@@ -9,10 +9,23 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export async function POST(req: NextRequest) {
     try {
-        // 1. Authenticate user and get session
+        // 1. Authenticate user and get session or use guest fallback
         const session = await auth();
-        if (!session || !session.user || !session.user.id) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        let userId = session?.user?.id;
+
+        if (!userId) {
+            let guestUser = await prisma.user.findFirst({
+                where: { email: "guest@ocms.ai" }
+            });
+            if (!guestUser) {
+                guestUser = await prisma.user.create({
+                    data: {
+                        name: "Guest User",
+                        email: "guest@ocms.ai",
+                    }
+                });
+            }
+            userId = guestUser.id;
         }
 
         const { repoOwner, repoName, filePath, changes } = await req.json();
@@ -24,7 +37,7 @@ export async function POST(req: NextRequest) {
         // Fetch GitHub access token from the Prisma Account table
         const account = await prisma.account.findFirst({
             where: {
-                userId: session.user.id,
+                userId: userId,
                 provider: "github",
             },
         });

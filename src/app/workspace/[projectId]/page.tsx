@@ -2,17 +2,8 @@ import { Suspense } from "react";
 import WorkspaceClient from "./WorkspaceClient";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
-
-export interface SchemaField {
-    id: string;
-    type: "text" | "image" | "link" | "3d-model";
-    label: string;
-    value: string;
-    selector?: string;
-    originalHtmlTag?: string;
-}
-
-// WorkspaceClient logic moved to its own file.
+import { auth } from "@/auth";
+import type { SchemaField } from "@/types/schema";
 
 export default async function WorkspacePage({ 
     params,
@@ -21,28 +12,40 @@ export default async function WorkspacePage({
     params: { projectId: string },
     searchParams: { target?: string }
 }) {
-    let project = await prisma.project.findUnique({
-        where: { id: params.projectId }
-    });
+    const session = await auth();
+    let currentUserId = session?.user?.id;
 
-    const targetUrl = searchParams.target;
-
-    if (!project && targetUrl) {
+    if (!currentUserId) {
         // Find or create Guest User
         let guestUser = await prisma.user.findFirst({ where: { email: "guest@ocms.ai" } });
         if (!guestUser) {
             guestUser = await prisma.user.create({ data: { name: "Guest User", email: "guest@ocms.ai" } });
         }
+        currentUserId = guestUser.id;
+    }
 
+    let project = await prisma.project.findUnique({
+        where: { id: params.projectId }
+    });
+
+    // IDOR Protection: If project exists but belongs to a different user, deny access (404)
+    if (project && project.userId !== currentUserId) {
+        notFound();
+    }
+
+    const targetUrl = searchParams.target;
+
+    if (!project && targetUrl) {
         project = await prisma.project.create({
             data: {
                 id: params.projectId, 
                 name: "Auto-Recovered Project",
                 sourceUrl: targetUrl,
-                userId: guestUser.id
+                userId: currentUserId
             }
         });
     }
+
 
     if (!project) {
         notFound();
@@ -82,3 +85,4 @@ export default async function WorkspacePage({
         </Suspense>
     );
 }
+

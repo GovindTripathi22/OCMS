@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { generateSchema } from "@/lib/gemini";
 import { auth } from "@/auth";
 import { checkAndIncrementQuota } from "@/lib/ratelimit";
+import { prisma } from "@/lib/prisma";
 
 /**
  * POST /api/generate-schema
@@ -15,15 +16,26 @@ export async function POST(request: Request) {
     try {
         // ── Auth Check ───────────────────────────────────────
         const session = await auth();
+        let userId = session?.user?.id;
+        let subscription = session?.user?.subscription || "free";
 
-        if (!session?.user?.id) {
-            return NextResponse.json(
-                { error: "Unauthorized — sign in to generate schemas" },
-                { status: 401 }
-            );
+        if (!userId) {
+            let guestUser = await prisma.user.findFirst({
+                where: { email: "guest@ocms.ai" }
+            });
+            if (!guestUser) {
+                guestUser = await prisma.user.create({
+                    data: {
+                        name: "Guest User",
+                        email: "guest@ocms.ai",
+                    }
+                });
+            }
+            userId = guestUser.id;
+            subscription = "free";
         }
 
-        const { id, subscription } = session.user;
+        const id = userId;
 
         // ── Rate Limit Check ─────────────────────────────────
         const quota = await checkAndIncrementQuota(id, subscription);

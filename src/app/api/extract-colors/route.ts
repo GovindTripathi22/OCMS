@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { callGemini } from "@/lib/gemini";
+import { callGemini, safeJsonParse } from "@/lib/gemini";
 
 /**
  * POST /api/extract-colors
@@ -26,7 +26,7 @@ RULES:
         const prompt = `Generate a 5-color palette for this brand: ${brandDescription}`;
 
         const response = await callGemini(prompt, systemPrompt, true);
-        const colors = JSON.parse(response) as string[];
+        const colors = safeJsonParse<string[]>(response);
 
         if (!Array.isArray(colors) || colors.length !== 5) {
             throw new Error("Invalid color array format returned by AI.");

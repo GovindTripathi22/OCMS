@@ -92,14 +92,15 @@ export default function ModelDropzone({
             }}
             onDragLeave={() => setState("idle")}
             onDrop={handleDrop}
-            className={`relative rounded-lg border-2 border-dashed p-4 text-center cursor-pointer transition-all duration-200 ${state === "dragging"
-                    ? "border-[var(--ocms-accent)] bg-[var(--ocms-accent)]/5"
+            className={`relative rounded-md border-[3px] border-dashed p-5 text-center cursor-pointer transition-all duration-300 ${
+                state === "dragging"
+                    ? "border-black bg-[var(--ocms-green-glow)] shadow-[3px_3px_0px_#000] -translate-x-[2px] -translate-y-[2px]"
                     : state === "done"
-                        ? "border-emerald-500/50 bg-emerald-500/5"
+                        ? "border-black border-solid bg-emerald-50 shadow-[3px_3px_0px_#000]"
                         : state === "error"
-                            ? "border-red-500/50 bg-red-500/5"
-                            : "border-[var(--ocms-border)] hover:border-slate-500"
-                }`}
+                            ? "border-black border-solid bg-red-50"
+                            : "border-black bg-[#fcfbf9] hover:bg-[var(--ocms-orange-glow)] hover:shadow-[3px_3px_0px_#000] hover:-translate-x-[2px] hover:-translate-y-[2px]"
+            }`}
         >
             <input
                 type="file"
@@ -110,34 +111,34 @@ export default function ModelDropzone({
 
             {state === "uploading" ? (
                 <div className="flex flex-col items-center gap-2 py-2">
-                    <Loader2 className="w-6 h-6 text-[var(--ocms-accent)] animate-spin" />
-                    <span className="text-xs text-slate-400">Uploading {fileName}...</span>
+                    <Loader2 className="w-6 h-6 text-black animate-spin" />
+                    <span className="text-xs text-black font-mono font-bold">Uploading {fileName}...</span>
                 </div>
             ) : state === "done" ? (
                 <div className="flex flex-col items-center gap-2 py-2">
-                    <CheckCircle className="w-6 h-6 text-emerald-400" />
-                    <span className="text-xs text-emerald-400">3D Model Injected!</span>
+                    <CheckCircle className="w-6 h-6 text-emerald-700" />
+                    <span className="text-xs text-emerald-800 font-black uppercase tracking-wider">3D Model Injected!</span>
                 </div>
             ) : state === "error" ? (
                 <div className="flex flex-col items-center gap-2 py-2">
-                    <span className="text-xs text-red-400">{errorMsg}</span>
+                    <span className="text-xs text-red-700 font-bold">{errorMsg}</span>
                     <button
                         onClick={() => setState("idle")}
-                        className="text-[10px] text-slate-500 underline"
+                        className="text-[10px] text-black font-black uppercase underline hover:text-[var(--ocms-orange)]"
                     >
                         Try again
                     </button>
                 </div>
             ) : (
-                <div className="flex flex-col items-center gap-2 py-2">
-                    <div className="p-2 rounded-lg bg-white/5">
+                <div className="flex flex-col items-center gap-2.5 py-1">
+                    <div className="p-2 rounded-md bg-white border-2 border-black shadow-[2px_2px_0px_#000]">
                         {state === "dragging" ? (
-                            <Upload className="w-5 h-5 text-[var(--ocms-accent)]" />
+                            <Upload className="w-5 h-5 text-black" />
                         ) : (
-                            <Box className="w-5 h-5 text-slate-500" />
+                            <Box className="w-5 h-5 text-black" />
                         )}
                     </div>
-                    <span className="text-xs text-slate-500">
+                    <span className="text-[10px] text-black font-extrabold uppercase tracking-wide">
                         Drop <strong>.glb</strong> / <strong>.gltf</strong> to inject 3D model
                     </span>
                 </div>

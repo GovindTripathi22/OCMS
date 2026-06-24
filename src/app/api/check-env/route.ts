@@ -12,19 +12,20 @@ export async function GET() {
 
     const DUMMY_GITHUB_CLIENT_IDS = [
         "your_github_client_id",
+        "your_github_client_id_here",
         "dummy_client_id",
     ];
     const DUMMY_GITHUB_CLIENT_SECRETS = [
         "your_github_client_secret",
+        "your_github_client_secret_here",
         "dummy_client_secret",
     ];
 
     const requiredVars = [
         "GITHUB_CLIENT_ID",
         "GITHUB_CLIENT_SECRET",
-        "GEMINI_API_KEY",
         "DATABASE_URL",
-        "NEXTAUTH_SECRET",
+        "AUTH_SECRET",
     ] as const;
 
     for (const varName of requiredVars) {

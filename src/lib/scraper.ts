@@ -273,7 +273,7 @@ export function validateSchemaFields(
 export function extractFallbackSchemaFields(
     rawHtml: string,
     baseUrl?: string,
-    limit = 12
+    limit = 150
 ): SchemaField[] {
     const $ = cheerio.load(rawHtml);
     const fields: SchemaField[] = [];
@@ -306,21 +306,28 @@ export function extractFallbackSchemaFields(
         });
     }
 
-    $("h1,h2,h3").each((_, el) => {
+    // Scan all heading levels h1-h6
+    $("h1,h2,h3,h4,h5,h6").each((_, el) => {
         const element = $(el);
         addField(element, "text", `${element.prop("tagName")?.toLowerCase()}-${element.text()}`, "Heading");
     });
 
-    $("p,blockquote,figcaption").each((_, el) => {
+    // Scan text blocks: paragraphs, blockquotes, list items, spans, labels, and cells
+    $("p,blockquote,figcaption,li,label,span,strong,em,th,td").each((_, el) => {
         const element = $(el);
         const value = normalizeValue(element.text());
-        if (value.length >= 20) addField(element, "text", value, "Body Copy");
+        // For standard body copy tags, allow text with length >= 10. For smaller tags, allow length >= 2
+        const minLength = ["p", "blockquote", "figcaption"].includes(element.prop("tagName")?.toLowerCase() || "") ? 10 : 2;
+        if (value.length >= minLength && element.children().length <= 3) {
+            addField(element, "text", value, "Text Block");
+        }
     });
 
-    $("button,a").each((_, el) => {
+    // Scan semantic and custom buttons and links
+    $("button, a, .btn, .button, [role='button'], [class*='btn-'], [class*='button-']").each((_, el) => {
         const element = $(el);
         const value = normalizeValue(element.text());
-        if (!value || /^(home|about|contact|blog)$/i.test(value)) return;
+        if (!value) return;
         if (element.is("a") && element.attr("href")) {
             addField(element, "link", value, `${value} Link`);
         } else {
@@ -328,6 +335,7 @@ export function extractFallbackSchemaFields(
         }
     });
 
+    // Scan images
     $("img[src],img[data-src],[style*='background']").each((_, el) => {
         const element = $(el);
         addField(element, "image", element.attr("alt") || getFieldValue(element, "image"), "Image");

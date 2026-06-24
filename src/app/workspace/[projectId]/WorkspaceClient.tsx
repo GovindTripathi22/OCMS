@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import ContentEditor from "@/components/workspace/ContentEditor";
 import LivePreview from "@/components/workspace/LivePreview";
 import type { SchemaField } from "@/types/schema";
+import { PBR_PRESETS } from "@/lib/pbr-presets";
 
 
 interface WorkspaceClientProps {
@@ -27,6 +28,68 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const inlineEditRef = useRef(false);
+
+    const [editingField, setEditingField] = useState<SchemaField | null>(null);
+    const [modalAlt, setModalAlt] = useState("");
+    const [modalObjectFit, setModalObjectFit] = useState("");
+    const [modalBorderRadius, setModalBorderRadius] = useState("");
+    const [modalValue, setModalValue] = useState("");
+    const [modalRoughness, setModalRoughness] = useState(0.5);
+    const [modalMetalness, setModalMetalness] = useState(1.0);
+    const [modalTextureUrl, setModalTextureUrl] = useState("");
+
+    const pushHistory = useCallback((next: SchemaField[]) => {
+        setHistory((currentHistory) => [
+            ...currentHistory.slice(0, historyIndex + 1),
+            next,
+        ]);
+        setHistoryIndex((currentIndex) => currentIndex + 1);
+    }, [historyIndex]);
+
+    const handleFieldUpdate = useCallback((fieldId: string, updates: Partial<SchemaField>) => {
+        setSchema((prev) => {
+            const currentField = prev.find((f) => f.id === fieldId);
+            if (!currentField) return prev;
+
+            const next = prev.map((f) => (f.id === fieldId ? { ...f, ...updates } : f));
+            pushHistory(next);
+            return next;
+        });
+    }, [pushHistory]);
+
+    useEffect(() => {
+        if (editingField) {
+            setModalAlt(editingField.alt || "");
+            setModalObjectFit(editingField.objectFit || "cover");
+            setModalBorderRadius(editingField.borderRadius || "none");
+            setModalValue(editingField.value || "");
+            setModalRoughness(editingField.roughness !== undefined ? editingField.roughness : 0.5);
+            setModalMetalness(editingField.metalness !== undefined ? editingField.metalness : 1.0);
+            setModalTextureUrl(editingField.textureUrl || "");
+        }
+    }, [editingField]);
+
+    const handleSaveModal = () => {
+        if (!editingField) return;
+        
+        const updates: Partial<SchemaField> = {
+            value: modalValue,
+            alt: modalAlt,
+            objectFit: modalObjectFit,
+            borderRadius: modalBorderRadius,
+            roughness: modalRoughness,
+            metalness: modalMetalness,
+            textureUrl: modalTextureUrl,
+        };
+        
+        setSchema((prev) => {
+            const next = prev.map((f) => (f.id === editingField.id ? { ...f, ...updates } : f));
+            pushHistory(next);
+            return next;
+        });
+        
+        setEditingField(null);
+    };
 
     const handleScanPage = useCallback(async () => {
         const iframe = iframeRef.current;
@@ -66,13 +129,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         }
     }, [project.id, previewUrl, historyIndex]);
 
-    const pushHistory = useCallback((next: SchemaField[]) => {
-        setHistory((currentHistory) => [
-            ...currentHistory.slice(0, historyIndex + 1),
-            next,
-        ]);
-        setHistoryIndex((currentIndex) => currentIndex + 1);
-    }, [historyIndex]);
+
 
     const handleFieldChange = useCallback((fieldId: string, newValue: string) => {
         setSchema((prev) => {
@@ -108,6 +165,12 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                 selector: f.selector,
                 type: f.type,
                 value: f.value,
+                alt: f.alt,
+                objectFit: f.objectFit,
+                borderRadius: f.borderRadius,
+                roughness: f.roughness,
+                metalness: f.metalness,
+                textureUrl: f.textureUrl,
             }));
 
         iframe.contentWindow.postMessage(
@@ -177,6 +240,12 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         selector: f.selector,
                         type: f.type,
                         value: f.value,
+                        alt: f.alt,
+                        objectFit: f.objectFit,
+                        borderRadius: f.borderRadius,
+                        roughness: f.roughness,
+                        metalness: f.metalness,
+                        textureUrl: f.textureUrl,
                     }));
                 iframeRef.current?.contentWindow?.postMessage(
                     { source: "ocms-live-bridge", changes: changesPayload },
@@ -212,6 +281,10 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                 });
             }
 
+            if (source === "ocms-doubleclick-image" && event.data.field) {
+                setEditingField(event.data.field);
+            }
+
             if (source === "ocms-model-drop" && file instanceof File) {
                 const targetFieldId =
                     fieldId ||
@@ -236,7 +309,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
             }
 
             if (source === "ocms-toolbar-action" && fieldId && value) {
-                const response = await fetch("/api/inline-ai-action", {
+                const response = await fetch("/api/inline-text-action", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ action, value }),
@@ -273,6 +346,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         schema={schema}
                         initialSchema={initialSchema}
                         onFieldChange={handleFieldChange}
+                        onFieldUpdate={handleFieldUpdate}
                         onModelInjected={handleModelInjected}
                         githubOwner={project.githubOwner}
                         githubRepo={project.githubRepo}
@@ -298,6 +372,191 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                     />
                 </div>
             </div>
+
+            {/* Element Options Modal */}
+            {editingField && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                    <div className="w-full max-w-md bg-[#fcfbf9] border-[4px] border-black rounded-xl shadow-[8px_8px_0px_#000] p-6 text-black relative animate-fade-in">
+                        {/* Header */}
+                        <div className="flex items-center justify-between pb-4 border-b-2 border-black mb-4">
+                            <h3 className="text-base font-black uppercase tracking-tight">
+                                ⚙️ {editingField.type === "3d-model" ? "3D Model Options" : "Image Options"}
+                            </h3>
+                            <button
+                                onClick={() => setEditingField(null)}
+                                className="w-8 h-8 flex items-center justify-center border-2 border-black rounded-md bg-white hover:bg-[var(--ocms-orange)] hover:text-white transition-all shadow-[2px_2px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px]"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {/* Body */}
+                        <div className="space-y-4">
+                            {/* Type Specific Fields */}
+                            {editingField.type === "image" && (
+                                <>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase tracking-wider">Image Source URL</label>
+                                        <input
+                                            type="text"
+                                            value={modalValue}
+                                            onChange={(e) => setModalValue(e.target.value)}
+                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-mono font-bold"
+                                            placeholder="https://..."
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase tracking-wider">Alt Text (SEO)</label>
+                                        <input
+                                            type="text"
+                                            value={modalAlt}
+                                            onChange={(e) => setModalAlt(e.target.value)}
+                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
+                                            placeholder="Image description..."
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-black uppercase tracking-wider">Object Fit</label>
+                                            <select
+                                                value={modalObjectFit}
+                                                onChange={(e) => setModalObjectFit(e.target.value)}
+                                                className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
+                                            >
+                                                <option value="cover">Cover</option>
+                                                <option value="contain">Contain</option>
+                                                <option value="fill">Fill</option>
+                                                <option value="none">None</option>
+                                            </select>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-black uppercase tracking-wider">Border Corners</label>
+                                            <select
+                                                value={modalBorderRadius}
+                                                onChange={(e) => setModalBorderRadius(e.target.value)}
+                                                className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
+                                            >
+                                                <option value="none">Sharp (None)</option>
+                                                <option value="4px">Rounded Small</option>
+                                                <option value="8px">Rounded Medium</option>
+                                                <option value="16px">Rounded Large</option>
+                                                <option value="9999px">Circle (Full)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {editingField.type === "3d-model" && (
+                                <>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase tracking-wider">3D Model Path (.glb)</label>
+                                        <input
+                                            type="text"
+                                            value={modalValue}
+                                            onChange={(e) => setModalValue(e.target.value)}
+                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-orange)] font-mono font-bold"
+                                            placeholder="/models/..."
+                                        />
+                                    </div>
+
+                                    {/* Presets Grid */}
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black uppercase tracking-wider block">Material Presets</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {PBR_PRESETS.map((preset) => (
+                                                <button
+                                                    key={preset.name}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setModalRoughness(preset.roughness);
+                                                        setModalMetalness(preset.metalness);
+                                                        setModalTextureUrl(preset.textureUrl);
+                                                    }}
+                                                    className="flex items-center gap-2 p-2 border-[2.5px] border-black rounded-md bg-white hover:bg-slate-50 active:translate-x-[1px] active:translate-y-[1px] shadow-[2px_2px_0px_#000] active:shadow-none transition-all text-left"
+                                                >
+                                                    <span
+                                                        className="w-4 h-4 rounded-full border border-black shrink-0"
+                                                        style={{
+                                                            backgroundColor: preset.previewColor,
+                                                            backgroundImage: `url("${preset.textureUrl}")`,
+                                                            backgroundSize: 'cover'
+                                                        }}
+                                                    />
+                                                    <span className="text-[9px] font-black uppercase tracking-tight">{preset.name}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Sliders */}
+                                    <div className="grid grid-cols-2 gap-3 pt-1">
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between items-center text-[10px] font-black uppercase">
+                                                <span>Roughness</span>
+                                                <span className="bg-[var(--ocms-yellow)] px-1 border border-black rounded-[2px]">{modalRoughness.toFixed(2)}</span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.05"
+                                                value={modalRoughness}
+                                                onChange={(e) => setModalRoughness(parseFloat(e.target.value))}
+                                                className="w-full h-2 bg-white border-2 border-black rounded-full accent-black cursor-pointer"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between items-center text-[10px] font-black uppercase">
+                                                <span>Metalness</span>
+                                                <span className="bg-[var(--ocms-blue)] text-black px-1 border border-black rounded-[2px]">{modalMetalness.toFixed(2)}</span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.05"
+                                                value={modalMetalness}
+                                                onChange={(e) => setModalMetalness(parseFloat(e.target.value))}
+                                                className="w-full h-2 bg-white border-2 border-black rounded-full accent-black cursor-pointer"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase tracking-wider">Texture URL (Optional Override)</label>
+                                        <input
+                                            type="text"
+                                            value={modalTextureUrl}
+                                            onChange={(e) => setModalTextureUrl(e.target.value)}
+                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-[9px] outline-none focus:shadow-[2px_2px_0px_var(--ocms-orange)] font-mono font-bold"
+                                            placeholder="data:image/svg+xml;..."
+                                        />
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="flex justify-end gap-3 mt-6 pt-4 border-t-2 border-black">
+                            <button
+                                type="button"
+                                onClick={() => setEditingField(null)}
+                                className="px-4 py-2 border-[3px] border-black rounded-md bg-white font-black text-xs uppercase shadow-[3px_3px_0px_#000] hover:bg-slate-100 transition-all hover:translate-x-[-1px] hover:translate-y-[-1px]"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleSaveModal}
+                                className="px-4 py-2 border-[3px] border-black rounded-md bg-[var(--ocms-yellow)] font-black text-xs uppercase shadow-[3px_3px_0px_#000] hover:bg-[var(--ocms-orange)] hover:text-white transition-all hover:translate-x-[-1px] hover:translate-y-[-1px]"
+                            >
+                                Save Changes
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

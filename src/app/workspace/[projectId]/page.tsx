@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import WorkspaceClient from "./WorkspaceClient";
+import WorkspaceSkeleton from "@/components/workspace/WorkspaceSkeleton";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import { auth } from "@/auth";
@@ -80,7 +81,7 @@ export default async function WorkspacePage({
     };
 
     return (
-        <Suspense fallback={<div className="fixed inset-0 pt-[56px] flex items-center justify-center text-slate-400">Loading workspace...</div>}>
+        <Suspense fallback={<WorkspaceSkeleton />}>
             <WorkspaceClient project={projectData} initialSchema={initialSchema} />
         </Suspense>
     );

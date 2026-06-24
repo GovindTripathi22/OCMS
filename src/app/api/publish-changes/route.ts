@@ -1,11 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { patchJSX, type ASTChange } from "@/lib/ast-patcher";
 import { Octokit } from "@octokit/rest";
-import { GoogleGenAI } from "@google/genai";
+import fs from "fs";
+import path from "path";
 
-// Initialize Gemini API
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+interface SourceChange {
+    fieldId?: unknown;
+    selector?: unknown;
+    type?: unknown;
+    newValue?: unknown;
+    oldValue?: unknown;
+    alt?: unknown;
+    objectFit?: unknown;
+    borderRadius?: unknown;
+}
 
 export async function POST(req: NextRequest) {
     try {
@@ -32,6 +42,11 @@ export async function POST(req: NextRequest) {
 
         if (!repoOwner || !repoName || !filePath || !changes || !Array.isArray(changes)) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const astChanges = normalizeChanges(changes);
+        if (!astChanges.length) {
+            return NextResponse.json({ error: "No patchable JSX changes were provided" }, { status: 400 });
         }
 
         // Fetch GitHub access token from the Prisma Account table
@@ -77,58 +92,28 @@ export async function POST(req: NextRequest) {
         // The content from GitHub API is base64 encoded, need to decode it to UTF-8
         const decodedContent = Buffer.from(fileData.content, "base64").toString("utf8");
 
-        // --- STEP 2: The AI Code Modifier (Gemini 3.1 Pro) ---
-        const systemInstruction = `You are a senior React developer applying OCMS content diffs.
-Carefully locate the React/HTML node identified by each fieldId and selector, then update only the requested value.
-Supported diff types: text, image, link, and 3d-model.
-For 3d-model diffs, preserve the surrounding React structure and render a <model-viewer src="..."> with auto-rotate and camera-controls if the existing node is intended to become a model.
-Do NOT alter component boundaries, imports unless absolutely necessary, logic, Tailwind classes, props unrelated to the diff, or surrounding JSX structure.
-Return ONLY the raw updated source code. Do not use markdown code blocks.`;
-
-        const prompt = `Here is the current source code:\n\n${decodedContent}\n\nHere are the content changes to apply:\n${JSON.stringify(changes, null, 2)}`;
-
-        const geminiResponse = await ai.models.generateContent({
-            model: process.env.GEMINI_PUBLISH_MODEL ?? "gemini-3.1-pro",
-            contents: prompt,
-            config: {
-                systemInstruction: systemInstruction,
-                // Using low temperature to prevent hallucinating extra code changes
-                temperature: 0.1,
-            },
-        });
-
-        const geminiResult = geminiResponse as unknown as {
-            text?: string;
-            response?: { text?: () => string };
-        };
-        let updatedCode = geminiResult.text ?? geminiResult.response?.text?.();
-
-        if (!updatedCode) {
-            return NextResponse.json({ error: "Gemini failed to generate updated code" }, { status: 500 });
+        // --- STEP 2: Deterministic AST Code Modifier (AI-Free) ---
+        const updatedCode = patchJSX(decodedContent, astChanges);
+        if (updatedCode === decodedContent) {
+            return NextResponse.json({ error: "No matching JSX nodes were found for the provided selectors" }, { status: 422 });
         }
 
-        // Strip markdown code blocks just in case the model ignored the system instruction
-        if (updatedCode.startsWith('\`\`\`')) {
-            const lines = updatedCode.split('\n');
-            if (lines[0].startsWith('\`\`\`')) lines.shift();
-            if (lines[lines.length - 1].startsWith('\`\`\`')) lines.pop();
-            updatedCode = lines.join('\n');
-        }
+        // Write changes back to the local workspace code files (R5 Local Sync)
+        try {
+            const localRoot = path.resolve(process.env.LOCAL_WORKSPACE_PATH || process.cwd());
+            const localFilePath = path.resolve(localRoot, filePath);
+            const insideLocalRoot = localFilePath === localRoot || localFilePath.startsWith(`${localRoot}${path.sep}`);
 
-        if (
-            decodedContent.includes("export default") &&
-            !updatedCode.includes("export default")
-        ) {
-            return NextResponse.json({ error: "Gemini output removed the React default export; refusing to publish." }, { status: 422 });
-        }
-
-        if (
-            (decodedContent.includes("import React") || decodedContent.includes("from \"react\"") || decodedContent.includes("from 'react'")) &&
-            !updatedCode.includes("from \"react\"") &&
-            !updatedCode.includes("from 'react'") &&
-            !updatedCode.includes("import React")
-        ) {
-            return NextResponse.json({ error: "Gemini output removed React imports; refusing to publish." }, { status: 422 });
+            if (insideLocalRoot && fs.existsSync(localFilePath)) {
+                fs.writeFileSync(localFilePath, updatedCode, "utf8");
+                console.log(`[Local Sync] Successfully updated local file: ${localFilePath}`);
+            } else if (!insideLocalRoot) {
+                console.warn(`[Local Sync] Refused to write outside workspace: ${localFilePath}`);
+            } else {
+                console.warn(`[Local Sync] Local file not found: ${localFilePath}`);
+            }
+        } catch (localErr) {
+            console.error("[Local Sync Error]:", localErr);
         }
 
         // --- STEP 3: The GitHub Push (Octokit) ---
@@ -154,4 +139,31 @@ Return ONLY the raw updated source code. Do not use markdown code blocks.`;
         console.error("Publish changes error:", error);
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
+}
+
+function normalizeChanges(changes: SourceChange[]): ASTChange[] {
+    return changes.reduce<ASTChange[]>((patches, change) => {
+        if (typeof change.selector !== "string" || typeof change.newValue !== "string") return patches;
+
+        const type = normalizeChangeType(change.type);
+        if (!type) return patches;
+
+        patches.push({
+            type,
+            selector: change.selector,
+            newValue: change.newValue,
+            oldValue: typeof change.oldValue === "string" ? change.oldValue : undefined,
+            alt: typeof change.alt === "string" ? change.alt : undefined,
+            objectFit: typeof change.objectFit === "string" ? change.objectFit : undefined,
+            borderRadius: typeof change.borderRadius === "string" ? change.borderRadius : undefined,
+        });
+
+        return patches;
+    }, []);
+}
+
+function normalizeChangeType(type: unknown): ASTChange["type"] | null {
+    if (type === "text" || type === "image" || type === "link" || type === "3d-model") return type;
+    if (type === "list") return "text";
+    return null;
 }

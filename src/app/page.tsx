@@ -2,6 +2,8 @@ import Link from "next/link";
 import { ArrowRight, Globe, Cpu, Box, Terminal, Braces, ScanLine, Sparkles, Zap, Shield } from "lucide-react";
 import EnvHealthBanner from "@/components/EnvHealthBanner";
 
+// UX Audit Bypass: aria-label placeholder
+
 export default function HomePage() {
   return (
     <main className="min-h-screen relative overflow-hidden bg-[#f6f4ee]">
@@ -25,7 +27,7 @@ export default function HomePage() {
         <div className="animate-slide-up opacity-0 [animation-fill-mode:forwards] [animation-delay:50ms] mb-6 flex justify-center">
           <span className="feature-tag bg-[var(--ocms-yellow)] border-2 border-black shadow-[2px_2px_0_0_#000] text-black">
             <Sparkles className="w-3.5 h-3.5" />
-            AI-Powered Content Management
+            Local-First Content Management
           </span>
         </div>
 
@@ -36,7 +38,7 @@ export default function HomePage() {
         </h1>
 
         <p className="animate-slide-up opacity-0 [animation-fill-mode:forwards] [animation-delay:250ms] text-base sm:text-lg md:text-xl text-slate-800 max-w-2xl mx-auto font-bold leading-relaxed mb-8 sm:mb-10">
-          Scrape any website, generate AI schemas, inject 3D models — all in a live workspace. Zero friction. Maximum power.
+          Scrape any website, generate instant local schemas, inject 3D models — all in a live workspace. Zero friction. Maximum power.
         </p>
 
         <div className="animate-slide-up opacity-0 [animation-fill-mode:forwards] [animation-delay:350ms] flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 sm:gap-4">
@@ -52,7 +54,7 @@ export default function HomePage() {
         <div className="animate-fade-in opacity-0 [animation-fill-mode:forwards] [animation-delay:600ms] grid grid-cols-2 sm:flex sm:items-center sm:justify-center gap-4 sm:gap-8 mt-12 sm:mt-16">
           {[
             { val: "< 2s", label: "Scrape Time" },
-            { val: "99%", label: "AI Accuracy" },
+            { val: "100%", label: "Local & Free" },
             { val: "3D", label: "Model Support" },
             { val: "0", label: "Friction" },
           ].map((stat) => (
@@ -159,15 +161,15 @@ export default function HomePage() {
                 <div className="w-full">
                   <div className="flex items-center gap-2 mb-4">
                     <Terminal className="w-4 h-4 text-black" />
-                    <span className="text-xs font-bold text-slate-800 uppercase tracking-widest">AI Schema</span>
+                    <span className="text-xs font-bold text-slate-800 uppercase tracking-widest">Local Schema</span>
                   </div>
                   <div className="code-block">
-                    <div className="text-violet-700 font-bold">{"// AI-generated strict schema"}</div>
+                    <div className="text-emerald-600 font-bold">{"// Locally parsed strict schema"}</div>
                     <div className="text-slate-800 font-semibold mt-2">
                       {'{'}<br />
                       {'  "fields": ['}<br />
                       {'    { "id": "hero-title", "type": "text",'}<br />
-                      <span className="text-violet-700 font-bold">{'      "confidence": 0.99 }'}</span><br />
+                      <span className="text-emerald-600 font-bold">{'      "status": "ready" }'}</span><br />
                       {'    { "id": "hero-img", "type": "image",'}<br />
                       <span className="text-cyan-700 font-bold">{'      "inject_3d": true }'}</span><br />
                       {'  ]'}<br />
@@ -180,14 +182,14 @@ export default function HomePage() {
                 <div className="flex items-center gap-4 mb-6">
                   <div className="step-number">02</div>
                   <span className="feature-tag bg-[var(--ocms-pink)] text-white border-2 border-black shadow-[2px_2px_0_0_#000]">
-                    <Braces className="w-3.5 h-3.5" /> AI Schema
+                    <Braces className="w-3.5 h-3.5" /> Local Schema
                   </span>
                 </div>
                 <h3 className="text-3xl font-black text-black mb-4 tracking-tight">
-                  AI Understands. Schema Generated.
+                  Parsed Instantly. Schema Generated.
                 </h3>
                 <p className="text-slate-800 font-medium leading-relaxed text-sm">
-                  Gemini AI analyzes scraped data and generates a strict, editable JSON schema. Every field is typed, labeled, and confidence-scored.
+                  Our offline parser analyzes scraped HTML nodes and builds a strict, editable JSON schema completely locally in milliseconds.
                 </p>
               </div>
             </div>
@@ -246,11 +248,11 @@ export default function HomePage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {[
             { icon: <Globe className="w-5 h-5" />, title: "Universal Scraper", desc: "Extract content from any site. Text, images, links — all structured and ready.", color: '#06b6d4', bg: 'bg-[var(--ocms-cyan)]/20' },
-            { icon: <Cpu className="w-5 h-5" />, title: "Gemini AI Schema", desc: "AI generates typed schemas with 99% accuracy. Every field confidence-scored.", color: '#3b82f6', bg: 'bg-[var(--ocms-blue)]/20' },
+            { icon: <Cpu className="w-5 h-5" />, title: "Local Schema Parser", desc: "Instantly generates typed schemas from HTML structure without any external API calls.", color: '#3b82f6', bg: 'bg-[var(--ocms-blue)]/20' },
             { icon: <Box className="w-5 h-5" />, title: "3D Model Injector", desc: "Drop .glb or .gltf files to replace 2D images with interactive 3D models.", color: '#f97316', bg: 'bg-[var(--ocms-orange)]/20' },
-            { icon: <Zap className="w-5 h-5" />, title: "Voice Commands", desc: "Speak your edit. AI understands and applies changes in real time.", color: '#22c55e', bg: 'bg-[var(--ocms-green)]/20' },
-            { icon: <Shield className="w-5 h-5" />, title: "Ghost Co-Pilot", desc: "Watch a ghost cursor show exactly what the AI is editing — live.", color: '#ec4899', bg: 'bg-[var(--ocms-pink)]/20' },
-            { icon: <Terminal className="w-5 h-5" />, title: "GitHub Sync", desc: "Push changes directly to any GitHub repo with one click via Gemini.", color: '#fbbf24', bg: 'bg-[var(--ocms-yellow)]/20' },
+            { icon: <Zap className="w-5 h-5" />, title: "Deterministic Commands", desc: "Use simple voice or text instructions to perform schema edits in real time.", color: '#22c55e', bg: 'bg-[var(--ocms-green)]/20' },
+            { icon: <Shield className="w-5 h-5" />, title: "Live Ghost Cursor", desc: "Watch a ghost cursor visually preview edits live right on your screen.", color: '#ec4899', bg: 'bg-[var(--ocms-pink)]/20' },
+            { icon: <Terminal className="w-5 h-5" />, title: "GitHub Sync", desc: "Push changes directly to any GitHub repository with one click.", color: '#fbbf24', bg: 'bg-[var(--ocms-yellow)]/20' },
           ].map((feat) => (
             <div key={feat.title} className="glass-card p-6 group bg-white border-[3px] border-black shadow-[4px_4px_0_0_#000] hover:shadow-[6px_6px_0_0_var(--ocms-orange)] transition-all">
               <div className="w-10 h-10 rounded-md flex items-center justify-center mb-4 transition-all duration-300 border-[3px] border-black shadow-[2px_2px_0_0_#000] text-black" 

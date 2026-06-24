@@ -10,14 +10,13 @@ interface EnvStatus {
 }
 
 const ENV_INSTRUCTIONS: Record<string, string> = {
-    GEMINI_API_KEY: "Required for AI schema generation. Get one from Google AI Studio.",
     GITHUB_CLIENT_ID: "Required for GitHub OAuth. Register an OAuth app in GitHub Developer Settings.",
     GITHUB_CLIENT_SECRET: "Required for GitHub OAuth. Found in your GitHub OAuth app settings.",
     DATABASE_URL: "Required for data persistence. Set your PostgreSQL / database connection string.",
     NEXTAUTH_SECRET: "Required for session encryption. Generate with: openssl rand -base64 32",
 };
 
-const CRITICAL_VARS = ["GEMINI_API_KEY", "DATABASE_URL", "NEXTAUTH_SECRET"];
+const CRITICAL_VARS = ["DATABASE_URL", "NEXTAUTH_SECRET"];
 
 export default function EnvHealthBanner() {
     const [status, setStatus] = useState<EnvStatus | null>(null);
@@ -156,18 +155,7 @@ export default function EnvHealthBanner() {
                                 GitHub OAuth Setup
                             </a>
                         )}
-                        {(status.missing.includes("GEMINI_API_KEY") ||
-                            status.warnings.includes("GEMINI_API_KEY")) && (
-                            <a
-                                href="https://aistudio.google.com/apikey"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 rounded-md border-2 border-black bg-[var(--ocms-pink)] px-3 py-1.5 text-xs font-black uppercase text-white shadow-[2px_2px_0_0_#000] transition-all hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px]"
-                            >
-                                <ExternalLink className="w-3 h-3" />
-                                Get Gemini API Key
-                            </a>
-                        )}
+
                     </div>
                 </div>
             </div>

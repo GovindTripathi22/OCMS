@@ -6,4 +6,11 @@ export interface SchemaField {
     selector?: string;
     originalHtmlTag?: string;
     path?: string;
+    alt?: string;
+    objectFit?: string;
+    borderRadius?: string;
+    roughness?: number;
+    metalness?: number;
+    textureUrl?: string;
 }
+

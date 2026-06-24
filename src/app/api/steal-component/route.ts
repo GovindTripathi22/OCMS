@@ -1,11 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
-import { callGemini } from "@/lib/gemini";
+import * as cheerio from "cheerio";
+import postcss, { type Declaration, type Rule } from "postcss";
 
-/**
- * POST /api/steal-component
- *
- * Scrapes a URL and uses AI to recreate the component as clean React/JSX code.
- */
+export const runtime = "nodejs";
+
+type StyleMap = Record<string, string>;
+type ResponsiveVariant = "sm" | "md" | "lg";
+
+type StyleBundle = {
+    base: StyleMap;
+    sm: StyleMap;
+    md: StyleMap;
+    lg: StyleMap;
+};
+
+interface CssRule {
+    selector: string;
+    declarations: StyleMap;
+    order: number;
+    media?: ResponsiveVariant;
+}
+
+interface RenderContext {
+    $: cheerio.CheerioAPI;
+    baseUrl: URL;
+    rules: CssRule[];
+    nodeCount: { value: number };
+    maxNodes: number;
+}
+
+const SKIP_TAGS = new Set(["script", "style", "link", "meta", "noscript", "template", "source"]);
+const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "param", "track", "wbr"]);
+const SAFE_TAGS = new Set([
+    "a", "article", "aside", "button", "div", "figure", "figcaption", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "img", "input", "label", "li", "main", "nav", "ol", "p", "picture", "section", "span", "strong", "em", "small", "ul", "video",
+]);
+
 export async function POST(req: NextRequest) {
     try {
         const { url } = await req.json();
@@ -14,13 +43,19 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "URL is required" }, { status: 400 });
         }
 
-        // 1. Fetch the target page HTML
-        const fetchRes = await fetch(url, {
+        let targetUrl: URL;
+        try {
+            targetUrl = new URL(url);
+        } catch {
+            return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+        }
+
+        const fetchRes = await fetch(targetUrl.href, {
             headers: {
                 "User-Agent": "Mozilla/5.0 (compatible; OCMS-Bot/1.0)",
-                Accept: "text/html",
+                Accept: "text/html,application/xhtml+xml",
             },
-            signal: AbortSignal.timeout(10000),
+            signal: AbortSignal.timeout(12000),
         });
 
         if (!fetchRes.ok) {
@@ -28,44 +63,269 @@ export async function POST(req: NextRequest) {
         }
 
         const html = await fetchRes.text();
-        // Take a reasonable chunk to send to AI
-        const trimmedHtml = html.slice(0, 12000);
+        const $ = cheerio.load(html);
+        const rules = await collectCssRules($, targetUrl);
+        const root = findProminentRoot($);
+        const rootNode = root.get(0);
 
-        // 2. Ask AI to recreate the hero/main component
-        const systemPrompt = `You are a senior React developer specializing in UI replication.
+        if (!rootNode) {
+            return NextResponse.json({ error: "No prominent section found" }, { status: 422 });
+        }
 
-YOUR TASK: Analyze the provided HTML from a website and recreate the HERO section (or the most visually prominent component) as a clean, modern React functional component using Tailwind CSS.
+        const context: RenderContext = {
+            $,
+            baseUrl: targetUrl,
+            rules,
+            nodeCount: { value: 0 },
+            maxNodes: 90,
+        };
 
-RULES:
-1. Output ONLY the JSX code. No imports, no exports, no markdown fences.
-2. Use Tailwind CSS utility classes for all styling.
-3. Replace any external images with placeholder divs that describe the image.
-4. Keep all text content exactly as it appears on the original site.
-5. Make it responsive (use md: and lg: breakpoints).
-6. Use semantic HTML (section, nav, article, etc.).
-7. The output should be a single JSX fragment that can be dropped into a React component.`;
-
-        const code = await callGemini(
-            `Recreate the hero/main component from this HTML:\n\n${trimmedHtml}`,
-            systemPrompt
-        );
-
-        // Clean any markdown fences
-        let cleanCode = code;
-        if (cleanCode.startsWith("```")) {
-            const lines = cleanCode.split("\n");
-            if (lines[0].startsWith("```")) lines.shift();
-            if (lines[lines.length - 1]?.startsWith("```")) lines.pop();
-            cleanCode = lines.join("\n");
+        const markup = renderNode(rootNode, context, 2);
+        if (!markup) {
+            return NextResponse.json({ error: "Unable to render component from selected section" }, { status: 422 });
         }
 
         return NextResponse.json({
-            code: cleanCode,
-            sourceUrl: url,
+            code: buildComponentCode(markup),
+            sourceUrl: targetUrl.href,
             generatedAt: new Date().toISOString(),
         });
     } catch (err) {
         const message = err instanceof Error ? err.message : "Component steal failed";
         return NextResponse.json({ error: message }, { status: 500 });
     }
+}
+
+function findProminentRoot($: cheerio.CheerioAPI): cheerio.Cheerio<unknown> {
+    const directHero = $("[class*='hero'], [id*='hero'], [class*='banner'], [id*='banner'], [class*='masthead'], [id*='masthead']").first();
+    if (directHero.length) return directHero;
+
+    let best = $("body");
+    let bestScore = Number.NEGATIVE_INFINITY;
+    const candidates = $("header, main, section, article, div").toArray();
+
+    for (const node of candidates) {
+        const score = scoreCandidate($, node);
+        if (score > bestScore) {
+            bestScore = score;
+            best = $(node);
+        }
+    }
+
+    return best.length ? best : $("body");
+}
+
+function scoreCandidate($: cheerio.CheerioAPI, node: unknown): number {
+    const element = $(node as never);
+    if (element.closest("footer, script, style, noscript").length) return Number.NEGATIVE_INFINITY;
+
+    const tagName = String(element.prop("tagName") || "").toLowerCase();
+    const identifier = `${element.attr("id") || ""} ${element.attr("class") || ""}`.toLowerCase();
+    const text = cleanText(element.text());
+    const textLength = Math.min(text.length, 600);
+
+    let score = textLength / 12;
+    if (identifier.includes("hero")) score += 120;
+    if (identifier.includes("banner") || identifier.includes("masthead") || identifier.includes("landing")) score += 80;
+    if (tagName === "header") score += 55;
+    if (tagName === "main") score += 30;
+    if (tagName === "section") score += 20;
+    if (element.find("h1").length) score += 50;
+    if (element.find("h2").length) score += 24;
+    if (element.find("img, picture, video").length) score += 18;
+    if (element.find("a, button, [role='button']").length) score += 16;
+    if (element.parents("main, body").length) score += 4;
+    if (element.find("section, article").length > 4) score -= 30;
+    if (text.length < 20 && !element.find("img, picture, video").length) score -= 40;
+
+    return score;
+}
+async function collectCssRules($: cheerio.CheerioAPI, baseUrl: URL): Promise<CssRule[]> {
+    const rules: CssRule[] = [];
+    const order = { value: 0 };
+
+    $("style").each((_, node) => {
+        appendCssRules($(node).html() || "", rules, order);
+    });
+
+    const stylesheetUrls = $("link[rel='stylesheet'][href]")
+        .toArray()
+        .map((node) => $(node).attr("href"))
+        .filter((href): href is string => Boolean(href))
+        .slice(0, 6);
+
+    const stylesheetResults = await Promise.allSettled(
+        stylesheetUrls.map((href) => fetchStylesheet(href, baseUrl))
+    );
+
+    for (const result of stylesheetResults) {
+        if (result.status === "fulfilled") appendCssRules(result.value, rules, order);
+    }
+
+    return rules;
+}
+
+async function fetchStylesheet(href: string, baseUrl: URL): Promise<string> {
+    const stylesheetUrl = new URL(href, baseUrl).href;
+    const response = await fetch(stylesheetUrl, {
+        headers: {
+            "User-Agent": "Mozilla/5.0 (compatible; OCMS-Bot/1.0)",
+            Accept: "text/css,*/*;q=0.1",
+        },
+        signal: AbortSignal.timeout(5000),
+    });
+
+    if (!response.ok) return "";
+    return response.text();
+}
+
+function appendCssRules(cssText: string, rules: CssRule[], order: { value: number }): void {
+    if (!cssText.trim()) return;
+
+    try {
+        const root = postcss.parse(cssText);
+        root.walkRules((rule: Rule) => {
+            const declarations = declarationsFromRule(rule);
+            if (!Object.keys(declarations).length) return;
+
+            for (const selector of splitSelectorList(rule.selector)) {
+                const normalizedSelector = normalizeCssSelector(selector);
+                if (!normalizedSelector) continue;
+
+                rules.push({
+                    selector: normalizedSelector,
+                    declarations,
+                    media: mediaVariantForRule(rule),
+                    order: order.value++,
+                });
+            }
+        });
+    } catch {
+        // Ignore malformed stylesheet chunks; inline styles and other stylesheets can still drive the clone.
+    }
+}
+
+function declarationsFromRule(rule: Rule): StyleMap {
+    const declarations: StyleMap = {};
+    rule.walkDecls((decl: Declaration) => {
+        if (!decl.prop || !decl.value) return;
+        declarations[decl.prop.trim().toLowerCase()] = decl.value.trim();
+    });
+    return declarations;
+}
+
+function mediaVariantForRule(rule: Rule): ResponsiveVariant | undefined {
+    let parent = rule.parent;
+    while (parent) {
+        if (parent.type === "atrule" && parent.name === "media") {
+            const params = parent.params.toLowerCase();
+            const width = readMinWidth(params);
+            if (width !== null) {
+                if (width >= 1024) return "lg";
+                if (width >= 768) return "md";
+                if (width >= 640) return "sm";
+            }
+        }
+        parent = parent.parent;
+    }
+    return undefined;
+}
+
+function readMinWidth(params: string): number | null {
+    const marker = "min-width";
+    const index = params.indexOf(marker);
+    if (index === -1) return null;
+    const colon = params.indexOf(":", index);
+    if (colon === -1) return null;
+    const closing = params.indexOf(")", colon);
+    const value = params.slice(colon + 1, closing === -1 ? undefined : closing).trim();
+    return parseCssLength(value);
+}
+
+function splitSelectorList(selector: string): string[] {
+    const parts: string[] = [];
+    let buffer = "";
+    let bracketDepth = 0;
+    let parenDepth = 0;
+    let quote: string | null = null;
+
+    for (const char of selector) {
+        if (quote) {
+            buffer += char;
+            if (char === quote) quote = null;
+            continue;
+        }
+        if (char === "\"" || char === "'") {
+            quote = char;
+            buffer += char;
+            continue;
+        }
+        if (char === "[") bracketDepth++;
+        if (char === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+        if (char === "(") parenDepth++;
+        if (char === ")") parenDepth = Math.max(0, parenDepth - 1);
+        if (char === "," && bracketDepth === 0 && parenDepth === 0) {
+            if (buffer.trim()) parts.push(buffer.trim());
+            buffer = "";
+            continue;
+        }
+        buffer += char;
+    }
+
+    if (buffer.trim()) parts.push(buffer.trim());
+    return parts;
+}
+
+function normalizeCssSelector(selector: string): string | null {
+    if (!selector || selector.includes("::")) return null;
+
+    const cleaned = selector
+        .replace(/:(hover|focus|active|visited|focus-visible|focus-within|disabled|enabled|checked|first-child|last-child|first-of-type|last-of-type)/g, "")
+        .replace(/:not\([^)]*\)/g, "")
+        .trim();
+
+    if (!cleaned || cleaned.includes("@") || cleaned.length > 280) return null;
+    return cleaned;
+}
+
+function computeStyles(context: RenderContext, node: unknown): StyleBundle {
+    const bundle: StyleBundle = { base: {}, sm: {}, md: {}, lg: {} };
+
+    for (const rule of context.rules) {
+        if (!elementMatchesSelector(context.$, node, rule.selector)) continue;
+        Object.assign(rule.media ? bundle[rule.media] : bundle.base, rule.declarations);
+    }
+
+    Object.assign(bundle.base, parseInlineStyle(context.$(node as never).attr("style") || ""));
+    return bundle;
+}
+
+function elementMatchesSelector($: cheerio.CheerioAPI, node: unknown, selector: string): boolean {
+    try {
+        return $(selector).toArray().includes(node as never);
+    } catch {
+        return false;
+    }
+}
+
+function parseInlineStyle(styleValue: string): StyleMap {
+    const declarations: StyleMap = {};
+    if (!styleValue.trim()) return declarations;
+
+    try {
+        const root = postcss.parse(`a{${styleValue}}`);
+        root.walkDecls((decl: Declaration) => {
+            declarations[decl.prop.trim().toLowerCase()] = decl.value.trim();
+        });
+    } catch {
+        for (const declaration of styleValue.split(";")) {
+            const colon = declaration.indexOf(":");
+            if (colon === -1) continue;
+            const property = declaration.slice(0, colon).trim().toLowerCase();
+            const value = declaration.slice(colon + 1).trim();
+            if (property && value) declarations[property] = value;
+        }
+    }
+
+    return declarations;
 }

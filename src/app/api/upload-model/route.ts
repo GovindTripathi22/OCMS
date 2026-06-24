@@ -40,6 +40,14 @@ async function optimizeGlb(
 }
 
 export async function POST(req: NextRequest) {
+    // Local dev only. For production, replace with S3/Cloudflare R2/Supabase Storage and return a CDN URL.
+    if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+        return NextResponse.json(
+            { error: "Local filesystem storage is blocked in production. Configure cloud storage (e.g. S3, Cloudflare R2, Supabase) to save 3D models." },
+            { status: 403 }
+        );
+    }
+
     try {
         const session = await auth();
         let userId = session?.user?.id;

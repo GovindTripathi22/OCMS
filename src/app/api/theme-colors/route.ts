@@ -2,16 +2,61 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Octokit } from "@octokit/rest";
-import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const THEME_PROPS = [
+    "--theme-background",
+    "--theme-primary",
+    "--theme-secondary",
+    "--theme-accent",
+    "--theme-text",
+] as const;
+
+/**
+ * Deterministic CSS patcher that inserts or updates the five theme-color
+ * custom properties inside the `:root` block. If no `:root` block exists,
+ * one is prepended to the file. All other CSS is preserved verbatim.
+ */
+function patchCssWithThemeColors(currentCss: string, colors: string[]): string {
+    const declarations = THEME_PROPS.map(
+        (prop, i) => `    ${prop}: ${colors[i]};`
+    ).join("\n");
+
+    // Match the first :root { … } block (handles nested braces by being lazy
+    // up to the matching closing brace on its own line or after content).
+    const rootBlockRe = /(:root\s*\{)([^}]*)(\})/;
+    const match = currentCss.match(rootBlockRe);
+
+    if (match) {
+        // Remove any existing theme-color properties so we don't duplicate them
+        let innerContent = match[2];
+        for (const prop of THEME_PROPS) {
+            // Remove the whole line containing this property (including newline)
+            const propLineRe = new RegExp(
+                `[ \t]*${prop.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\s*:[^;]*;[ \t]*\n?`,
+                "g"
+            );
+            innerContent = innerContent.replace(propLineRe, "");
+        }
+
+        // Ensure the inner content ends with a newline before our new block
+        const trimmed = innerContent.trimEnd();
+        const separator = trimmed.length > 0 ? "\n\n" : "\n";
+
+        const updatedInner = trimmed + separator + declarations + "\n";
+        return currentCss.replace(rootBlockRe, `$1${updatedInner}$3`);
+    }
+
+    // No :root block found — prepend one
+    const rootBlock = `:root {\n${declarations}\n}\n\n`;
+    return rootBlock + currentCss;
+}
 
 /**
  * POST /api/theme-colors
  *
  * Pushes a 5-color palette as CSS custom properties to the target site's
- * globals.css file on GitHub. Uses Gemini to intelligently merge the new
- * palette variables into the existing CSS.
+ * globals.css file on GitHub. Uses a deterministic local CSS patcher to
+ * merge the new palette variables into the existing CSS.
  */
 export async function POST(req: NextRequest) {
     try {
@@ -84,52 +129,8 @@ export async function POST(req: NextRequest) {
         const fileSha = fileData.sha;
         const currentCss = Buffer.from(fileData.content, "base64").toString("utf8");
 
-        // 5. Use Gemini to intelligently merge colors into CSS
-        const [background, primary, secondary, accent, text] = colors;
-
-        const systemInstruction = `You are a senior CSS developer. You are modifying a globals.css file to update its color theme.
-
-RULES:
-1. Add or update these CSS custom properties inside the :root selector (create one if it doesn't exist):
-   --theme-background: ${background};
-   --theme-primary: ${primary};
-   --theme-secondary: ${secondary};
-   --theme-accent: ${accent};
-   --theme-text: ${text};
-2. If these variables already exist, update their values.
-3. If the file has no :root block, add one at the top of the file.
-4. Do NOT remove ANY existing CSS rules, variables, or comments.
-5. Do NOT change any other CSS custom properties or values.
-6. Return ONLY the raw updated CSS. No markdown code blocks, no explanations.`;
-
-        const prompt = `Update this CSS file with the new theme colors:\n\n${currentCss}`;
-
-        const geminiResponse = await ai.models.generateContent({
-            model: process.env.GEMINI_PUBLISH_MODEL ?? "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                systemInstruction,
-                temperature: 0.05,
-            },
-        });
-
-        const geminiResult = geminiResponse as unknown as {
-            text?: string;
-            response?: { text?: () => string };
-        };
-        let updatedCss = geminiResult.text ?? geminiResult.response?.text?.();
-
-        if (!updatedCss) {
-            return NextResponse.json({ error: "AI failed to generate updated CSS" }, { status: 500 });
-        }
-
-        // Strip markdown code blocks if present
-        if (updatedCss.startsWith("```")) {
-            const lines = updatedCss.split("\n");
-            if (lines[0].startsWith("```")) lines.shift();
-            if (lines[lines.length - 1].startsWith("```")) lines.pop();
-            updatedCss = lines.join("\n");
-        }
+        // 5. Deterministically merge the new theme colors into the CSS
+        const updatedCss = patchCssWithThemeColors(currentCss, colors);
 
         // 6. Commit back to GitHub
         const encodedContent = Buffer.from(updatedCss).toString("base64");

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { generateSchema } from "@/lib/gemini";
+import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { auth } from "@/auth";
 import { checkAndIncrementQuota } from "@/lib/ratelimit";
 import { prisma } from "@/lib/prisma";
@@ -7,10 +7,10 @@ import { prisma } from "@/lib/prisma";
 /**
  * POST /api/generate-schema
  *
- * Receives cleaned HTML, sends it to Gemini with a strict system prompt,
+ * Receives cleaned HTML, extracts editable content fields locally using Cheerio,
  * and returns a JSON array of editable content fields.
  *
- * Enforces: Authentication → Rate Limiting → AI Generation
+ * Enforces: Authentication → Rate Limiting → Local Scraper
  */
 export async function POST(request: Request) {
     try {
@@ -63,8 +63,8 @@ export async function POST(request: Request) {
             );
         }
 
-        // ── AI Generation ────────────────────────────────────
-        const schema = await generateSchema(html, url);
+        // ── Local Fallback/Deterministic Extraction ───────────
+        const schema = extractFallbackSchemaFields(html, url);
 
         return NextResponse.json(
             {

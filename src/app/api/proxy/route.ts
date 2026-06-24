@@ -98,9 +98,9 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
     Object.defineProperty(window.history, 'pushState', { value: noop, configurable: true });
     Object.defineProperty(window.history, 'replaceState', { value: noop, configurable: true });
 
-    var baseUrl = "${baseUrl}";
-    var projectId = "${projectId || ""}";
-    var scriptMode = "${scriptMode}";
+    var baseUrl = ${JSON.stringify(baseUrl)};
+    var projectId = ${JSON.stringify(projectId || "")};
+    var scriptMode = ${JSON.stringify(scriptMode)};
     var proxyPath = "/api/proxy?url=";
 
     var originalFetch = window.fetch;
@@ -239,6 +239,58 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Missing url parameter" }, { status: 400 });
     }
 
+    // SSRF URL Security Validation
+    try {
+        const parsedUrl = new URL(url);
+        if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+            return NextResponse.json(
+                { error: "Only http and https protocols are supported" },
+                { status: 400 }
+            );
+        }
+
+        const hostname = parsedUrl.hostname.toLowerCase();
+        const isLocalAllowed = process.env.NODE_ENV === "development" || process.env.ALLOW_LOCAL_SSRF === "true";
+        
+        if (!isLocalAllowed) {
+            if (
+                hostname === "localhost" ||
+                hostname === "127.0.0.1" ||
+                hostname === "[::1]" ||
+                hostname === "0.0.0.0"
+            ) {
+                return NextResponse.json(
+                    { error: "Localhost and loopback URLs are blocked in production" },
+                    { status: 403 }
+                );
+            }
+
+            const isIp = /^[0-9.]+$/.test(hostname);
+            if (isIp) {
+                const parts = hostname.split(".").map(Number);
+                if (parts.length === 4) {
+                    const [p1, p2] = parts;
+                    if (
+                        p1 === 10 ||
+                        (p1 === 172 && p2 >= 16 && p2 <= 31) ||
+                        (p1 === 192 && p2 === 168) ||
+                        (p1 === 169 && p2 === 254)
+                    ) {
+                        return NextResponse.json(
+                            { error: "Private network URLs are blocked in production" },
+                            { status: 403 }
+                        );
+                    }
+                }
+            }
+        }
+    } catch {
+        return NextResponse.json(
+            { error: "Invalid URL format" },
+            { status: 400 }
+        );
+    }
+
     const projectId = req.nextUrl.searchParams.get("projectId") || "";
     const scriptMode: ScriptMode = req.nextUrl.searchParams.get("scriptMode") === "dynamic" ? "dynamic" : "static";
 
@@ -353,8 +405,13 @@ export async function GET(req: NextRequest) {
             }
         }
 
+        const has3dModelField = schemaFields.some(f => f.type === "3d-model") || req.nextUrl.searchParams.get("has3d") === "1";
+        const modelViewerScript = has3dModelField
+            ? `<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>`
+            : "";
+
         const patchScript = `
-<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+${modelViewerScript}
 <script>
 (function() {
     const editableFields = new Map();
@@ -363,6 +420,12 @@ export async function GET(req: NextRequest) {
     let activeField = null;
     let toolbar = null;
     let mutationTimer = null;
+    let currentlyEditingEl = null;
+    let imageHoverToolbar = null;
+    let imageFileInput = null;
+    let currentHoveredImage = null;
+    let inspectorEnabled = false;
+    let hoveredInspectorEl = null;
 
     function getCssSelector(el) {
         if (el.id) {
@@ -459,16 +522,17 @@ export async function GET(req: NextRequest) {
         toolbar = document.createElement('div');
         toolbar.id = 'ocms-floating-toolbar';
         toolbar.style.cssText = [
-            'position:fixed',
-            'z-index:2147483647',
-            'display:none',
-            'gap:6px',
-            'padding:6px',
-            'background:#0f172a',
-            'border:1px solid rgba(148,163,184,.35)',
-            'border-radius:8px',
-            'box-shadow:0 12px 30px rgba(15,23,42,.28)',
-            'font:12px system-ui,-apple-system,Segoe UI,sans-serif'
+            'position:fixed !important',
+            'z-index:2147483647 !important',
+            'display:none !important',
+            'gap:8px !important',
+            'padding:8px !important',
+            'background:#fcfbf9 !important',
+            'border:3px solid #000 !important',
+            'border-radius:10px !important',
+            'box-shadow:6px 6px 0px #000 !important',
+            'font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif !important',
+            'box-sizing:border-box !important'
         ].join(';');
         [
             ['summarize', 'Summarize'],
@@ -477,11 +541,34 @@ export async function GET(req: NextRequest) {
             const button = document.createElement('button');
             button.type = 'button';
             button.textContent = label;
-            button.style.cssText = 'border:0;border-radius:6px;padding:6px 8px;background:#7c3aed;color:white;cursor:pointer;font:inherit';
+            button.style.cssText = [
+                'border:2px solid #000 !important',
+                'border-radius:6px !important',
+                'padding:6px 10px !important',
+                'background:#7c3aed !important',
+                'color:#fff !important',
+                'cursor:pointer !important',
+                'font-size:10px !important',
+                'font-weight:900 !important',
+                'text-transform:uppercase !important',
+                'letter-spacing:0.5px !important',
+                'box-shadow:2px 2px 0px #000 !important',
+                'transition:transform 0.1s ease, box-shadow 0.1s ease !important',
+                'font-family:inherit !important',
+                'outline:none !important'
+            ].join(';');
+            button.onmouseover = () => {
+                button.style.transform = 'translate(-1px, -1px)';
+                button.style.boxShadow = '3px 3px 0px #000';
+            };
+            button.onmouseout = () => {
+                button.style.transform = 'none';
+                button.style.boxShadow = '2px 2px 0px #000';
+            };
             button.onmousedown = (e) => {
                 e.preventDefault();
-            };
-            button.onclick = () => {
+                e.stopPropagation();
+                
                 if (!activeField) return;
                 const elToBlur = activeField.el;
                 const fieldId = activeField.fieldId;
@@ -533,10 +620,12 @@ export async function GET(req: NextRequest) {
     function bindTextElement(el, fieldId, selector) {
         if (!boundElements.has(el)) {
             el.addEventListener('focus', () => {
+                currentlyEditingEl = el;
                 el.style.outline = '2px solid rgba(124, 58, 237, 0.95)';
                 showToolbar({ el, fieldId: el.getAttribute('data-ocms-field-id') || fieldId, selector });
             });
             el.addEventListener('blur', () => {
+                if (currentlyEditingEl === el) currentlyEditingEl = null;
                 el.style.outline = '1px dashed rgba(139, 92, 246, 0.45)';
                 hideToolbarSoon();
             });
@@ -569,11 +658,13 @@ export async function GET(req: NextRequest) {
                 el.setAttribute('contenteditable', 'true');
                 el.setAttribute('spellcheck', 'true');
                 el.style.cursor = 'text';
-                el.style.outline = el === document.activeElement ? '2px solid rgba(124, 58, 237, 0.95)' : '1px dashed rgba(139, 92, 246, 0.45)';
+                el.style.userSelect = 'text';
+                el.style.webkitUserSelect = 'text';
+                el.style.outline = (el === document.activeElement || currentlyEditingEl === el) ? '2px solid rgba(124, 58, 237, 0.95)' : '1px dashed rgba(139, 92, 246, 0.45)';
                 el.style.outlineOffset = '3px';
                 bindTextElement(el, fieldId, selector);
 
-                if (document.activeElement !== el && normalizeText(el.innerText) !== normalizeText(value)) {
+                if (currentlyEditingEl !== el && document.activeElement !== el && normalizeText(el.innerText) !== normalizeText(value)) {
                     const saved = getSelectionOffset(el);
                     el.innerText = value;
                     restoreSelectionOffset(el, saved);
@@ -594,8 +685,26 @@ export async function GET(req: NextRequest) {
             }
 
             if (type === 'image') {
-                if (el.tagName === 'IMG') el.setAttribute('src', value);
-                else el.style.backgroundImage = 'url(' + value + ')';
+                const alt = field.alt || (field.field && field.field.alt);
+                const objectFit = field.objectFit || (field.field && field.field.objectFit);
+                const borderRadius = field.borderRadius || (field.field && field.field.borderRadius);
+
+                if (el.tagName === 'IMG') {
+                    el.setAttribute('src', value);
+                    if (alt !== undefined && alt !== null) {
+                        el.setAttribute('alt', alt);
+                    }
+                } else {
+                    el.style.backgroundImage = 'url(' + value + ')';
+                }
+
+                if (objectFit) {
+                    el.style.objectFit = objectFit;
+                }
+                if (borderRadius) {
+                    el.style.borderRadius = borderRadius;
+                }
+
                 if (el.getAttribute('contenteditable') !== 'true') {
                     el.style.outline = '1px dashed rgba(6, 182, 212, 0.45)';
                     el.style.outlineOffset = '3px';
@@ -614,6 +723,48 @@ export async function GET(req: NextRequest) {
                 mv.setAttribute('src', value);
                 mv.setAttribute('auto-rotate', '');
                 mv.setAttribute('camera-controls', '');
+
+                // Apply material settings
+                const roughness = field.roughness !== undefined ? field.roughness : (field.field && field.field.roughness);
+                const metalness = field.metalness !== undefined ? field.metalness : (field.field && field.field.metalness);
+                const textureUrl = field.textureUrl || (field.field && field.field.textureUrl);
+
+                if (roughness !== undefined && roughness !== null) {
+                    mv.setAttribute('roughness', String(roughness));
+                }
+                if (metalness !== undefined && metalness !== null) {
+                    mv.setAttribute('metalness', String(metalness));
+                }
+                if (textureUrl) {
+                    mv.setAttribute('texture-url', textureUrl);
+                }
+
+                const applyMaterials = async () => {
+                    if (!mv.model) {
+                        setTimeout(applyMaterials, 100);
+                        return;
+                    }
+                    const material = mv.model.materials[0];
+                    if (material) {
+                        if (typeof roughness === 'number') {
+                            material.pbrMetallicRoughness.setRoughnessFactor(roughness);
+                        }
+                        if (typeof metalness === 'number') {
+                            material.pbrMetallicRoughness.setMetallicFactor(metalness);
+                        }
+                        if (textureUrl) {
+                            try {
+                                const texture = await mv.createTexture(textureUrl);
+                                if (material.pbrMetallicRoughness.baseColorTexture) {
+                                    await material.pbrMetallicRoughness.baseColorTexture.setTexture(texture);
+                                }
+                            } catch (e) {
+                                console.error("[ModelViewer Material Update Error]:", e);
+                            }
+                        }
+                    }
+                };
+                applyMaterials();
             }
         });
     }
@@ -662,6 +813,316 @@ export async function GET(req: NextRequest) {
         return '/';
     }
 
+    function triggerImageEdit(img, forceType) {
+        var selector = getCssSelector(img);
+        var path = getTargetPathname();
+        var type = forceType || (img.tagName.toLowerCase() === 'model-viewer' ? '3d-model' : 'image');
+        var value = img.src || img.getAttribute('data-src') || '';
+        if (!value && img.style && img.style.backgroundImage) {
+            var bgMatch = img.style.backgroundImage.match(/url\((['\"]?)(.*?)\\1\)/);
+            if (bgMatch) value = bgMatch[2];
+        }
+        var label = img.alt ? 'Image: ' + img.alt : 'Image Element';
+
+        var fieldId = img.getAttribute('data-ocms-field-id') || 'field-' + Date.now();
+        img.setAttribute('data-ocms-field-id', fieldId);
+        img.setAttribute('data-ocms-selector', selector);
+
+        window.parent.postMessage({
+            source: 'ocms-doubleclick-image',
+            field: {
+                id: fieldId,
+                type: type,
+                label: label.slice(0, 30),
+                value: value,
+                selector: selector,
+                originalHtmlTag: img.tagName.toLowerCase(),
+                path: path
+            }
+        }, '*');
+    }
+
+    function ensureImageHoverToolbar() {
+        if (imageHoverToolbar) return imageHoverToolbar;
+
+        // Create container
+        imageHoverToolbar = document.createElement('div');
+        imageHoverToolbar.id = 'ocms-image-hover-toolbar';
+        imageHoverToolbar.style.cssText = [
+            'position:absolute !important',
+            'z-index:2147483645 !important',
+            'display:none !important',
+            'align-items:center !important',
+            'gap:6px !important',
+            'padding:6px !important',
+            'background:#fcfbf9 !important',
+            'border:3px solid #000 !important',
+            'border-radius:10px !important',
+            'box-shadow:4px 4px 0px #000 !important',
+            'font-family:system-ui, -apple-system, sans-serif !important',
+            'pointer-events:auto !important',
+            'box-sizing:border-box !important'
+        ].join(';');
+
+        // Create file input
+        imageFileInput = document.createElement('input');
+        imageFileInput.type = 'file';
+        imageFileInput.accept = 'image/*';
+        imageFileInput.style.display = 'none';
+        imageFileInput.onchange = (e) => {
+            const file = e.target.files?.[0];
+            if (file && currentHoveredImage) {
+                const img = currentHoveredImage;
+                const selector = getCssSelector(img);
+                const fieldId = img.getAttribute('data-ocms-field-id') || 'field-' + Date.now();
+                img.setAttribute('data-ocms-field-id', fieldId);
+                img.setAttribute('data-ocms-selector', selector);
+                const path = getTargetPathname();
+
+                // Add field to parent first
+                window.parent.postMessage({
+                    source: 'ocms-inline-add-field',
+                    field: {
+                        id: fieldId,
+                        type: 'image',
+                        label: img.alt ? 'Image: ' + img.alt : 'Image Element',
+                        value: img.src || '',
+                        selector: selector,
+                        originalHtmlTag: img.tagName.toLowerCase(),
+                        path: path
+                    }
+                }, '*');
+
+                // Read and set file
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    const base64Url = evt.target.result;
+                    if (img.tagName === 'IMG') {
+                        img.setAttribute('src', base64Url);
+                    } else {
+                        img.style.backgroundImage = 'url(' + base64Url + ')';
+                    }
+                    window.parent.postMessage({
+                        source: 'ocms-inline-edit',
+                        fieldId: fieldId,
+                        selector: selector,
+                        newValue: base64Url
+                    }, '*');
+                };
+                reader.readAsDataURL(file);
+            }
+        };
+        imageHoverToolbar.appendChild(imageFileInput);
+
+        // Helper to create buttons
+        const createBtn = (label, bg, color, onClick) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.style.cssText = [
+                'border:2.5px solid #000 !important',
+                'border-radius:6px !important',
+                'padding:4px 8px !important',
+                'background:' + bg + ' !important',
+                'color:' + color + ' !important',
+                'cursor:pointer !important',
+                'font-size:9px !important',
+                'font-weight:900 !important',
+                'text-transform:uppercase !important',
+                'letter-spacing:0.5px !important',
+                'box-shadow:2px 2px 0px #000 !important',
+                'transition:transform 0.1s ease, box-shadow 0.1s ease !important',
+                'font-family:inherit !important',
+                'outline:none !important',
+                'white-space:nowrap !important'
+            ].join(';');
+            btn.innerHTML = label;
+            btn.onmouseover = () => {
+                btn.style.transform = 'translate(-1px, -1px)';
+                btn.style.boxShadow = '3px 3px 0px #000';
+            };
+            btn.onmouseout = () => {
+                btn.style.transform = 'none';
+                btn.style.boxShadow = '2px 2px 0px #000';
+            };
+            btn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClick();
+            };
+            return btn;
+        };
+
+        // Button 1: Upload (Image replacement)
+        const uploadBtn = createBtn('📷 REPLACE', '#22c55e', '#000', () => {
+            imageFileInput.click();
+        });
+
+        // Button 2: Basic Features (Alt Text, Object Fit, Border Corners)
+        const basicBtn = createBtn('⚙️ FEATURES', '#3b82f6', '#fff', () => {
+            if (currentHoveredImage) {
+                triggerImageEdit(currentHoveredImage, 'image');
+            }
+        });
+
+        // Button 3: Convert to 3D Model
+        const modelBtn = createBtn('📦 3D MODEL', '#f97316', '#000', () => {
+            if (currentHoveredImage) {
+                triggerImageEdit(currentHoveredImage, '3d-model');
+            }
+        });
+
+        imageHoverToolbar.appendChild(uploadBtn);
+        imageHoverToolbar.appendChild(basicBtn);
+        imageHoverToolbar.appendChild(modelBtn);
+
+        document.body.appendChild(imageHoverToolbar);
+        return imageHoverToolbar;
+    }
+
+    function clearInspectorEffects() {
+        if (hoveredInspectorEl) {
+            hoveredInspectorEl.style.outline = hoveredInspectorEl.dataset.ocmsOldOutline || '';
+            hoveredInspectorEl.style.outlineOffset = hoveredInspectorEl.dataset.ocmsOldOutlineOffset || '';
+            hoveredInspectorEl.style.cursor = hoveredInspectorEl.dataset.ocmsOldCursor || '';
+            hoveredInspectorEl = null;
+        }
+    }
+
+    document.addEventListener('mouseover', (event) => {
+        if (!inspectorEnabled) return;
+        const el = event.target;
+        if (!el || el === document.body || el === document.documentElement || el.id === 'ocms-floating-toolbar' || el.closest('#ocms-floating-toolbar') || el.closest('#ocms-image-hover-toolbar')) return;
+
+        const inspectableTags = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'li', 'button', 'a', 'img', 'model-viewer'];
+        const tag = el.tagName.toLowerCase();
+        if (!inspectableTags.includes(tag) && !el.closest('a') && !el.closest('button')) return;
+
+        const targetEl = el.closest('a') || el.closest('button') || el;
+
+        if (hoveredInspectorEl && hoveredInspectorEl !== targetEl) {
+            clearInspectorEffects();
+        }
+
+        if (!hoveredInspectorEl) {
+            hoveredInspectorEl = targetEl;
+            targetEl.dataset.ocmsOldOutline = targetEl.style.outline;
+            targetEl.dataset.ocmsOldOutlineOffset = targetEl.style.outlineOffset;
+            targetEl.dataset.ocmsOldCursor = targetEl.style.cursor;
+
+            targetEl.style.outline = '2px dashed #f97316';
+            targetEl.style.outlineOffset = '2px';
+            targetEl.style.cursor = 'pointer';
+        }
+        event.preventDefault();
+        event.stopPropagation();
+    }, true);
+
+    document.addEventListener('mouseout', (event) => {
+        if (!inspectorEnabled) return;
+        const el = event.target;
+        if (hoveredInspectorEl && (el === hoveredInspectorEl || !hoveredInspectorEl.contains(el))) {
+            clearInspectorEffects();
+        }
+        event.preventDefault();
+        event.stopPropagation();
+    }, true);
+
+    document.addEventListener('click', (event) => {
+        if (!inspectorEnabled) return;
+        const el = event.target;
+        if (!el || el.id === 'ocms-floating-toolbar' || el.closest('#ocms-floating-toolbar') || el.closest('#ocms-image-hover-toolbar')) return;
+
+        const inspectableTags = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'li', 'button', 'a', 'img', 'model-viewer'];
+        const tag = el.tagName.toLowerCase();
+        if (!inspectableTags.includes(tag) && !el.closest('a') && !el.closest('button')) return;
+
+        const targetEl = el.closest('a') || el.closest('button') || el;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const selector = getCssSelector(targetEl);
+        const path = getTargetPathname();
+        const elTag = targetEl.tagName.toLowerCase();
+        let type = 'text';
+        let value = targetEl.innerText || targetEl.textContent || '';
+
+        if (elTag === 'img') {
+            type = 'image';
+            value = targetEl.src || targetEl.getAttribute('data-src') || '';
+        } else if (elTag === 'model-viewer') {
+            type = '3d-model';
+            value = targetEl.getAttribute('src') || '';
+        } else if (elTag === 'a') {
+            type = 'link';
+            value = targetEl.getAttribute('href') || '';
+        }
+
+        const label = type.toUpperCase() + ': ' + (value.trim().slice(0, 20) || selector);
+        const fieldId = targetEl.getAttribute('data-ocms-field-id') || 'field-' + Date.now();
+
+        targetEl.setAttribute('data-ocms-field-id', fieldId);
+        targetEl.setAttribute('data-ocms-selector', selector);
+
+        window.parent.postMessage({
+            source: 'ocms-inline-add-field',
+            field: {
+                id: fieldId,
+                type: type,
+                label: label.slice(0, 30),
+                value: value,
+                selector: selector,
+                originalHtmlTag: elTag,
+                path: path
+            }
+        }, '*');
+
+        const prevBg = targetEl.style.backgroundColor;
+        targetEl.style.backgroundColor = 'rgba(34, 197, 94, 0.3)';
+        setTimeout(() => {
+            targetEl.style.backgroundColor = prevBg;
+        }, 500);
+
+        clearInspectorEffects();
+    }, true);
+
+    document.addEventListener('mouseover', (event) => {
+        const el = event.target;
+        if (!el || el.id === 'ocms-image-hover-toolbar' || el.closest('#ocms-image-hover-toolbar') || el.closest('#ocms-floating-toolbar')) return;
+
+        const img = el.tagName === 'IMG' ? el : el.closest('img');
+        const hasBg = !img && window.getComputedStyle && window.getComputedStyle(el).backgroundImage !== 'none';
+        const targetImg = img || (hasBg ? el : null);
+
+        if (targetImg && !targetImg.id.startsWith('ocms-')) {
+            currentHoveredImage = targetImg;
+            const toolbar = ensureImageHoverToolbar();
+            const rect = targetImg.getBoundingClientRect();
+
+            const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+
+            const toolbarWidth = 270;
+            let leftPos = rect.left + scrollLeft + (rect.width - toolbarWidth) / 2;
+            if (leftPos < scrollLeft + 6) leftPos = scrollLeft + 6;
+
+            let topPos = rect.top + scrollTop - 48;
+            if (topPos < scrollTop + 6) {
+                topPos = rect.top + scrollTop + 6;
+            }
+
+            toolbar.style.left = leftPos + 'px';
+            toolbar.style.top = topPos + 'px';
+            toolbar.style.display = 'flex';
+        } else {
+            if (imageHoverToolbar && (!currentHoveredImage || (el !== currentHoveredImage && !currentHoveredImage.contains(el)))) {
+                if (!event.relatedTarget || (event.relatedTarget !== imageHoverToolbar && !imageHoverToolbar.contains(event.relatedTarget))) {
+                    imageHoverToolbar.style.display = 'none';
+                }
+            }
+        }
+    });
+
     document.addEventListener('dblclick', (event) => {
         var el = event.target;
         if (!el || el === document.body || el === document.documentElement) return;
@@ -672,260 +1133,60 @@ export async function GET(req: NextRequest) {
         event.preventDefault();
         event.stopPropagation();
 
-        var img = el.closest('img') || (window.getComputedStyle(el).backgroundImage !== 'none' ? el : null);
-        var anchor = el.closest('a');
-        var button = el.closest('button');
+        var modelViewer = el.closest('model-viewer') || 
+                          el.querySelector('model-viewer') || 
+                          (el.parentElement && el.parentElement.querySelector('model-viewer'));
+        var img = el.closest('img') || 
+                  el.querySelector('img') || 
+                  (el.parentElement && el.parentElement.querySelector('img')) ||
+                  (window.getComputedStyle(el).backgroundImage !== 'none' ? el : null);
+        var anchor = el.closest('a') || el.querySelector('a') || (el.parentElement && el.parentElement.closest('a'));
+        var button = el.closest('button') || 
+                     el.querySelector('button') || 
+                     (el.parentElement && el.parentElement.querySelector('button')) ||
+                     el.closest('.btn') ||
+                     el.closest('.button') ||
+                     el.closest('[role="button"]') ||
+                     el.closest('[class*="btn-"]') ||
+                     el.closest('[class*="button-"]');
 
-        var selector = getCssSelector(el);
+        var targetEl = modelViewer || img || anchor || button || el;
+        var selector = getCssSelector(targetEl);
         var path = getTargetPathname();
 
-        if (img) {
-            var type = 'image';
-            var value = img.src || img.getAttribute('data-src') || '';
-            if (!value && img.style && img.style.backgroundImage) {
-                var bgMatch = img.style.backgroundImage.match(/url\\((['\"]?)(.*?)\\1\\)/);
-                if (bgMatch) value = bgMatch[2];
-            }
-            var label = img.alt ? 'Image: ' + img.alt : 'Image Element';
+        if (modelViewer) {
+            var type = '3d-model';
+            var value = modelViewer.getAttribute('src') || '';
+            var label = '3D Model Element';
+            var fieldId = modelViewer.getAttribute('data-ocms-field-id') || 'field-' + Date.now();
+            modelViewer.setAttribute('data-ocms-field-id', fieldId);
+            modelViewer.setAttribute('data-ocms-selector', selector);
 
-            var fieldId = img.getAttribute('data-ocms-field-id') || 'field-' + Date.now();
-            img.setAttribute('data-ocms-field-id', fieldId);
-            img.setAttribute('data-ocms-selector', selector);
+            const roughnessAttr = modelViewer.getAttribute('roughness');
+            const metalnessAttr = modelViewer.getAttribute('metalness');
+            const textureUrlAttr = modelViewer.getAttribute('texture-url');
 
             window.parent.postMessage({
-                source: 'ocms-inline-add-field',
+                source: 'ocms-doubleclick-image',
                 field: {
                     id: fieldId,
                     type: type,
-                    label: label.slice(0, 30),
+                    label: label,
                     value: value,
                     selector: selector,
-                    originalHtmlTag: img.tagName.toLowerCase(),
-                    path: path
+                    originalHtmlTag: 'model-viewer',
+                    path: path,
+                    roughness: roughnessAttr ? parseFloat(roughnessAttr) : 0.5,
+                    metalness: metalnessAttr ? parseFloat(metalnessAttr) : 1.0,
+                    textureUrl: textureUrlAttr || ''
                 }
             }, '*');
-
-            // Dynamic File Input for Uploading
-            var fileInput = document.createElement('input');
-            fileInput.type = 'file';
-            fileInput.accept = 'image/*';
-            fileInput.style.display = 'none';
-            document.body.appendChild(fileInput);
-
-            // Create custom modal and overlay
-            var overlay = document.createElement('div');
-            overlay.id = 'ocms-image-upload-overlay';
-            overlay.style.cssText = [
-                'position:fixed',
-                'top:0',
-                'left:0',
-                'width:100%',
-                'height:100%',
-                'background:rgba(0,0,0,0.5)',
-                'z-index:2147483646',
-                'backdrop-filter:blur(2px)'
-            ].join(';');
-
-            var modal = document.createElement('div');
-            modal.id = 'ocms-image-upload-modal';
-            modal.style.cssText = [
-                'position:fixed',
-                'top:50%',
-                'left:50%',
-                'transform:translate(-50%, -50%)',
-                'z-index:2147483647',
-                'width:340px',
-                'padding:24px',
-                'background:#fcfbf9',
-                'border:4px solid #000',
-                'border-radius:12px',
-                'box-shadow:8px 8px 0px #000',
-                'font-family:system-ui, -apple-system, sans-serif',
-                'color:#000',
-                'display:flex',
-                'flex-direction:column',
-                'gap:16px'
-            ].join(';');
-
-            // Title
-            var title = document.createElement('h3');
-            title.innerText = 'Change Image';
-            title.style.cssText = 'margin:0;font-size:18px;font-weight:900;text-transform:uppercase;letter-spacing:-0.5px;font-family:inherit;';
-            modal.appendChild(title);
-
-            // Upload Area
-            var uploadArea = document.createElement('div');
-            uploadArea.style.cssText = [
-                'border:3px dashed #000',
-                'border-radius:8px',
-                'padding:16px',
-                'background:#fff',
-                'display:flex',
-                'flex-direction:column',
-                'align-items:center',
-                'gap:8px',
-                'cursor:pointer',
-                'transition:transform 0.15s ease, box-shadow 0.15s ease',
-                'box-shadow:4px 4px 0px #000'
-            ].join(';');
-            uploadArea.innerHTML = '<div style="font-size:24px;">📁</div><span style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;">Upload local image file</span>';
-            
-            uploadArea.onmouseover = function() {
-                uploadArea.style.background = '#e0f2fe';
-                uploadArea.style.transform = 'translate(-2px, -2px)';
-                uploadArea.style.boxShadow = '6px 6px 0px #000';
-            };
-            uploadArea.onmouseout = function() {
-                uploadArea.style.background = '#fff';
-                uploadArea.style.transform = 'none';
-                uploadArea.style.boxShadow = '4px 4px 0px #000';
-            };
-            uploadArea.onclick = function() {
-                fileInput.click();
-            };
-            modal.appendChild(uploadArea);
-
-            // Divider
-            var divider = document.createElement('div');
-            divider.style.cssText = 'height:2px;background:#000;margin:4px 0;position:relative;text-align:center;';
-            var orText = document.createElement('span');
-            orText.innerText = 'OR ENTER URL';
-            orText.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);background:#fcfbf9;padding:0 8px;font-size:10px;font-weight:900;';
-            divider.appendChild(orText);
-            modal.appendChild(divider);
-
-            // URL input group
-            var inputGroup = document.createElement('div');
-            inputGroup.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
-            var labelEl = document.createElement('label');
-            labelEl.innerText = 'Image URL';
-            labelEl.style.cssText = 'font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;';
-            inputGroup.appendChild(labelEl);
-
-            var urlInput = document.createElement('input');
-            urlInput.type = 'text';
-            urlInput.value = value;
-            urlInput.placeholder = 'https://example.com/image.jpg';
-            urlInput.style.cssText = [
-                'border:3px solid #000',
-                'border-radius:8px',
-                'padding:10px',
-                'font-size:12px',
-                'font-family:monospace',
-                'outline:none',
-                'background:#fff',
-                'color:#000'
-            ].join(';');
-            inputGroup.appendChild(urlInput);
-            modal.appendChild(inputGroup);
-
-            // Actions
-            var actionGroup = document.createElement('div');
-            actionGroup.style.cssText = 'display:flex;gap:12px;justify-content:flex-end;margin-top:6px;';
-
-            var cancelBtn = document.createElement('button');
-            cancelBtn.type = 'button';
-            cancelBtn.innerText = 'Cancel';
-            cancelBtn.style.cssText = [
-                'background:#fff',
-                'color:#000',
-                'border:3px solid #000',
-                'border-radius:8px',
-                'padding:8px 16px',
-                'font-weight:900',
-                'font-size:11px',
-                'text-transform:uppercase',
-                'cursor:pointer',
-                'box-shadow:3px 3px 0px #000'
-            ].join(';');
-            cancelBtn.onclick = function() {
-                cleanup();
-            };
-
-            var saveBtn = document.createElement('button');
-            saveBtn.type = 'button';
-            saveBtn.innerText = 'Save URL';
-            saveBtn.style.cssText = [
-                'background:#3b82f6',
-                'color:#fff',
-                'border:3px solid #000',
-                'border-radius:8px',
-                'padding:8px 16px',
-                'font-weight:900',
-                'font-size:11px',
-                'text-transform:uppercase',
-                'cursor:pointer',
-                'box-shadow:3px 3px 0px #000'
-            ].join(';');
-            saveBtn.onclick = function() {
-                var newUrl = urlInput.value.trim();
-                if (newUrl) {
-                    if (img.tagName === 'IMG') {
-                        img.setAttribute('src', newUrl);
-                    } else {
-                        img.style.backgroundImage = 'url(' + newUrl + ')';
-                    }
-                    window.parent.postMessage({
-                        source: 'ocms-inline-edit',
-                        fieldId: fieldId,
-                        selector: selector,
-                        newValue: newUrl
-                    }, '*');
-                }
-                cleanup();
-            };
-
-            actionGroup.appendChild(cancelBtn);
-            actionGroup.appendChild(saveBtn);
-            modal.appendChild(actionGroup);
-
-            overlay.onclick = function() {
-                cleanup();
-            };
-
-            function cleanup() {
-                if (document.getElementById('ocms-image-upload-modal')) {
-                    document.body.removeChild(modal);
-                }
-                if (document.getElementById('ocms-image-upload-overlay')) {
-                    document.body.removeChild(overlay);
-                }
-                if (fileInput.parentNode) {
-                    document.body.removeChild(fileInput);
-                }
-            }
-
-            fileInput.onchange = function() {
-                var file = fileInput.files[0];
-                if (file) {
-                    var reader = new FileReader();
-                    reader.onload = function(e) {
-                        var base64Url = e.target.result;
-                        if (img.tagName === 'IMG') {
-                            img.setAttribute('src', base64Url);
-                        } else {
-                            img.style.backgroundImage = 'url(' + base64Url + ')';
-                        }
-                        window.parent.postMessage({
-                            source: 'ocms-inline-edit',
-                            fieldId: fieldId,
-                            selector: selector,
-                            newValue: base64Url
-                        }, '*');
-                        cleanup();
-                    };
-                    reader.readAsDataURL(file);
-                } else {
-                    cleanup();
-                }
-            };
-
-            document.body.appendChild(overlay);
-            document.body.appendChild(modal);
+        } else if (img) {
+            triggerImageEdit(img);
         } else if (anchor) {
             var textValue = anchor.innerText || anchor.textContent || '';
             var linkValue = anchor.getAttribute('href') || '';
-            var textSelector = getCssSelector(anchor);
+            var textSelector = selector;
 
             var textFieldId = anchor.getAttribute('data-ocms-field-id') || 'field-text-' + Date.now();
             var linkFieldId = anchor.getAttribute('data-ocms-link-id') || 'field-link-' + Date.now();
@@ -964,6 +1225,9 @@ export async function GET(req: NextRequest) {
 
             // Make the text editable inline
             anchor.setAttribute('contenteditable', 'true');
+            anchor.style.userSelect = 'text';
+            anchor.style.webkitUserSelect = 'text';
+            anchor.style.cursor = 'text';
             bindTextElement(anchor, textFieldId, textSelector);
             anchor.focus();
             var range = document.createRange();
@@ -976,49 +1240,52 @@ export async function GET(req: NextRequest) {
             var linkOverlay = document.createElement('div');
             linkOverlay.id = 'ocms-link-edit-overlay';
             linkOverlay.style.cssText = [
-                'position:fixed',
-                'top:0',
-                'left:0',
-                'width:100%',
-                'height:100%',
-                'background:rgba(0,0,0,0.5)',
-                'z-index:2147483646',
-                'backdrop-filter:blur(2px)'
+                'position:fixed !important',
+                'top:0 !important',
+                'left:0 !important',
+                'width:100% !important',
+                'height:100% !important',
+                'background:rgba(0,0,0,0.5) !important',
+                'z-index:2147483646 !important',
+                'backdrop-filter:blur(2px) !important',
+                'display:block !important'
             ].join(';');
 
             var linkModal = document.createElement('div');
             linkModal.id = 'ocms-link-edit-modal';
             linkModal.style.cssText = [
-                'position:fixed',
-                'top:50%',
-                'left:50%',
-                'transform:translate(-50%, -50%)',
-                'z-index:2147483647',
-                'width:340px',
-                'padding:24px',
-                'background:#fcfbf9',
-                'border:4px solid #000',
-                'border-radius:12px',
-                'box-shadow:8px 8px 0px #000',
-                'font-family:system-ui, -apple-system, sans-serif',
-                'color:#000',
-                'display:flex',
-                'flex-direction:column',
-                'gap:16px'
+                'position:fixed !important',
+                'top:50% !important',
+                'left:50% !important',
+                'transform:translate(-50%, -50%) !important',
+                'z-index:2147483647 !important',
+                'width:340px !important',
+                'max-width:90% !important',
+                'padding:24px !important',
+                'background:#fcfbf9 !important',
+                'border:4px solid #000 !important',
+                'border-radius:12px !important',
+                'box-shadow:8px 8px 0px #000 !important',
+                'font-family:system-ui, -apple-system, sans-serif !important',
+                'color:#000 !important',
+                'display:flex !important',
+                'flex-direction:column !important',
+                'gap:16px !important',
+                'box-sizing:border-box !important'
             ].join(';');
 
             // Title
             var linkTitle = document.createElement('h3');
             linkTitle.innerText = 'Change Link URL';
-            linkTitle.style.cssText = 'margin:0;font-size:18px;font-weight:900;text-transform:uppercase;letter-spacing:-0.5px;font-family:inherit;';
+            linkTitle.style.cssText = 'margin:0 !important;font-size:18px !important;font-weight:900 !important;text-transform:uppercase !important;letter-spacing:-0.5px !important;font-family:inherit !important;color:#000 !important;';
             linkModal.appendChild(linkTitle);
 
             // URL input group
             var linkInputGroup = document.createElement('div');
-            linkInputGroup.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+            linkInputGroup.style.cssText = 'display:flex !important;flex-direction:column !important;gap:6px !important;';
             var linkLabelEl = document.createElement('label');
             linkLabelEl.innerText = 'Destination URL';
-            linkLabelEl.style.cssText = 'font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;';
+            linkLabelEl.style.cssText = 'font-size:10px !important;font-weight:900 !important;text-transform:uppercase !important;letter-spacing:0.5px !important;color:#000 !important;font-family:sans-serif !important;';
             linkInputGroup.appendChild(linkLabelEl);
 
             var linkUrlInput = document.createElement('input');
@@ -1026,36 +1293,39 @@ export async function GET(req: NextRequest) {
             linkUrlInput.value = linkValue;
             linkUrlInput.placeholder = 'https://example.com';
             linkUrlInput.style.cssText = [
-                'border:3px solid #000',
-                'border-radius:8px',
-                'padding:10px',
-                'font-size:12px',
-                'font-family:monospace',
-                'outline:none',
-                'background:#fff',
-                'color:#000'
+                'border:3px solid #000 !important',
+                'border-radius:8px !important',
+                'padding:10px !important',
+                'font-size:12px !important',
+                'font-family:monospace !important',
+                'outline:none !important',
+                'background:#fff !important',
+                'color:#000 !important',
+                'width:100% !important',
+                'box-sizing:border-box !important'
             ].join(';');
             linkInputGroup.appendChild(linkUrlInput);
             linkModal.appendChild(linkInputGroup);
 
             // Actions
             var linkActionGroup = document.createElement('div');
-            linkActionGroup.style.cssText = 'display:flex;gap:12px;justify-content:flex-end;margin-top:6px;';
+            linkActionGroup.style.cssText = 'display:flex !important;gap:12px !important;justify-content:flex-end !important;margin-top:6px !important;';
 
             var linkCancelBtn = document.createElement('button');
             linkCancelBtn.type = 'button';
             linkCancelBtn.innerText = 'Cancel';
             linkCancelBtn.style.cssText = [
-                'background:#fff',
-                'color:#000',
-                'border:3px solid #000',
-                'border-radius:8px',
-                'padding:8px 16px',
-                'font-weight:900',
-                'font-size:11px',
-                'text-transform:uppercase',
-                'cursor:pointer',
-                'box-shadow:3px 3px 0px #000'
+                'background:#fff !important',
+                'color:#000 !important',
+                'border:3px solid #000 !important',
+                'border-radius:8px !important',
+                'padding:8px 16px !important',
+                'font-weight:900 !important',
+                'font-size:11px !important',
+                'text-transform:uppercase !important',
+                'cursor:pointer !important',
+                'box-shadow:3px 3px 0px #000 !important',
+                'font-family:sans-serif !important'
             ].join(';');
             linkCancelBtn.onclick = function() {
                 cleanupLink();
@@ -1065,16 +1335,17 @@ export async function GET(req: NextRequest) {
             linkSaveBtn.type = 'button';
             linkSaveBtn.innerText = 'Save Link';
             linkSaveBtn.style.cssText = [
-                'background:#3b82f6',
-                'color:#fff',
-                'border:3px solid #000',
-                'border-radius:8px',
-                'padding:8px 16px',
-                'font-weight:900',
-                'font-size:11px',
-                'text-transform:uppercase',
-                'cursor:pointer',
-                'box-shadow:3px 3px 0px #000'
+                'background:#3b82f6 !important',
+                'color:#fff !important',
+                'border:3px solid #000 !important',
+                'border-radius:8px !important',
+                'padding:8px 16px !important',
+                'font-weight:900 !important',
+                'font-size:11px !important',
+                'text-transform:uppercase !important',
+                'cursor:pointer !important',
+                'box-shadow:3px 3px 0px #000 !important',
+                'font-family:sans-serif !important'
             ].join(';');
             linkSaveBtn.onclick = function() {
                 var newHref = linkUrlInput.value.trim();
@@ -1131,6 +1402,9 @@ export async function GET(req: NextRequest) {
             }, '*');
 
             button.setAttribute('contenteditable', 'true');
+            button.style.userSelect = 'text';
+            button.style.webkitUserSelect = 'text';
+            button.style.cursor = 'text';
             bindTextElement(button, fieldId, selector);
             button.focus();
             var range = document.createRange();
@@ -1162,6 +1436,9 @@ export async function GET(req: NextRequest) {
             }, '*');
 
             el.setAttribute('contenteditable', 'true');
+            el.style.userSelect = 'text';
+            el.style.webkitUserSelect = 'text';
+            el.style.cursor = 'text';
             bindTextElement(el, fieldId, selector);
             el.focus();
             var range = document.createRange();
@@ -1183,11 +1460,51 @@ export async function GET(req: NextRequest) {
     }
 
     window.addEventListener('message', (event) => {
-        const { source, changes, type, selector } = event.data || {};
+        const { source, changes, type, selector, action, enabled } = event.data || {};
         
+        if (source === 'ocms-parent' && action === 'toggle-inspector') {
+            inspectorEnabled = enabled;
+            if (!enabled) {
+                clearInspectorEffects();
+            }
+        }
+
         if (source === 'ocms-live-bridge' && Array.isArray(changes)) {
             latestChanges = changes;
             applyAllFields();
+        }
+
+        if (source === 'ocms-material-update') {
+            const { roughness, metalness, textureUrl } = event.data;
+            const mv = document.querySelector('model-viewer');
+            if (mv) {
+                const applyMaterials = async () => {
+                    if (!mv.model) {
+                        setTimeout(applyMaterials, 100);
+                        return;
+                    }
+                    const material = mv.model.materials[0];
+                    if (material) {
+                        if (typeof roughness === 'number') {
+                            material.pbrMetallicRoughness.setRoughnessFactor(roughness);
+                        }
+                        if (typeof metalness === 'number') {
+                            material.pbrMetallicRoughness.setMetallicFactor(metalness);
+                        }
+                        if (textureUrl) {
+                            try {
+                                const texture = await mv.createTexture(textureUrl);
+                                if (material.pbrMetallicRoughness.baseColorTexture) {
+                                    await material.pbrMetallicRoughness.baseColorTexture.setTexture(texture);
+                                }
+                            } catch (e) {
+                                console.error("[ModelViewer Material Update Error]:", e);
+                            }
+                        }
+                    }
+                };
+                applyMaterials();
+            }
         }
 
         if (source === 'ocms-editor' && type === 'AI_EDIT_START') {
@@ -1211,6 +1528,9 @@ export async function GET(req: NextRequest) {
         if (toolbar && toolbar.style.display === 'flex') {
             toolbar.style.display = 'none';
             activeField = null;
+        }
+        if (imageHoverToolbar && imageHoverToolbar.style.display === 'flex') {
+            imageHoverToolbar.style.display = 'none';
         }
     }, { passive: true });
 

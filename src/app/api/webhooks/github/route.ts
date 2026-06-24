@@ -1,10 +1,175 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { Octokit } from "@octokit/rest";
-import { GoogleGenAI } from "@google/genai";
+import * as cheerio from "cheerio";
 import crypto from "crypto";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// ---------- Types ----------
+
+interface SchemaField {
+    id: string;
+    selector: string;
+    type: string;
+    value: string;
+    [key: string]: unknown;
+}
+
+// ---------- Deterministic schema sync (replaces Gemini) ----------
+
+/**
+ * Extracts updated values for each schema field from the React/JSX source code.
+ *
+ * Strategy per field (first match wins):
+ *   1. Cheerio CSS-selector lookup on the source treated as HTML-like markup.
+ *      – text fields  → trimmed text content
+ *      – image fields → `src` attribute
+ *      – link  fields → `href` attribute
+ *   2. Regex scan for JSX attribute values associated with the field's selector
+ *      (e.g. className matching, id matching) followed by extracting nearby string
+ *      literals / attribute values.
+ *   3. Keep the existing value (nothing found → no change).
+ */
+function syncSchemaFromSource(
+    sourceCode: string,
+    currentSchema: SchemaField[],
+): SchemaField[] {
+    // Cheerio can partially parse JSX — it won't understand JS expressions but
+    // will pick up static HTML-like tags and their attributes / text content.
+    const $ = cheerio.load(sourceCode, { xmlMode: false });
+
+    return currentSchema.map((field) => {
+        const updated = { ...field };
+
+        // --- Tier 1: Cheerio selector ---
+        const extracted = extractViaCheerio($, field);
+        if (extracted !== null) {
+            updated.value = extracted;
+            return updated;
+        }
+
+        // --- Tier 2: Regex fallback ---
+        const regexResult = extractViaRegex(sourceCode, field);
+        if (regexResult !== null) {
+            updated.value = regexResult;
+            return updated;
+        }
+
+        // --- Tier 3: Keep existing value ---
+        return updated;
+    });
+}
+
+/** Attempt to extract a value using Cheerio and the field's CSS selector. */
+function extractViaCheerio(
+    $: cheerio.CheerioAPI,
+    field: SchemaField,
+): string | null {
+    try {
+        const el = $(field.selector).first();
+        if (el.length === 0) return null;
+
+        const fieldType = (field.type || "").toLowerCase();
+
+        if (fieldType === "image" || fieldType === "img") {
+            const src = el.attr("src");
+            return src && src.trim() ? src.trim() : null;
+        }
+
+        if (fieldType === "link" || fieldType === "url") {
+            const href = el.attr("href");
+            return href && href.trim() ? href.trim() : null;
+        }
+
+        // Default: text content
+        const text = el.text().trim();
+        return text.length > 0 ? text : null;
+    } catch {
+        // Invalid selector or Cheerio parse error — fall through.
+        return null;
+    }
+}
+
+/**
+ * Regex-based fallback extractor.
+ *
+ * Tries several heuristics:
+ *   a) If the field has a current value, look for that value as a string
+ *      literal in the source and grab the surrounding context for an update.
+ *   b) Look for JSX attributes (src, href, alt, className, id) near the
+ *      selector hint and extract the adjacent string literal.
+ */
+function extractViaRegex(
+    sourceCode: string,
+    field: SchemaField,
+): string | null {
+    const fieldType = (field.type || "").toLowerCase();
+
+    // --- Heuristic (a): selector-aware attribute extraction ---
+    // Build a tag-level regex that looks for the selector as a className or id
+    // and then extracts a relevant attribute value.
+    const selectorHint = field.selector || "";
+
+    // Extract class or id from the CSS selector (e.g. ".hero-title" → "hero-title")
+    const classMatch = selectorHint.match(/\.([\w-]+)/);
+    const idMatch = selectorHint.match(/#([\w-]+)/);
+    const identifier = classMatch?.[1] || idMatch?.[1];
+
+    if (identifier) {
+        // Escape for use inside a regex
+        const escaped = identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        if (fieldType === "image" || fieldType === "img") {
+            // Look for <img ... className="...identifier..." ... src="VALUE" ...>
+            const imgRegex = new RegExp(
+                `<img[^>]*(?:className|class)=["'][^"']*${escaped}[^"']*["'][^>]*src=["']([^"']+)["']`,
+                "i",
+            );
+            const imgMatch = sourceCode.match(imgRegex);
+            if (imgMatch?.[1]) return imgMatch[1];
+
+            // Also try reversed attribute order: src before className
+            const imgRegex2 = new RegExp(
+                `<img[^>]*src=["']([^"']+)["'][^>]*(?:className|class)=["'][^"']*${escaped}[^"']*["']`,
+                "i",
+            );
+            const imgMatch2 = sourceCode.match(imgRegex2);
+            if (imgMatch2?.[1]) return imgMatch2[1];
+        }
+
+        if (fieldType === "link" || fieldType === "url") {
+            const linkRegex = new RegExp(
+                `<a[^>]*(?:className|class)=["'][^"']*${escaped}[^"']*["'][^>]*href=["']([^"']+)["']`,
+                "i",
+            );
+            const linkMatch = sourceCode.match(linkRegex);
+            if (linkMatch?.[1]) return linkMatch[1];
+        }
+
+        // For text fields — find the tag with the identifier and grab its inner text.
+        // This handles patterns like: <h1 className="hero-title">Some text</h1>
+        const textRegex = new RegExp(
+            `<\\w+[^>]*(?:className|class)=["'][^"']*${escaped}[^"']*["'][^>]*>([^<]+)<`,
+            "i",
+        );
+        const textMatch = sourceCode.match(textRegex);
+        if (textMatch?.[1]?.trim()) return textMatch[1].trim();
+    }
+
+    // --- Heuristic (b): look for the old value as a string literal ---
+    if (field.value && field.value.trim().length > 0) {
+        const oldVal = field.value.trim();
+        const escapedOld = oldVal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        // Check if the old value still exists in source
+        const stillPresent = new RegExp(escapedOld).test(sourceCode);
+        if (stillPresent) {
+            // Value unchanged — return current value (no update needed).
+            return oldVal;
+        }
+    }
+
+    return null;
+}
 
 // Verification function for GitHub Webhook Signature
 function verifySignature(payload: string, signature: string, secret: string): boolean {
@@ -110,38 +275,17 @@ export async function POST(req: NextRequest) {
                 const currentSchema = (project.generatedSchema as unknown[]) || [];
                 if (currentSchema.length === 0) continue;
 
-                // Call Gemini to sync the values from the updated source code into the schema fields
-                const systemInstruction = `You are a strict React source parser. You will be given the source code of a React/HTML page and a JSON schema of visual fields containing 'id', 'selector', 'type', and 'value'.
-Your goal is to parse the new source code, extract the updated values for each visual field matching its selector, and output a JSON array of the fields with their updated values.
-Do NOT modify the field structure, IDs, selectors, or types. If a selector cannot be found, keep its current value.
-Return ONLY a raw valid JSON array. Do not wrap in markdown or backticks.`;
-
-                const prompt = `React Source Code:\n\n${decodedContent}\n\nCurrent Fields Schema:\n\n${JSON.stringify(currentSchema, null, 2)}`;
-
-                const response = await ai.models.generateContent({
-                    model: "gemini-2.5-flash",
-                    contents: prompt,
-                    config: {
-                        systemInstruction,
-                        temperature: 0.1,
-                    },
-                });
-
-                let text = response.text || "";
-                if (text.startsWith("```")) {
-                    const lines = text.split("\n");
-                    if (lines[0].startsWith("```")) lines.shift();
-                    if (lines[lines.length - 1].startsWith("```")) lines.pop();
-                    text = lines.join("\n");
-                }
-
-                const updatedSchema = JSON.parse(text);
+                // Deterministic local sync: extract updated values from the source code
+                const updatedSchema = syncSchemaFromSource(
+                    decodedContent,
+                    currentSchema as SchemaField[],
+                );
 
                 // Update database
                 await prisma.project.update({
                     where: { id: project.id },
                     data: {
-                        generatedSchema: updatedSchema,
+                        generatedSchema: updatedSchema as unknown as Prisma.InputJsonValue,
                     },
                 });
 

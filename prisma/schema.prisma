@@ -1,4 +1,4 @@
-// Prisma Schema for OCMS — AI-Powered Headless CMS
+// Prisma Schema for OCMS — Local-First Headless CMS
 // =================================================
 // Models: User, Account, Session, VerificationToken, Project
 // Enums: SubscriptionType
@@ -99,7 +99,7 @@ model Project {
   // Scraped source
   sourceUrl       String?  // The original URL that was scraped
 
-  // AI-Generated schema — the editable fields JSON
+  // Locally-generated schema — the editable fields JSON
   // Format: [{ id, type, value, originalHtmlTag, selector }]
   generatedSchema Json?
 
@@ -177,5 +177,5 @@ model SceneGraph {
 
 enum SubscriptionType {
   FREE  // 10 generations/month, basic features
-  PRO   // 100 generations/month, GitHub sync, priority AI
+  PRO   // 100 operations/month, GitHub sync, priority support
 }

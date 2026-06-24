@@ -10,6 +10,7 @@ import {
 import dynamic from "next/dynamic";
 import ModelDropzone from "./ModelDropzone";
 import type { SchemaField } from "@/types/schema";
+import { PBR_PRESETS } from "@/lib/pbr-presets";
 
 
 const ModelViewer = dynamic(() => import("./ModelViewer"), {
@@ -26,17 +27,20 @@ interface ContentEditorProps {
     schema: SchemaField[];
     initialSchema?: SchemaField[];
     onFieldChange: (fieldId: string, newValue: string) => void;
+    onFieldUpdate?: (fieldId: string, updates: Partial<SchemaField>) => void;
     onModelInjected: (targetFieldId: string, modelPath: string) => void;
     githubOwner?: string;
     githubRepo?: string;
     targetFilePath?: string;
     onHistorySeek?: (percent: number) => void;
     historyCount?: number;
+    historyIndex?: number;
+    onHistoryIndexChange?: (index: number) => void;
     onSchemaReplace?: (newSchema: SchemaField[]) => void;
     broadcastGhostEvent?: (type: "AI_EDIT_START" | "AI_EDIT_END", selector?: string, text?: string) => void;
     previewUrl?: string;
     isScanning?: boolean;
-    onScanPage?: () => void;
+    onScanPage?: (skipAi?: boolean) => void;
 }
 
 const fieldIcons: Record<SchemaField["type"], React.ReactNode> = {
@@ -135,17 +139,108 @@ function FeaturePanel({ icon, title, tag, children, defaultOpen = false, accentC
     );
 }
 
+const COPY_TEMPLATES = [
+    { name: "⚡ Choose Copy Template...", value: "" },
+    { name: "Headline: The Ultimate [Product] for [Audience]", value: "The Ultimate Platform for Modern Developers" },
+    { name: "Value Prop: Simplify [Process] with [Product]", value: "Simplify your headless content workflows with OCMS. Done in minutes." },
+    { name: "CTA: Join [Number]+ developers. Start free", value: "Join 10,000+ developers building the future. Start free today." },
+    { name: "Social Proof: Trusted by leading teams...", value: "Trusted by leading engineering teams worldwide to power dynamic sites." },
+    { name: "Highlight: 10x faster, zero config...", value: "10x faster, zero configuration, and 100% free forever." }
+];
+
+// PBR_PRESETS imported from @/lib/pbr-presets
+
+// Hex to HSL
+function hexToHsl(hex: string): { h: number; s: number; l: number } {
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h = 0, s = 0;
+    const l = (max + min) / 2;
+
+    if (max !== min) {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+    }
+    return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+}
+
+// HSL to Hex
+function hslToHex(h: number, sVal: number, lVal: number): string {
+    const s = sVal / 100;
+    const l = lVal / 100;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let r = 0, g = 0, b = 0;
+
+    if (h < 60) { r = c; g = x; b = 0; }
+    else if (h < 120) { r = x; g = c; b = 0; }
+    else if (h < 180) { r = 0; g = c; b = x; }
+    else if (h < 240) { r = 0; g = x; b = c; }
+    else if (h < 300) { r = x; g = 0; b = c; }
+    else { r = c; g = 0; b = x; }
+
+    const toHex = (n: number) => {
+        const hexVal = Math.round((n + m) * 255).toString(16);
+        return hexVal.length === 1 ? "0" + hexVal : hexVal;
+    };
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+// Generate color harmony
+function generateHarmony(baseHex: string, type: "mono" | "analogous" | "triad"): string[] {
+    const { h, s, l } = hexToHsl(baseHex);
+    
+    if (type === "mono") {
+        return [
+            hslToHex(h, Math.max(10, s - 30), Math.min(95, l + 30)), // Bg (very light)
+            baseHex,                                                 // Primary (base)
+            hslToHex(h, Math.min(100, s + 10), Math.max(15, l - 15)), // Secondary (darker)
+            hslToHex(h, Math.min(100, s + 20), Math.min(90, l + 15)), // Accent (lighter/brighter)
+            hslToHex(h, Math.max(10, s - 40), 12),                    // Text (very dark)
+        ];
+    } else if (type === "analogous") {
+        return [
+            hslToHex((h + 330) % 360, Math.max(10, s - 20), 93),      // Bg (cool light)
+            baseHex,                                                 // Primary
+            hslToHex((h + 30) % 360, s, Math.max(20, l - 10)),        // Secondary (+30 deg)
+            hslToHex((h + 330) % 360, s, Math.max(20, l - 5)),        // Accent (-30 deg)
+            "#1e293b",                                               // Text
+        ];
+    } else { // triad
+        return [
+            hslToHex((h + 120) % 360, 20, 95),                       // Bg (very light triad)
+            baseHex,                                                 // Primary
+            hslToHex((h + 120) % 360, s, l),                         // Secondary (+120 deg)
+            hslToHex((h + 240) % 360, s, l),                         // Accent (+240 deg)
+            "#0f172a",                                               // Text
+        ];
+    }
+}
+
 export default function ContentEditor({
     projectId,
     schema,
     initialSchema = [],
     onFieldChange,
+    onFieldUpdate,
     onModelInjected,
     githubOwner = "GovindTripathi22",
     githubRepo = "OCMS",
     targetFilePath = "src/app/page.tsx",
     onHistorySeek,
     historyCount = 1,
+    historyIndex = 0,
+    onHistoryIndexChange,
     onSchemaReplace,
     broadcastGhostEvent,
     previewUrl,
@@ -162,6 +257,14 @@ export default function ContentEditor({
     const [accessibilityScore, setAccessibilityScore] = useState(0);
     const [seoScore, setSeoScore] = useState(0);
     const [isAuditingLighthouse, setIsAuditingLighthouse] = useState(false);
+
+    useEffect(() => {
+        if (historyCount && historyCount > 1) {
+            setTimelinePos(Math.round((historyIndex / (historyCount - 1)) * 100));
+        } else {
+            setTimelinePos(100);
+        }
+    }, [historyIndex, historyCount]);
 
     const handleRunLighthouseAudit = async () => {
         if (!previewUrl) return;
@@ -187,8 +290,8 @@ export default function ContentEditor({
         }
     };
 
-    const handleScanPage = () => {
-        if (onScanPage) onScanPage();
+    const handleScanPage = (skipAi?: boolean) => {
+        if (onScanPage) onScanPage(skipAi);
     };
 
     // Feature States
@@ -196,10 +299,19 @@ export default function ContentEditor({
     const [isStealing, setIsStealing] = useState(false);
     const [abTarget, setAbTarget] = useState("gen-z");
     const [isGeneratingVariant, setIsGeneratingVariant] = useState(false);
-    const [brandDescription, setBrandDescription] = useState("");
     const [currentColors, setCurrentColors] = useState(["#fbbf24", "#22c55e", "#3b82f6", "#f97316", "#ec4899"]);
-    const [isExtractingColors, setIsExtractingColors] = useState(false);
     const [isGhostModeActive, setIsGhostModeActive] = useState(true);
+
+    // R4 Local Utilities states
+    const [filterQuery, setFilterQuery] = useState("");
+    const [baseColor, setBaseColor] = useState("#fbbf24");
+    const [harmonyType, setHarmonyType] = useState<"mono" | "analogous" | "triad">("mono");
+
+    // Auto-update generated harmony colors
+    useEffect(() => {
+        const palette = generateHarmony(baseColor, harmonyType);
+        setCurrentColors(palette);
+    }, [baseColor, harmonyType]);
 
     // GSD Core States
     interface GsdStateData {
@@ -298,33 +410,22 @@ export default function ContentEditor({
     // 3D Material Editor States
     const [roughness, setRoughness] = useState(0.5);
     const [metalness, setMetalness] = useState(1.0);
-    const [texturePrompt, setTexturePrompt] = useState("");
     const [textureUrl, setTextureUrl] = useState("");
-    const [isGeneratingTexture, setIsGeneratingTexture] = useState(false);
     const [textureApplyStatus, setTextureApplyStatus] = useState<"idle" | "checking" | "success" | "error">("idle");
 
-    const handleGenerateTexture = async () => {
-        if (!texturePrompt) return;
-        setIsGeneratingTexture(true);
-        try {
-            const res = await fetch("/api/generate-texture", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ prompt: texturePrompt }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Failed to generate texture");
-            if (data.textureUrl) {
-                setTextureUrl(data.textureUrl);
-                setTextureApplyStatus("idle");
-            }
-        } catch (err) {
-            console.error("AI Texture Generation Failed:", err);
-            alert(err instanceof Error ? err.message : "Failed to generate texture");
-        } finally {
-            setIsGeneratingTexture(false);
+    useEffect(() => {
+        const iframe = document.querySelector('iframe');
+        if (iframe?.contentWindow) {
+            iframe.contentWindow.postMessage({
+                source: "ocms-material-update",
+                roughness,
+                metalness,
+                textureUrl
+            }, "*");
         }
-    };
+    }, [roughness, metalness, textureUrl]);
+
+
 
     const handleApplyMaterialVariant = async () => {
         const modelField = schema.find(f => f.type === "3d-model");
@@ -340,7 +441,7 @@ export default function ContentEditor({
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     assetId: modelField.id,
-                    variantName: texturePrompt || `Variant-${Date.now()}`,
+                    variantName: `Variant-${Date.now()}`,
                     textureUrl: textureUrl,
                     materialProperties: {
                         roughness,
@@ -416,12 +517,22 @@ export default function ContentEditor({
             return;
         }
 
-        const changes = changedFields.map((f) => ({
-            fieldId: f.id,
-            selector: f.selector,
-            type: f.type,
-            newValue: f.value,
-        }));
+        const changes = changedFields.map((f) => {
+            const original = initialSchema.find((item) => item.id === f.id);
+            return {
+                fieldId: f.id,
+                selector: f.selector,
+                type: f.type,
+                newValue: f.value,
+                oldValue: original?.value || "",
+                alt: f.alt,
+                objectFit: f.objectFit,
+                borderRadius: f.borderRadius,
+                roughness: f.roughness,
+                metalness: f.metalness,
+                textureUrl: f.textureUrl,
+            };
+        });
 
         try {
             if (isGhostModeActive && broadcastGhostEvent && changes.length > 0) {
@@ -552,7 +663,7 @@ export default function ContentEditor({
             if (finalTranscript && finalTranscript !== "Listening...") {
                 setSyncStatus("syncing");
                 try {
-                    const res = await fetch("/api/generate-voice-edit", {
+                    const res = await fetch("/api/parse-voice-command", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ prompt: finalTranscript, schema }),
@@ -612,25 +723,7 @@ export default function ContentEditor({
         }
     };
 
-    const handleExtractColors = async () => {
-        if (!brandDescription) return;
-        setIsExtractingColors(true);
-        setErrorMessage("");
-        try {
-            const res = await fetch("/api/extract-colors", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ brandDescription }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Failed to extract colors");
-            if (data.colors) setCurrentColors(data.colors);
-        } catch (err: unknown) {
-            setErrorMessage(err instanceof Error ? err.message : "Failed to extract colors");
-        } finally {
-            setIsExtractingColors(false);
-        }
-    };
+
 
     const handleStealComponent = async () => {
         if (!componentUrl) return;
@@ -654,6 +747,23 @@ export default function ContentEditor({
         }
     };
 
+    const normalizePath = (pathStr: string | null | undefined): string => {
+        if (!pathStr) return "/";
+        let p = pathStr.trim().toLowerCase();
+        try {
+            if (p.startsWith("http://") || p.startsWith("https://")) {
+                p = new URL(p).pathname;
+            }
+        } catch {}
+        if (p === "/" || p === "" || p === "/index.html" || p === "/index.htm" || p === "/index" || p === "/home") {
+            return "/";
+        }
+        if (p.endsWith("/")) {
+            p = p.slice(0, -1);
+        }
+        return p;
+    };
+
     let currentPath = "/";
     try {
         if (previewUrl) {
@@ -664,8 +774,17 @@ export default function ContentEditor({
     }
 
     const filteredSchema = schema.filter((field) => {
-        const fieldPath = field.path || "/";
-        return fieldPath === currentPath;
+        return normalizePath(field.path) === normalizePath(currentPath);
+    });
+
+    const displayFields = filteredSchema.filter((field) => {
+        if (!filterQuery) return true;
+        const q = filterQuery.toLowerCase();
+        return (
+            (field.label || "").toLowerCase().includes(q) ||
+            field.id.toLowerCase().includes(q) ||
+            (field.selector || "").toLowerCase().includes(q)
+        );
     });
 
     return (
@@ -713,29 +832,62 @@ export default function ContentEditor({
                                 <Sparkles className="w-8 h-8 text-[var(--ocms-yellow)] mx-auto mb-2 animate-pulse" />
                                 <p className="text-xs font-black uppercase text-black tracking-wide">No editable fields here</p>
                                 <p className="text-[10px] text-slate-700 mt-1 font-bold">This page hasn&apos;t been scanned by AI yet.</p>
-                                <button
-                                    type="button"
-                                    onClick={handleScanPage}
-                                    disabled={isScanning}
-                                    className="mt-4 w-full py-2.5 bg-[var(--ocms-blue)] text-black font-black uppercase tracking-wider text-[10px] border-[3px] border-black rounded-md shadow-[3px_3px_0px_#000] hover:shadow-[5px_5px_0px_#000] hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
-                                >
-                                    {isScanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-                                    {isScanning ? "Scanning..." : "Scan Page with AI"}
-                                </button>
+                                <div className="flex gap-2 mt-4">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleScanPage(false)}
+                                        disabled={isScanning}
+                                        className="flex-1 py-2.5 bg-[var(--ocms-blue)] text-black font-black uppercase tracking-wider text-[10px] border-[3px] border-black rounded-md shadow-[3px_3px_0px_#000] hover:shadow-[5px_5px_0px_#000] hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                    >
+                                        {isScanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                                        {isScanning ? "Scanning..." : "AI Scan"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleScanPage(true)}
+                                        disabled={isScanning}
+                                        className="flex-1 py-2.5 bg-white text-black font-black uppercase tracking-wider text-[10px] border-[3px] border-black rounded-md shadow-[3px_3px_0px_#000] hover:shadow-[5px_5px_0px_#000] hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                    >
+                                        {isScanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Code2 className="w-3.5 h-3.5" />}
+                                        {isScanning ? "Scanning..." : "Fast Scan (No AI)"}
+                                    </button>
+                                </div>
                             </div>
                         ) : (
                             <>
-                                <button
-                                    type="button"
-                                    onClick={handleScanPage}
-                                    disabled={isScanning}
-                                    className="w-full py-2 bg-white text-black font-black uppercase tracking-wider text-[10px] border-[3px] border-black rounded-md shadow-[2px_2px_0px_#000] hover:bg-[var(--ocms-yellow)] hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
-                                >
-                                    {isScanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                                    {isScanning ? "Scanning..." : "Rescan Page with AI"}
-                                </button>
+                                {/* R4: Sidebar Filter Input */}
+                                <div className="relative mb-3">
+                                    <input
+                                        type="text"
+                                        placeholder="🔍 Filter fields by label, ID, or selector..."
+                                        value={filterQuery}
+                                        onChange={(e) => setFilterQuery(e.target.value)}
+                                        className="w-full bg-white border-[3px] border-black rounded-md px-3.5 py-2 text-xs text-black placeholder-slate-500 outline-none focus:shadow-[2px_2px_0px_var(--ocms-yellow)] font-bold shadow-[2px_2px_0px_#000]"
+                                    />
+                                </div>
 
-                                {filteredSchema.map((field) => {
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleScanPage(false)}
+                                        disabled={isScanning}
+                                        className="flex-1 py-2 bg-white text-black font-black uppercase tracking-wider text-[10px] border-[3px] border-black rounded-md shadow-[2px_2px_0px_#000] hover:bg-[var(--ocms-yellow)] hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                    >
+                                        {isScanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                                        {isScanning ? "Scanning..." : "Rescan (AI)"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleScanPage(true)}
+                                        disabled={isScanning}
+                                        className="flex-1 py-2 bg-white text-black font-black uppercase tracking-wider text-[10px] border-[3px] border-black rounded-md shadow-[2px_2px_0px_#000] hover:bg-[var(--ocms-green)] hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                    >
+                                        {isScanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Code2 className="w-3.5 h-3.5" />}
+                                        {isScanning ? "Scanning..." : "Rescan (No AI)"}
+                                    </button>
+                                </div>
+
+                                {displayFields.map((field) => {
                                     const fieldLabel = field.label || field.id;
                                     const iconColors: Record<SchemaField["type"], string> = {
                                         text: "text-black bg-[var(--ocms-yellow)] border-2 border-black shadow-[2px_2px_0px_#000]",
@@ -802,10 +954,48 @@ export default function ContentEditor({
                                                 </div>
                                             </div>
                                         ) : (
-                                            <input type="text" value={field.value}
-                                                onChange={(e) => onFieldChange(field.id, e.target.value)}
-                                                className="w-full bg-white border-[3px] border-black rounded-md px-3.5 py-2.5 text-xs text-black placeholder-slate-500 outline-none focus:shadow-[3px_3px_0px_var(--ocms-yellow)] transition-all font-bold"
-                                                placeholder={`Enter ${fieldLabel.toLowerCase()}...`} />
+                                            field.value.length > 50 || field.originalHtmlTag === "p" || field.originalHtmlTag === "span" || field.originalHtmlTag === "div" ? (
+                                                <div className="space-y-1.5">
+                                                    <textarea value={field.value}
+                                                        onChange={(e) => onFieldChange(field.id, e.target.value)}
+                                                        rows={Math.min(6, Math.max(2, Math.ceil(field.value.length / 40)))}
+                                                        className="w-full bg-white border-[3px] border-black rounded-md px-3.5 py-2.5 text-xs text-black placeholder-slate-500 outline-none focus:shadow-[3px_3px_0px_var(--ocms-yellow)] transition-all font-bold"
+                                                        placeholder={`Enter ${fieldLabel.toLowerCase()}...`} />
+                                                    <select
+                                                        onChange={(e) => {
+                                                            if (e.target.value) {
+                                                                onFieldChange(field.id, e.target.value);
+                                                                e.target.value = "";
+                                                            }
+                                                        }}
+                                                        className="w-full bg-white border-[2.5px] border-black rounded-md px-2 py-1 text-[10px] text-slate-700 outline-none focus:shadow-[2px_2px_0px_var(--ocms-yellow)] font-bold cursor-pointer"
+                                                    >
+                                                        {COPY_TEMPLATES.map((t) => (
+                                                            <option key={t.name} value={t.value}>{t.name}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-1.5">
+                                                    <input type="text" value={field.value}
+                                                        onChange={(e) => onFieldChange(field.id, e.target.value)}
+                                                        className="w-full bg-white border-[3px] border-black rounded-md px-3.5 py-2.5 text-xs text-black placeholder-slate-500 outline-none focus:shadow-[3px_3px_0px_var(--ocms-yellow)] transition-all font-bold"
+                                                        placeholder={`Enter ${fieldLabel.toLowerCase()}...`} />
+                                                    <select
+                                                        onChange={(e) => {
+                                                            if (e.target.value) {
+                                                                onFieldChange(field.id, e.target.value);
+                                                                e.target.value = "";
+                                                            }
+                                                        }}
+                                                        className="w-full bg-white border-[2.5px] border-black rounded-md px-2 py-1 text-[10px] text-slate-700 outline-none focus:shadow-[2px_2px_0px_var(--ocms-yellow)] font-bold cursor-pointer"
+                                                    >
+                                                        {COPY_TEMPLATES.map((t) => (
+                                                            <option key={t.name} value={t.value}>{t.name}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )
                                         )}
                                     </div>
                                     );
@@ -831,31 +1021,42 @@ export default function ContentEditor({
                             </div>
 
                             <div className="space-y-2">
-                                <label className="text-[9px] text-slate-800 uppercase font-black">Base Texture (AI Generated)</label>
-                                <div className="flex gap-2">
-                                    <input 
-                                        type="text" 
-                                        placeholder="e.g. Vintage Leather" 
-                                        value={texturePrompt}
-                                        onChange={(e) => setTexturePrompt(e.target.value)}
-                                        className="flex-1 bg-white border-[3px] border-black rounded-md px-3 py-1.5 text-[10px] text-black outline-none focus:shadow-[3px_3px_0px_var(--ocms-orange)] font-bold" 
-                                    />
-                                    <button 
-                                        onClick={handleGenerateTexture}
-                                        disabled={isGeneratingTexture || !texturePrompt}
-                                        className="px-3 py-1.5 bg-[var(--ocms-orange)] border-[3px] border-black text-white rounded-md text-[9px] font-black uppercase hover:bg-white hover:text-black shadow-[3px_3px_0px_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] transition-all disabled:opacity-50 flex items-center gap-1"
-                                    >
-                                        {isGeneratingTexture ? (
-                                            <>
-                                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                                                ...
-                                            </>
-                                        ) : "GENERATE"}
-                                    </button>
+                                <label className="text-[9px] text-slate-800 uppercase font-black">PBR Material Presets</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {PBR_PRESETS.map((preset) => (
+                                        <button
+                                            key={preset.name}
+                                            type="button"
+                                            onClick={() => {
+                                                setRoughness(preset.roughness);
+                                                setMetalness(preset.metalness);
+                                                setTextureUrl(preset.textureUrl);
+                                                const modelField = schema.find(f => f.type === "3d-model");
+                                                if (modelField && onFieldUpdate) {
+                                                    onFieldUpdate(modelField.id, {
+                                                        roughness: preset.roughness,
+                                                        metalness: preset.metalness,
+                                                        textureUrl: preset.textureUrl
+                                                    });
+                                                }
+                                            }}
+                                            className="flex items-center gap-2 p-1.5 border-2 border-black rounded-md bg-white hover:bg-slate-50 active:translate-x-[0.5px] active:translate-y-[0.5px] shadow-[2px_2px_0px_#000] active:shadow-none transition-all text-left"
+                                        >
+                                            <span
+                                                className="w-3.5 h-3.5 rounded-full border border-black shrink-0"
+                                                style={{
+                                                    backgroundColor: preset.previewColor,
+                                                    backgroundImage: `url("${preset.textureUrl}")`,
+                                                    backgroundSize: 'cover'
+                                                }}
+                                            />
+                                            <span className="text-[8px] font-black uppercase tracking-tight">{preset.name}</span>
+                                        </button>
+                                    ))}
                                 </div>
                                 {textureUrl && (
-                                    <div className="text-[8px] text-slate-500 font-mono break-all line-clamp-1 bg-slate-100 p-1 border border-slate-300 rounded">
-                                        Active: {textureUrl.startsWith("data:") ? "Procedural Pattern URL" : textureUrl}
+                                    <div className="text-[8px] text-slate-500 font-mono break-all line-clamp-1 bg-slate-100 p-1 border border-slate-300 rounded mt-1.5">
+                                        Active Texture: {textureUrl.startsWith("data:") ? "SVG Preset Texture" : textureUrl}
                                     </div>
                                 )}
                             </div>
@@ -933,6 +1134,32 @@ export default function ContentEditor({
                     <div className="flex items-center justify-between mt-2">
                         <span className="text-[9px] text-slate-800 font-bold">{timelinePos}% of session</span>
                         <span className="text-[9px] text-black bg-[var(--ocms-green)] border-2 border-black px-2 py-0.5 rounded-[4px] shadow-[2px_2px_0px_#000] font-[family-name:var(--font-jetbrains-mono)] font-black uppercase">{historyCount} edits</span>
+                    </div>
+                    <div className="flex gap-2 mt-3">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (onHistoryIndexChange && historyIndex !== undefined && historyIndex > 0) {
+                                    onHistoryIndexChange(historyIndex - 1);
+                                }
+                            }}
+                            disabled={!(historyIndex !== undefined && historyIndex > 0)}
+                            className="flex-1 py-1.5 bg-white text-black border-[3px] border-black rounded-md text-[9px] font-black uppercase shadow-[2px_2px_0px_#000] hover:bg-slate-100 disabled:opacity-50 disabled:translate-y-0 disabled:shadow-[2px_2px_0px_#000] hover:translate-x-0 hover:translate-y-0 active:translate-x-0 active:translate-y-0 transition-all font-bold"
+                        >
+                            ↺ Undo
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (onHistoryIndexChange && historyIndex !== undefined && historyCount !== undefined && historyIndex < historyCount - 1) {
+                                    onHistoryIndexChange(historyIndex + 1);
+                                }
+                            }}
+                            disabled={!(historyIndex !== undefined && historyCount !== undefined && historyIndex < historyCount - 1)}
+                            className="flex-1 py-1.5 bg-white text-black border-[3px] border-black rounded-md text-[9px] font-black uppercase shadow-[2px_2px_0px_#000] hover:bg-slate-100 disabled:opacity-50 disabled:translate-y-0 disabled:shadow-[2px_2px_0px_#000] hover:translate-x-0 hover:translate-y-0 active:translate-x-0 active:translate-y-0 transition-all font-bold"
+                        >
+                            ↻ Redo
+                        </button>
                     </div>
                 </FeaturePanel>
 
@@ -1146,18 +1373,29 @@ export default function ContentEditor({
                     )}
                 </FeaturePanel>
 
-                {/* ════ AI COLOR PALETTE EXTRACTOR ════ */}
-                <FeaturePanel icon={<Palette className="w-3.5 h-3.5" />} title="AI Color Extractor" tag="AI" accentColor="pink">
-                    <p className="text-[10px] text-slate-800 mb-2.5 font-bold">Describe your brand to generate a custom CSS variable palette.</p>
-                    <div className="flex gap-2 mb-2.5">
-                        <input type="text" value={brandDescription} onChange={(e) => setBrandDescription(e.target.value)}
-                            className="flex-1 bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs text-black placeholder-slate-500 outline-none focus:shadow-[3px_3px_0px_var(--ocms-pink)] font-[family-name:var(--font-jetbrains-mono)]"
-                            placeholder="e.g., Luxury minimalist coffee shop" />
+                {/* ════ COLOR HARMONY GENERATOR ════ */}
+                <FeaturePanel icon={<Palette className="w-3.5 h-3.5" />} title="Color Harmony Picker" tag="New" accentColor="pink">
+                    <p className="text-[10px] text-slate-800 mb-2.5 font-bold">Pick a base brand color and generate a mathematical harmony palette (0% AI).</p>
+                    <div className="flex gap-3 items-center mb-3">
+                        <div className="flex-1 space-y-1">
+                            <label className="text-[8px] font-black uppercase text-slate-700">Base Color</label>
+                            <div className="flex gap-2">
+                                <input type="color" value={baseColor} onChange={(e) => setBaseColor(e.target.value)}
+                                    className="w-10 h-10 border-3 border-black rounded-md cursor-pointer shadow-[2px_2px_0px_#000] bg-white p-0.5" />
+                                <input type="text" value={baseColor} onChange={(e) => setBaseColor(e.target.value)}
+                                    className="flex-1 bg-white border-[3px] border-black rounded-md px-3 py-1.5 text-xs text-black outline-none focus:shadow-[2px_2px_0px_var(--ocms-pink)] font-mono font-bold" />
+                            </div>
+                        </div>
+                        <div className="flex-1 space-y-1">
+                            <label className="text-[8px] font-black uppercase text-slate-700">Harmony Type</label>
+                            <select value={harmonyType} onChange={(e) => setHarmonyType(e.target.value as "mono" | "analogous" | "triad")}
+                                className="w-full bg-white border-[3px] border-black rounded-md px-2.5 py-2 text-xs text-black outline-none focus:shadow-[2px_2px_0px_var(--ocms-pink)] font-bold">
+                                <option value="mono">Monochromatic</option>
+                                <option value="analogous">Analogous</option>
+                                <option value="triad">Triad Harmony</option>
+                            </select>
+                        </div>
                     </div>
-                    <button onClick={handleExtractColors} disabled={isExtractingColors || !brandDescription} className="w-full text-xs bg-[var(--ocms-pink)] border-[3px] border-black rounded-md py-2.5 text-black hover:bg-[var(--ocms-orange)] hover:text-white shadow-[3px_3px_0px_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] transition-all flex items-center justify-center gap-2 disabled:opacity-50 font-black uppercase">
-                        {isExtractingColors ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Palette className="w-3.5 h-3.5" />}
-                        {isExtractingColors ? "Extracting..." : "Generate Colors"}
-                    </button>
                     <div className="flex gap-2 mt-3">
                         {currentColors.map((c, idx) => (
                             <div key={`${c}-${idx}`}

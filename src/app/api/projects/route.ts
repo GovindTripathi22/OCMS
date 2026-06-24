@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
-import { cleanHtml, extractFallbackSchemaFields, validateSchemaFields } from "@/lib/scraper";
-import { generateSchema, callGemini, safeJsonParse } from "@/lib/gemini";
+import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { Prisma } from "@prisma/client";
 
 export async function POST(req: Request) {
@@ -79,13 +78,7 @@ export async function POST(req: Request) {
                 const rawHtml = await response.text();
                 scrapedHtml = rawHtml;
                 scrapedUrl = currentUrl.href;
-                const cleanResult = cleanHtml(rawHtml);
-                const aiSchemaFields = await generateSchema(cleanResult.html, currentUrl.href);
-                schemaFields = validateSchemaFields(rawHtml, aiSchemaFields, currentUrl.href);
-
-                if (schemaFields.length === 0 && aiSchemaFields.length > 0) {
-                    console.warn("AI schema generation returned fields, but none passed selector validation.");
-                }
+                schemaFields = extractFallbackSchemaFields(rawHtml, currentUrl.href);
             }
         } catch (err) {
             console.error("Auto schema generation failed, using fallback:", err);
@@ -121,32 +114,7 @@ progress:
 ## Current Position\nPhase: 1 of 2 (Foundation)\nPlan: 0 of 2 in current phase\nStatus: Planning\nLast activity: Initialized project`
         };
 
-        let gsdData = defaultGsdData;
-        try {
-            const aiPrompt = `Act as a GSD Core PM. Generate a full GSD planning structure for the project named "${name || "Untitled Project"}" (a web application scraped from ${url}).
-The generated structure must include four files: PROJECT.md, REQUIREMENTS.md, ROADMAP.md, and STATE.md.
-Ensure there are at least 3 distinct phases in ROADMAP.md, each containing 1-2 concrete plans (e.g. 01-01, 01-02).
-Ensure STATE.md sets phase 1 as the current focus and is ready to plan.
-Return a single JSON object containing exact Markdown text with fields: "projectMd", "requirementsMd", "roadmapMd", "stateMd".`;
-
-            const resText = await callGemini(aiPrompt, "You are a professional software planner.", true);
-            const resJson = safeJsonParse<{
-                projectMd: string;
-                requirementsMd?: string;
-                roadmapMd: string;
-                stateMd: string;
-            }>(resText);
-            if (resJson && resJson.projectMd && resJson.roadmapMd && resJson.stateMd) {
-                gsdData = {
-                    projectMd: resJson.projectMd,
-                    requirementsMd: resJson.requirementsMd || defaultGsdData.requirementsMd,
-                    roadmapMd: resJson.roadmapMd,
-                    stateMd: resJson.stateMd
-                };
-            }
-        } catch (err) {
-            console.error("GSD pre-generation failed, using default fallback:", err);
-        }
+        const gsdData = defaultGsdData;
 
         // Create the project
         const project = await prisma.project.create({

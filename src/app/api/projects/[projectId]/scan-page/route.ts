@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { cleanHtml, extractFallbackSchemaFields, validateSchemaFields } from "@/lib/scraper";
-import { generateSchema } from "@/lib/gemini";
+import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { Prisma } from "@prisma/client";
+import { auth } from "@/auth";
 
 export async function POST(
     req: NextRequest,
@@ -30,8 +30,8 @@ export async function POST(
 
         if (!scrapedHtml) {
             try {
-                let response = await fetch(targetUrl, {
-                    redirect: "manual",
+                const response = await fetch(targetUrl, {
+                    redirect: "follow",
                     headers: {
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                         Accept: "text/html",
@@ -39,34 +39,12 @@ export async function POST(
                     signal: AbortSignal.timeout(12000), // 12s timeout
                 });
 
-                let currentUrl = new URL(targetUrl);
-                let redirectCount = 0;
-                const maxRedirects = 5;
-
-                while ([301, 302, 303, 307, 308].includes(response.status) && redirectCount < maxRedirects) {
-                    const location = response.headers.get("location");
-                    if (!location) break;
-
-                    const nextUrl = new URL(location, currentUrl.href);
-                    if (nextUrl.origin !== currentUrl.origin) {
-                        console.log(`Blocking cross-origin redirect during page scanning from ${currentUrl.origin} to ${nextUrl.origin}`);
-                        break;
-                    }
-
-                    currentUrl = nextUrl;
-                    redirectCount++;
-                    response = await fetch(currentUrl.href, {
-                        redirect: "manual",
-                        headers: {
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            Accept: "text/html",
-                        },
-                        signal: AbortSignal.timeout(12000),
-                    });
+                if (!response.ok) {
+                    throw new Error(`Server responded with status ${response.status}`);
                 }
 
                 scrapedHtml = await response.text();
-                finalUrl = currentUrl.href;
+                finalUrl = response.url;
             } catch (err: unknown) {
                 console.error("[Scan Page Fetch Error]:", err);
                 const errMsg = err instanceof Error ? err.message : String(err);
@@ -74,20 +52,8 @@ export async function POST(
             }
         }
 
-        // Generate schema fields via Gemini or Fallback
-        let newFields = [];
-        try {
-            const cleanResult = cleanHtml(scrapedHtml);
-            const aiSchemaFields = await generateSchema(cleanResult.html, finalUrl);
-            newFields = validateSchemaFields(scrapedHtml, aiSchemaFields, finalUrl);
-        } catch (aiErr) {
-            console.warn("[AI Scan failed, using fallback scraper]:", aiErr);
-            newFields = extractFallbackSchemaFields(scrapedHtml, finalUrl);
-        }
-
-        if (newFields.length === 0) {
-            newFields = extractFallbackSchemaFields(scrapedHtml, finalUrl);
-        }
+        // Generate schema fields via local scraper
+        let newFields = extractFallbackSchemaFields(scrapedHtml, finalUrl);
 
         // Set path property on the new fields
         newFields = newFields.map((f) => ({
@@ -95,19 +61,38 @@ export async function POST(
             path: pathname,
         }));
 
-        // Fetch current project schema
-        const project = await prisma.project.findUnique({
-            where: { id: params.projectId },
-            select: { generatedSchema: true },
+        const session = await auth();
+        let userId = session?.user?.id;
+
+        if (!userId) {
+            let guestUser = await prisma.user.findFirst({
+                where: { email: "guest@ocms.ai" }
+            });
+            if (!guestUser) {
+                guestUser = await prisma.user.create({
+                    data: {
+                        name: "Guest User",
+                        email: "guest@ocms.ai",
+                    }
+                });
+            }
+            userId = guestUser.id;
+        }
+
+        const existingProject = await prisma.project.findFirst({
+            where: {
+                id: params.projectId,
+                userId: userId
+            }
         });
 
-        if (!project) {
-            return NextResponse.json({ error: "Project not found" }, { status: 404 });
+        if (!existingProject) {
+            return NextResponse.json({ error: "Project not found or access denied" }, { status: 404 });
         }
 
         let existingFields: Record<string, unknown>[] = [];
-        if (project.generatedSchema) {
-            existingFields = project.generatedSchema as unknown as Record<string, unknown>[];
+        if (existingProject.generatedSchema) {
+            existingFields = existingProject.generatedSchema as unknown as Record<string, unknown>[];
         }
 
         // Filter out old fields for the current path to replace them with fresh ones

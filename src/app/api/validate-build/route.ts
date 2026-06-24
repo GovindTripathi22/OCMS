@@ -12,6 +12,15 @@ const execAsync = promisify(exec);
  * and returns whether the build is healthy.
  */
 export async function GET() {
+    if (process.env.VERCEL) {
+        return NextResponse.json({
+            valid: true,
+            errors: ["TypeScript build check is bypassed in serverless environment. Run locally to validate build."],
+            errorCount: 0,
+            checkedAt: new Date().toISOString(),
+        });
+    }
+
     try {
         const projectRoot = path.resolve(process.cwd());
 

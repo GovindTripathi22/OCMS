@@ -105,6 +105,7 @@ export default function ModelDropzone({
             <input
                 type="file"
                 accept=".glb,.gltf"
+                aria-label="Drop GLB or GLTF to inject 3D model"
                 onChange={handleInputChange}
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />

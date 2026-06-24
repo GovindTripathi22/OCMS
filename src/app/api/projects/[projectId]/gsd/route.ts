@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { Octokit } from "@octokit/rest";
-import { callGemini, safeJsonParse } from "@/lib/gemini";
+import type { SchemaField } from "@/types/schema";
+
 import {
     parseState,
     parseRoadmap,
@@ -10,7 +11,6 @@ import {
     serializeState
 } from "@/lib/gsd-parser";
 import { Prisma } from "@prisma/client";
-import type { SchemaField } from "@/types/schema";
 
 interface GsdFiles {
     projectMd: string;
@@ -158,12 +158,12 @@ export async function GET(
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const project = await prisma.project.findUnique({
-            where: { id: params.projectId }
+        const project = await prisma.project.findFirst({
+            where: { id: params.projectId, userId: userId }
         });
 
         if (!project) {
-            return NextResponse.json({ error: "Project not found" }, { status: 404 });
+            return NextResponse.json({ error: "Project not found or access denied" }, { status: 404 });
         }
 
         let stateMd = "";
@@ -244,12 +244,12 @@ export async function POST(
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const project = await prisma.project.findUnique({
-            where: { id: params.projectId }
+        const project = await prisma.project.findFirst({
+            where: { id: params.projectId, userId: userId }
         });
 
         if (!project) {
-            return NextResponse.json({ error: "Project not found" }, { status: 404 });
+            return NextResponse.json({ error: "Project not found or access denied" }, { status: 404 });
         }
 
         const accessToken = await getAccessToken(userId);
@@ -259,20 +259,14 @@ export async function POST(
         const { action, payload } = await req.json();
 
         if (action === "init") {
-            const aiPrompt = `Act as a GSD Core PM. Generate a full GSD planning structure for the project named "${project.name}" (a web application scraped from ${project.sourceUrl || "scratch"}).
-The generated structure must include four files: PROJECT.md, REQUIREMENTS.md, ROADMAP.md, and STATE.md.
-Ensure there are at least 3 distinct phases in ROADMAP.md, each containing 1-2 concrete plans (e.g. 01-01, 01-02).
-Ensure STATE.md sets phase 1 as the current focus and is ready to plan.
-Return a single JSON object containing exact Markdown text with fields: "projectMd", "requirementsMd", "roadmapMd", "stateMd".`;
-
-            const resText = await callGemini(aiPrompt, "You are a professional software planner.", true);
-            const resJson = safeJsonParse<GsdFiles>(resText);
+            const projectName = project.name || "Untitled Project";
+            const sourceUrl = project.sourceUrl || "scratch";
 
             const initialFiles: GsdFiles = {
-                projectMd: resJson.projectMd,
-                requirementsMd: resJson.requirementsMd,
-                roadmapMd: resJson.roadmapMd,
-                stateMd: resJson.stateMd
+                projectMd: `# Project: ${projectName}\n\nSource: ${sourceUrl}\nCreated: ${new Date().toISOString().split('T')[0]}\n\n## Core Value\n\nBuild Smarter. Edit Faster. Ship Confidently.\n\n## Objectives\n\n1. Establish responsive, accessible page layouts\n2. Implement brand-consistent design system\n3. Optimize content delivery and performance`,
+                requirementsMd: `# Requirements: ${projectName}\n\n## v1 Requirements\n\n### General\n- [ ] **GEN-01**: Build responsive main landing layout\n- [ ] **GEN-02**: Integrate dynamic typography and theme configuration\n- [ ] **GEN-03**: Ensure cross-browser compatibility\n\n### Content\n- [ ] **CNT-01**: All headings and body text are CMS-editable\n- [ ] **CNT-02**: Images support alt-text and lazy loading\n- [ ] **CNT-03**: Links and CTAs are configurable\n\n### Performance\n- [ ] **PRF-01**: Page load under 3 seconds\n- [ ] **PRF-02**: Lighthouse score above 80`,
+                roadmapMd: `# Roadmap: ${projectName}\n\n## Phases\n\n- [ ] **Phase 1: Foundation** — Core page structure and navigation\n- [ ] **Phase 2: Content & Theme** — CMS fields and brand styling\n- [ ] **Phase 3: Polish & Ship** — Performance optimization and deployment\n\n### Phase 1: Foundation\nGoal: Build the base responsive layout\nPlans:\n- [ ] 01-01: Create page skeleton and navigation components\n- [ ] 01-02: Set up routing and responsive breakpoints\n\n### Phase 2: Content & Theme\nGoal: Integrate all CMS-editable content fields\nPlans:\n- [ ] 02-01: Map all text, image, and link fields to CMS schema\n\n### Phase 3: Polish & Ship\nGoal: Optimize and prepare for production\nPlans:\n- [ ] 03-01: Run Lighthouse audit and fix issues\n\n## Progress\n| Phase | Plans | Status | Completed |\n|---|---|---|---|\n| 1. Foundation | 0/2 | Not started | - |\n| 2. Content & Theme | 0/1 | Not started | - |\n| 3. Polish & Ship | 0/1 | Not started | - |`,
+                stateMd: `---\ngsd_state_version: '1.0'\nstatus: planning\nprogress:\n  total_phases: 3\n  completed_phases: 0\n  total_plans: 4\n  completed_plans: 0\n  percent: 0\n---\n# Project State\n## Current Position\nPhase: 1 of 3 (Foundation)\nPlan: 0 of 4 in current phase\nStatus: Planning\nLast activity: Initialized project`
             };
 
             await saveGsdFiles(params.projectId, project, octokit, initialFiles, branch, "chore(gsd): initialize GSD planning files");
@@ -349,16 +343,12 @@ Return a single JSON object containing exact Markdown text with fields: "project
         }
 
         if (action === "plan") {
-            const contextText = contextMd || "No special design instructions.";
-            const planPrompt = `Based on the GSD context of Phase ${state.currentPhaseNum} for project "${project.name}":
-Context: ${contextText}
-And current page schema: ${JSON.stringify(project.generatedSchema)}
+            const schemaFields = (project.generatedSchema as unknown as SchemaField[]) || [];
+            const textFields = schemaFields.filter((f: SchemaField) => f.type === "text").length;
+            const imageFields = schemaFields.filter((f: SchemaField) => f.type === "image").length;
+            const linkFields = schemaFields.filter((f: SchemaField) => f.type === "link").length;
 
-Generate a PLAN.md document that details 1-3 tasks to perform. Return ONLY a JSON object with key "planMd" containing the Markdown contents of the plan.`;
-
-            const resText = await callGemini(planPrompt, "You are a professional software planner.", true);
-            const resJson = safeJsonParse<{ planMd: string }>(resText);
-            const newPlanMd = resJson.planMd;
+            const newPlanMd = `# Plan: Phase ${state.currentPhaseNum}\n\n## Tasks\n\n### Task 1: Review and Update Content Fields\n- Total text fields to review: ${textFields}\n- Total image fields to review: ${imageFields}\n- Total link fields to review: ${linkFields}\n- Action: Review each field value for accuracy and brand consistency\n\n### Task 2: Validate Visual Hierarchy\n- Ensure headings follow proper H1 > H2 > H3 hierarchy\n- Verify CTA buttons have clear, action-oriented text\n- Check image alt-text for accessibility\n\n### Task 3: Quality Assurance\n- Cross-check all links are valid\n- Verify responsive layout at mobile/tablet/desktop breakpoints\n- Run content spell-check\n\n## Acceptance Criteria\n- All schema fields reviewed and values confirmed\n- No broken links or missing images\n- Content passes basic accessibility checks`;
 
             // Update state
             state.phaseStatus = "Ready to execute";
@@ -382,26 +372,9 @@ Generate a PLAN.md document that details 1-3 tasks to perform. Return ONLY a JSO
                 return NextResponse.json({ error: "Plan not found for current phase. Run planning first." }, { status: 400 });
             }
 
-            // GSD Execution: Call Gemini to execute plan directly on the CMS generatedSchema JSON database record!
-            const executePrompt = `You are a GSD Code & Schema Executor.
-We are executing this plan:
-${planMd}
-
-Here is the current visual schema JSON containing all editable content fields:
-${JSON.stringify(project.generatedSchema, null, 2)}
-
-Your job is to apply the plan's edits to the schema values. Modify the content "value" fields inside the JSON array to implement the tasks.
-Return ONLY the complete updated JSON array. No explanations, no markdown code fences.`;
-
-            const updatedSchemaText = await callGemini(executePrompt, "You are a schema visual content modifier. Return only valid JSON array.");
-            
-            const nextSchema = safeJsonParse<SchemaField[]>(updatedSchemaText);
-
-            // Save updated schema directly to visual editor database record!
-            await prisma.project.update({
-                where: { id: params.projectId },
-                data: { generatedSchema: nextSchema as unknown as Prisma.InputJsonValue }
-            });
+            // In local-first mode, the user edits fields directly via the visual editor.
+            // The execute step simply marks the plan as complete.
+            // No AI modification needed - schema is edited by the user directly
 
             // Update GSD state
             state.currentPlanNum = Math.min(state.totalPlans, state.currentPlanNum + 1);

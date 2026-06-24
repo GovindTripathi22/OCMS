@@ -144,7 +144,7 @@ export function readStaticStyleProperty(node: t.JSXElement, propertyName: string
         for (const property of style.value.expression.properties) {
             if (!t.isObjectProperty(property)) continue;
             if (objectKeyName(property.key) !== propertyName) continue;
-            return readStaticExpressionValue(property.value);
+            return readStaticExpressionValue(property.value as t.Expression);
         }
     }
 

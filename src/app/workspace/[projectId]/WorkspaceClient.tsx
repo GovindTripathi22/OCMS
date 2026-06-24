@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import ContentEditor from "@/components/workspace/ContentEditor";
 import LivePreview from "@/components/workspace/LivePreview";
+import PermissionWizard from "@/components/workspace/PermissionWizard";
 import type { SchemaField } from "@/types/schema";
 import { PBR_PRESETS } from "@/lib/pbr-presets";
 
@@ -25,6 +26,12 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
     const [previewUrl, setPreviewUrl] = useState(project.sourceUrl);
     const [iframeLoaded, setIframeLoaded] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
+
+    // GitHub Repo configuration state
+    const [githubOwner, setGithubOwner] = useState(project.githubOwner);
+    const [githubRepo, setGithubRepo] = useState(project.githubRepo);
+    const [targetFilePath, setTargetFilePath] = useState(project.targetFilePath);
+    const [showPermissionWizard, setShowPermissionWizard] = useState(false);
 
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const inlineEditRef = useRef(false);
@@ -348,9 +355,9 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         onFieldChange={handleFieldChange}
                         onFieldUpdate={handleFieldUpdate}
                         onModelInjected={handleModelInjected}
-                        githubOwner={project.githubOwner}
-                        githubRepo={project.githubRepo}
-                        targetFilePath={project.targetFilePath}
+                        githubOwner={githubOwner}
+                        githubRepo={githubRepo}
+                        targetFilePath={targetFilePath}
                         onHistorySeek={seekHistory}
                         historyCount={history.length}
                         onSchemaReplace={handleSchemaReplace}
@@ -358,6 +365,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         previewUrl={previewUrl}
                         isScanning={isScanning}
                         onScanPage={handleScanPage}
+                        openPermissionWizard={() => setShowPermissionWizard(true)}
                     />
                 </div>
 
@@ -556,6 +564,21 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         </div>
                     </div>
                 </div>
+            )}
+
+            {showPermissionWizard && (
+                <PermissionWizard
+                    projectId={project.id}
+                    currentOwner={githubOwner}
+                    currentRepo={githubRepo}
+                    currentFilePath={targetFilePath}
+                    onClose={() => setShowPermissionWizard(false)}
+                    onSetupCompleted={(data) => {
+                        setGithubOwner(data.githubOwner);
+                        setGithubRepo(data.githubRepo);
+                        setTargetFilePath(data.targetFilePath);
+                    }}
+                />
             )}
         </div>
     );

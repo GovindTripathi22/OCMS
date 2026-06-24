@@ -5,7 +5,7 @@ import {
     Type, ImageIcon, Link2, Box, Loader2, Check, AlertCircle,
     Mic, MicOff, Palette, Code2, Clock, Gauge, Sparkles,
     MousePointer2, Copy, Wand2, ChevronDown, ChevronRight,
-    GitBranch, Zap, Eye, ShieldCheck, ShieldAlert, Clipboard, List
+    GitBranch, Zap, Eye, ShieldCheck, ShieldAlert, Clipboard, List, Settings
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import ModelDropzone from "./ModelDropzone";
@@ -41,6 +41,7 @@ interface ContentEditorProps {
     previewUrl?: string;
     isScanning?: boolean;
     onScanPage?: (skipAi?: boolean) => void;
+    openPermissionWizard?: () => void;
 }
 
 const fieldIcons: Record<SchemaField["type"], React.ReactNode> = {
@@ -246,6 +247,7 @@ export default function ContentEditor({
     previewUrl,
     isScanning = false,
     onScanPage,
+    openPermissionWizard,
 }: ContentEditorProps) {
     const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
     const [errorMessage, setErrorMessage] = useState("");
@@ -1404,12 +1406,14 @@ export default function ContentEditor({
                                 style={{ background: c }}
                                 title={`Click to copy ${c}`}
                             >
-                                {copiedColor === c && (
-                                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-black text-white text-[7px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap">
-                                        Copied!
-                                    </div>
+                                {copiedColor === c ? (
+                                    <>
+                                        <div className="absolute inset-0 rounded-sm bg-black/25 animate-ripple" />
+                                        <Check className="w-3 h-3 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white animate-scale-up drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]" />
+                                    </>
+                                ) : (
+                                    <Clipboard className="w-2.5 h-2.5 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white opacity-0 group-hover:opacity-80 transition-opacity drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]" />
                                 )}
-                                <Clipboard className="w-2.5 h-2.5 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white opacity-0 group-hover:opacity-80 transition-opacity drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]" />
                             </div>
                         ))}
                         <span className="text-[9px] text-slate-800 self-center ml-1 font-black uppercase">Current</span>
@@ -1634,6 +1638,22 @@ export default function ContentEditor({
                         <span className="truncate">{errorMessage}</span>
                     </div>
                 )}
+                
+                <div className="flex items-center justify-between text-[9px] font-black uppercase text-slate-500 mb-2.5 px-1 select-none">
+                    <span className="truncate max-w-[220px]" title={`${githubOwner}/${githubRepo}:${targetFilePath}`}>
+                        Sync: {githubOwner}/{githubRepo}:{targetFilePath.split("/").pop()}
+                    </span>
+                    {openPermissionWizard && (
+                        <button
+                            type="button"
+                            onClick={openPermissionWizard}
+                            className="hover:text-black flex items-center gap-1 shrink-0 font-extrabold transition-colors"
+                        >
+                            <Settings className="w-3.5 h-3.5" /> Configure
+                        </button>
+                    )}
+                </div>
+
                 <button onClick={handleSaveAndSync} disabled={syncStatus === "syncing"}
                     className={`w-full py-3.5 rounded-md text-xs font-black tracking-wider uppercase transition-all duration-300 flex items-center justify-center gap-2.5 border-[3px] border-black shadow-[4px_4px_0px_#000] ${syncStatus === "success"
                         ? "bg-[var(--ocms-green)] text-black"

@@ -1510,8 +1510,38 @@ ${modelViewerScript}
         if (source === 'ocms-editor' && type === 'AI_EDIT_START') {
             const el = selector ? document.querySelector(selector) : null;
             if (el) {
-                el.style.outline = '2px solid #8b5cf6';
-                el.style.backgroundColor = 'rgba(139, 92, 246, 0.1)';
+                let ghostCursor = document.getElementById('ocms-ghost-cursor');
+                if (!ghostCursor) {
+                    ghostCursor = document.createElement('div');
+                    ghostCursor.id = 'ocms-ghost-cursor';
+                    ghostCursor.innerHTML = \`
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style="filter: drop-shadow(1px 2px 2px rgba(0,0,0,0.4))">
+                            <path d="M4.5 3V17.5C4.5 17.95 5 18.2 5.35 17.85L9.35 13.85C9.55 13.65 9.8 13.5 10.1 13.5H16.5C16.95 13.5 17.2 13 16.85 12.65L4.85 2.65C4.6 2.45 4.5 2.65 4.5 3Z" fill="#f97316" stroke="black" stroke-width="2.5" stroke-linejoin="round"/>
+                            <circle cx="5" cy="4" r="8" fill="rgba(249, 115, 22, 0.4)" style="animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite; transform-origin: 5px 4px;" />
+                        </svg>
+                    \`;
+                    ghostCursor.style.position = 'absolute';
+                    ghostCursor.style.zIndex = '999999';
+                    ghostCursor.style.pointerEvents = 'none';
+                    ghostCursor.style.top = '0px';
+                    ghostCursor.style.left = '0px';
+                    ghostCursor.style.transition = 'transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)';
+                    ghostCursor.style.transform = 'translate(-100px, -100px)';
+                    document.body.appendChild(ghostCursor);
+                }
+
+                ghostCursor.style.display = 'block';
+                ghostCursor.style.opacity = '1';
+
+                const rect = el.getBoundingClientRect();
+                const x = rect.left + window.scrollX + rect.width / 2;
+                const y = rect.top + window.scrollY + rect.height / 2;
+
+                ghostCursor.style.transform = 'translate(' + x + 'px, ' + y + 'px)';
+
+                el.style.outline = '3px solid #f97316';
+                el.style.backgroundColor = 'rgba(249, 115, 22, 0.08)';
+                el.style.transition = 'outline 0.3s ease, background-color 0.3s ease';
                 el.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
         }
@@ -1520,6 +1550,14 @@ ${modelViewerScript}
             if (el) {
                 el.style.outline = '1px dashed rgba(139, 92, 246, 0.45)';
                 el.style.backgroundColor = 'transparent';
+            }
+            const ghostCursor = document.getElementById('ocms-ghost-cursor');
+            if (ghostCursor) {
+                ghostCursor.style.transition = 'transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.3s ease';
+                ghostCursor.style.opacity = '0';
+                setTimeout(() => {
+                    ghostCursor.style.display = 'none';
+                }, 300);
             }
         }
     });

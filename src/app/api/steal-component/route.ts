@@ -7,12 +7,14 @@ export const runtime = "nodejs";
 type StyleMap = Record<string, string>;
 type ResponsiveVariant = "sm" | "md" | "lg";
 
+/*
 type StyleBundle = {
     base: StyleMap;
     sm: StyleMap;
     md: StyleMap;
     lg: StyleMap;
 };
+*/
 
 interface CssRule {
     selector: string;
@@ -29,11 +31,7 @@ interface RenderContext {
     maxNodes: number;
 }
 
-const SKIP_TAGS = new Set(["script", "style", "link", "meta", "noscript", "template", "source"]);
-const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "param", "track", "wbr"]);
-const SAFE_TAGS = new Set([
-    "a", "article", "aside", "button", "div", "figure", "figcaption", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "img", "input", "label", "li", "main", "nav", "ol", "p", "picture", "section", "span", "strong", "em", "small", "ul", "video",
-]);
+
 
 export async function POST(req: NextRequest) {
     try {
@@ -215,7 +213,8 @@ function declarationsFromRule(rule: Rule): StyleMap {
 }
 
 function mediaVariantForRule(rule: Rule): ResponsiveVariant | undefined {
-    let parent = rule.parent;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let parent: any = rule.parent;
     while (parent) {
         if (parent.type === "atrule" && parent.name === "media") {
             const params = parent.params.toLowerCase();
@@ -288,6 +287,7 @@ function normalizeCssSelector(selector: string): string | null {
     return cleaned;
 }
 
+/*
 function computeStyles(context: RenderContext, node: unknown): StyleBundle {
     const bundle: StyleBundle = { base: {}, sm: {}, md: {}, lg: {} };
 
@@ -307,7 +307,9 @@ function elementMatchesSelector($: cheerio.CheerioAPI, node: unknown, selector: 
         return false;
     }
 }
+*/
 
+/*
 function parseInlineStyle(styleValue: string): StyleMap {
     const declarations: StyleMap = {};
     if (!styleValue.trim()) return declarations;
@@ -328,4 +330,71 @@ function parseInlineStyle(styleValue: string): StyleMap {
     }
 
     return declarations;
+}
+*/
+
+function cleanText(text: string): string {
+    return text.replace(/\s+/g, " ").trim();
+}
+
+function parseCssLength(value: string): number | null {
+    const num = parseFloat(value);
+    if (isNaN(num)) return null;
+    if (value.endsWith("rem") || value.endsWith("em")) return num * 16;
+    return num;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function renderNode(node: any, context: RenderContext, indent: number): string {
+    if (context.nodeCount.value++ > context.maxNodes) return "";
+    
+    if (node.type === "text") {
+        const txt = node.data.trim();
+        if (!txt) return "";
+        return txt.replace(/[{}]/g, (m: string) => `{'${m}'}`);
+    }
+    
+    if (node.type !== "tag") return "";
+
+    const $node = context.$(node);
+    const tagName = node.name.toLowerCase();
+    
+    if (["script", "style", "link", "meta", "noscript"].includes(tagName)) return "";
+
+    const indentStr = " ".repeat(indent);
+    const attrs: string[] = [];
+    
+    const className = $node.attr("class");
+    if (className) {
+        attrs.push(`className="${className.trim()}"`);
+    }
+
+    for (const [name, val] of Object.entries(node.attribs || {})) {
+        if (name === "class") continue;
+        if (name === "style") continue;
+        if (name.startsWith("on")) continue;
+        attrs.push(`${name}="${val}"`);
+    }
+
+    const attrStr = attrs.length ? " " + attrs.join(" ") : "";
+
+    if (["img", "br", "hr", "input", "meta"].includes(tagName)) {
+        return `${indentStr}<${tagName}${attrStr} />`;
+    }
+
+    const childrenMarkup: string[] = [];
+    $node.contents().each((_, child) => {
+        const m = renderNode(child, context, indent + 2);
+        if (m) childrenMarkup.push(m);
+    });
+
+    if (childrenMarkup.length === 0) {
+        return `${indentStr}<${tagName}${attrStr}></${tagName}>`;
+    }
+
+    return `${indentStr}<${tagName}${attrStr}>\n${childrenMarkup.join("\n")}\n${indentStr}</${tagName}>`;
+}
+
+function buildComponentCode(markup: string): string {
+    return `"use client";\n\nimport React from "react";\n\nexport default function StolenComponent() {\n    return (\n${markup}\n    );\n}\n`;
 }

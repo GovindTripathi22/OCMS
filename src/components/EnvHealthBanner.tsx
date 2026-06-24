@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, AlertTriangle, ShieldAlert, ExternalLink, CheckCircle2 } from "lucide-react";
+import { X, AlertTriangle, ShieldAlert, ExternalLink, CheckCircle2, Settings } from "lucide-react";
+import PermissionWizard from "./workspace/PermissionWizard";
 
 interface EnvStatus {
     configured: boolean;
@@ -21,6 +22,7 @@ const CRITICAL_VARS = ["DATABASE_URL", "NEXTAUTH_SECRET"];
 export default function EnvHealthBanner() {
     const [status, setStatus] = useState<EnvStatus | null>(null);
     const [dismissed, setDismissed] = useState(false);
+    const [showWizard, setShowWizard] = useState(false);
 
     useEffect(() => {
         fetch("/api/check-env")
@@ -145,20 +147,34 @@ export default function EnvHealthBanner() {
                     <div className="flex flex-col gap-2 sm:flex-row sm:gap-4 pt-1">
                         {(status.missing.some((v) => v.startsWith("GITHUB_")) ||
                             status.warnings.some((v) => v.startsWith("GITHUB_"))) && (
-                            <a
-                                href="https://github.com/settings/developers"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 rounded-md border-2 border-black bg-[var(--ocms-blue)] px-3 py-1.5 text-xs font-black uppercase text-white shadow-[2px_2px_0_0_#000] transition-all hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px]"
-                            >
-                                <ExternalLink className="w-3 h-3" />
-                                GitHub OAuth Setup
-                            </a>
+                            <>
+                                <button
+                                    onClick={() => setShowWizard(true)}
+                                    className="inline-flex items-center gap-1.5 rounded-md border-2 border-black bg-[var(--ocms-yellow)] px-3 py-1.5 text-xs font-black uppercase text-black shadow-[2px_2px_0_0_#000] transition-all hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px]"
+                                >
+                                    <Settings className="w-3.5 h-3.5 animate-pulse" />
+                                    GitHub Setup Assistant
+                                </button>
+                                <a
+                                    href="https://github.com/settings/developers"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 rounded-md border-2 border-black bg-[var(--ocms-blue)] px-3 py-1.5 text-xs font-black uppercase text-white shadow-[2px_2px_0_0_#000] transition-all hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px]"
+                                >
+                                    <ExternalLink className="w-3 h-3" />
+                                    Developer Settings
+                                </a>
+                            </>
                         )}
-
                     </div>
                 </div>
             </div>
+            
+            {showWizard && (
+                <PermissionWizard
+                    onClose={() => setShowWizard(false)}
+                />
+            )}
         </div>
     );
 }

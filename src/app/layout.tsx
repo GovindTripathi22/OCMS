@@ -18,6 +18,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || "http://localhost:3000"),
   title: "OCMS — Local-First Headless CMS by SPACHT",
   description:
     "Next-generation headless CMS. 100% free, offline, and privacy-first. Built with precision by team SPACHT.",

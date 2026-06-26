@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "scratch/patcher-tests",
+    "rootDir": ".",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "target": "ES2022",
+    "jsx": "react-jsx",
+    "isolatedModules": false,
+    "incremental": false,
+    "tsBuildInfoFile": "scratch/patcher-tests.tsbuildinfo"
+  },
+  "include": [
+    "scripts/patcher-smoke-tests.ts",
+    "src/lib/ast-patcher.ts",
+    "src/lib/html-patcher.ts",
+    "src/lib/jsx-ast-helpers.ts",
+    "src/lib/publish-change-normalizer.ts"
+  ]
+}

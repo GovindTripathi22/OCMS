@@ -17,24 +17,43 @@ export interface ASTChange {
     borderRadius?: string;
 }
 
+export interface PatchReport {
+    code: string;
+    appliedCount: number;
+    matchedSelectors: string[];
+    unmatchedSelectors: string[];
+}
+
 export function patchJSX(sourceCode: string, changes: ASTChange[]): string {
+    return patchJSXWithReport(sourceCode, changes).code;
+}
+
+export function patchJSXWithReport(sourceCode: string, changes: ASTChange[]): PatchReport {
     const ast = parseTSX(sourceCode);
+    const matchedSelectors = new Set<string>();
+    const unmatchedSelectors = new Set<string>();
+    let appliedCount = 0;
 
     for (const change of changes) {
         if (!change.selector || change.newValue === undefined || change.newValue === null) continue;
 
         const candidates = findJSXElements(ast, change.selector);
         const target = chooseTarget(candidates, change);
-        if (!target) continue;
+        if (!target) {
+            unmatchedSelectors.add(change.selector);
+            continue;
+        }
 
         writeJSXElementValue(target, change.type, change.newValue, {
             alt: change.alt,
             objectFit: change.objectFit,
             borderRadius: change.borderRadius,
         });
+        matchedSelectors.add(change.selector);
+        appliedCount++;
     }
 
-    return generate(
+    const code = generate(
         ast,
         {
             retainLines: true,
@@ -42,6 +61,13 @@ export function patchJSX(sourceCode: string, changes: ASTChange[]): string {
         },
         sourceCode
     ).code;
+
+    return {
+        code,
+        appliedCount,
+        matchedSelectors: Array.from(matchedSelectors),
+        unmatchedSelectors: Array.from(unmatchedSelectors),
+    };
 }
 
 function chooseTarget(

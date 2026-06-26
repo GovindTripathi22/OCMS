@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Octokit } from "@octokit/rest";
+import fs from "fs";
+import path from "path";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
     try {
@@ -32,6 +36,88 @@ export async function GET(req: NextRequest) {
 
         if (!account || !account.access_token) {
             return NextResponse.json({ authenticated: false, repos: [] });
+        }
+
+        if (account.access_token === "mock_token") {
+            const searchParams = req.nextUrl.searchParams;
+            const owner = searchParams.get("owner");
+            const repo = searchParams.get("repo");
+
+            if (owner && repo) {
+                try {
+                    const localRoot = path.resolve(process.env.LOCAL_WORKSPACE_PATH || process.cwd());
+                    const files: { path: string; size: number }[] = [];
+
+                    const scanDir = (dir: string) => {
+                        const list = fs.readdirSync(dir);
+                        for (const file of list) {
+                            const fullPath = path.join(dir, file);
+                            const relativePath = path.relative(localRoot, fullPath).replace(/\\/g, "/");
+                            
+                            // Exclude system/dependency folders
+                            if (
+                                relativePath === "node_modules" || relativePath.startsWith("node_modules/") ||
+                                relativePath === ".git" || relativePath.startsWith(".git/") ||
+                                relativePath === ".next" || relativePath.startsWith(".next/") ||
+                                relativePath === "dist" || relativePath.startsWith("dist/") ||
+                                relativePath === "scratch" || relativePath.startsWith("scratch/") ||
+                                relativePath.includes("/node_modules/") ||
+                                relativePath.includes("/dist/")
+                            ) {
+                                continue;
+                            }
+
+                            const stat = fs.statSync(fullPath);
+                            if (stat.isDirectory()) {
+                                scanDir(fullPath);
+                            } else {
+                                if (
+                                    relativePath.endsWith(".tsx") ||
+                                    relativePath.endsWith(".jsx") ||
+                                    relativePath.endsWith(".ts") ||
+                                    relativePath.endsWith(".js") ||
+                                    relativePath.endsWith(".html") ||
+                                    relativePath.endsWith(".css")
+                                ) {
+                                    files.push({
+                                        path: relativePath,
+                                        size: stat.size
+                                    });
+                                }
+                            }
+                        }
+                    };
+
+                    scanDir(localRoot);
+
+                    return NextResponse.json({
+                        authenticated: true,
+                        defaultBranch: "main",
+                        files
+                    });
+                } catch (err) {
+                    console.error("Local scan error:", err);
+                    return NextResponse.json({
+                        authenticated: true,
+                        error: "Failed to scan local workspace files",
+                        details: err instanceof Error ? err.message : String(err)
+                    }, { status: 500 });
+                }
+            }
+
+            return NextResponse.json({
+                authenticated: true,
+                repos: [
+                    {
+                        id: 999999,
+                        name: "ocms",
+                        full_name: "local-workspace/ocms",
+                        owner: "local-workspace",
+                        html_url: "#",
+                        default_branch: "main"
+                    }
+                ]
+            });
         }
 
         const octokit = new Octokit({ auth: account.access_token });

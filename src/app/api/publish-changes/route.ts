@@ -1,21 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { patchJSX, type ASTChange } from "@/lib/ast-patcher";
+import { patchJSXWithReport, type ASTChange, type PatchReport } from "@/lib/ast-patcher";
+import { patchHTMLWithReport } from "@/lib/html-patcher";
+import { normalizeChanges } from "@/lib/publish-change-normalizer";
 import { Octokit } from "@octokit/rest";
 import fs from "fs";
 import path from "path";
 
-interface SourceChange {
-    fieldId?: unknown;
-    selector?: unknown;
-    type?: unknown;
-    newValue?: unknown;
-    oldValue?: unknown;
-    alt?: unknown;
-    objectFit?: unknown;
-    borderRadius?: unknown;
-}
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
     try {
@@ -65,6 +58,48 @@ export async function POST(req: NextRequest) {
             }, { status: 200 });
         }
 
+        if (account.access_token === "mock_token") {
+            try {
+                const localRoot = path.resolve(process.env.LOCAL_WORKSPACE_PATH || process.cwd());
+                const localFilePath = path.resolve(localRoot, filePath);
+                const insideLocalRoot = localFilePath === localRoot || localFilePath.startsWith(`${localRoot}${path.sep}`);
+
+                if (!insideLocalRoot || !fs.existsSync(localFilePath)) {
+                    return NextResponse.json({ error: `Local file not found: ${filePath}` }, { status: 404 });
+                }
+
+                const localContent = fs.readFileSync(localFilePath, "utf8");
+                const patchResult = patchSource(localContent, filePath, astChanges);
+                const updatedCode = patchResult.code;
+
+                if (patchResult.appliedCount === 0) {
+                    return noPatchResponse(patchResult);
+                }
+
+                if (updatedCode === localContent) {
+                    return NextResponse.json({
+                        success: true,
+                        message: "Matching nodes were found, but no source changes were necessary.",
+                        commitUrl: "#",
+                        unchanged: true,
+                        matchedSelectors: patchResult.matchedSelectors,
+                    }, { status: 200 });
+                }
+
+                fs.writeFileSync(localFilePath, updatedCode, "utf8");
+                console.log(`[Local Sync] Successfully updated local file in Mock mode: ${localFilePath}`);
+
+                return NextResponse.json({
+                    success: true,
+                    message: "Local file updated successfully (Offline Mode).",
+                    commitUrl: "#"
+                }, { status: 200 });
+            } catch (err) {
+                console.error("Local mock publish error:", err);
+                return NextResponse.json({ error: `Local publish failed: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 });
+            }
+        }
+
         // Initialize Octokit with the user's token
         const octokit = new Octokit({ auth: account.access_token });
 
@@ -93,9 +128,20 @@ export async function POST(req: NextRequest) {
         const decodedContent = Buffer.from(fileData.content, "base64").toString("utf8");
 
         // --- STEP 2: Deterministic AST Code Modifier (AI-Free) ---
-        const updatedCode = patchJSX(decodedContent, astChanges);
+        const patchResult = patchSource(decodedContent, filePath, astChanges);
+        const updatedCode = patchResult.code;
+        if (patchResult.appliedCount === 0) {
+            return noPatchResponse(patchResult);
+        }
+
         if (updatedCode === decodedContent) {
-            return NextResponse.json({ error: "No matching JSX nodes were found for the provided selectors" }, { status: 422 });
+            return NextResponse.json({
+                success: true,
+                message: "Matching nodes were found, but no source changes were necessary.",
+                commitUrl: "#",
+                unchanged: true,
+                matchedSelectors: patchResult.matchedSelectors,
+            }, { status: 200 });
         }
 
         // Write changes back to the local workspace code files (R5 Local Sync)
@@ -141,29 +187,16 @@ export async function POST(req: NextRequest) {
     }
 }
 
-function normalizeChanges(changes: SourceChange[]): ASTChange[] {
-    return changes.reduce<ASTChange[]>((patches, change) => {
-        if (typeof change.selector !== "string" || typeof change.newValue !== "string") return patches;
-
-        const type = normalizeChangeType(change.type);
-        if (!type) return patches;
-
-        patches.push({
-            type,
-            selector: change.selector,
-            newValue: change.newValue,
-            oldValue: typeof change.oldValue === "string" ? change.oldValue : undefined,
-            alt: typeof change.alt === "string" ? change.alt : undefined,
-            objectFit: typeof change.objectFit === "string" ? change.objectFit : undefined,
-            borderRadius: typeof change.borderRadius === "string" ? change.borderRadius : undefined,
-        });
-
-        return patches;
-    }, []);
+function patchSource(sourceCode: string, filePath: string, changes: ASTChange[]): PatchReport {
+    return filePath.toLowerCase().endsWith(".html")
+        ? patchHTMLWithReport(sourceCode, changes)
+        : patchJSXWithReport(sourceCode, changes);
 }
 
-function normalizeChangeType(type: unknown): ASTChange["type"] | null {
-    if (type === "text" || type === "image" || type === "link" || type === "3d-model") return type;
-    if (type === "list") return "text";
-    return null;
+function noPatchResponse(report: PatchReport) {
+    return NextResponse.json({
+        error: "No matching JSX or HTML nodes were found for the provided selectors",
+        unmatchedSelectors: report.unmatchedSelectors,
+        matchedSelectors: report.matchedSelectors,
+    }, { status: 422 });
 }

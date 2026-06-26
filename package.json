@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:patchers": "node scripts/run-patcher-smoke-tests.mjs",
     "postinstall": "prisma generate"
   },
   "dependencies": {

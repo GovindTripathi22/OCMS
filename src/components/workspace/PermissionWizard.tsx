@@ -166,6 +166,36 @@ export default function PermissionWizard({
         }
     };
 
+    const handleConnectOffline = async () => {
+        try {
+            setLoadingAuth(true);
+            setErrorMessage("");
+            const res = await fetch("/api/auth/mock", { method: "POST" });
+            const data = await res.json();
+            if (data.success) {
+                setIsAuthenticated(true);
+                // Trigger fetch repositories which will list the mock local workspace repo
+                const reposRes = await fetch("/api/github/repos");
+                const reposData = await reposRes.json();
+                if (reposData.repos) {
+                    setRepos(reposData.repos);
+                    const localRepo = reposData.repos.find((r: GithubRepo) => r.owner === "local-workspace");
+                    if (localRepo) {
+                        setSelectedRepo(localRepo);
+                    }
+                }
+                setStep(3);
+            } else {
+                setErrorMessage(data.error || "Failed to set up offline mode.");
+            }
+        } catch (err) {
+            console.error("Offline connect error:", err);
+            setErrorMessage("Failed to connect offline.");
+        } finally {
+            setLoadingAuth(false);
+        }
+    };
+
     const handleSave = async () => {
         if (!selectedRepo || !selectedFile) {
             setErrorMessage("Please select both a repository and target file path.");
@@ -354,6 +384,17 @@ export default function PermissionWizard({
                                         <li>Set Authorization Callback URL to <code className="bg-slate-100 border px-1 rounded">http://localhost:3000/api/auth/callback/github</code>.</li>
                                         <li>Copy client ID and secret into your env file, then restart the server.</li>
                                     </ol>
+
+                                    <div className="pt-4 text-center border-t-2 border-dashed border-red-200">
+                                        <div className="text-[11px] font-bold text-slate-500 mb-2">Or bypass credentials completely:</div>
+                                        <button
+                                            onClick={handleConnectOffline}
+                                            className="outline-btn px-6 py-2.5 text-xs uppercase font-black mx-auto block"
+                                        >
+                                            <CheckCircle2 className="w-4 h-4" />
+                                            Work Offline (Local Mode)
+                                        </button>
+                                    </div>
                                 </div>
                             ) : (
                                 /* GitHub Connect Flow */
@@ -385,20 +426,29 @@ export default function PermissionWizard({
                                             </>
                                         )}
                                         
-                                        <div className="pt-2">
+                                        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
                                             {isAuthenticated ? (
                                                 <div className="inline-flex items-center gap-2 px-3 py-1.5 border-2 border-black rounded-md bg-slate-50 text-xs font-black uppercase shadow-[2px_2px_0_0_#000]">
                                                     <ShieldCheck className="w-4 h-4 text-emerald-600" />
                                                     Session Token Active
                                                 </div>
                                             ) : (
-                                                <button
-                                                    onClick={handleConnectGithub}
-                                                    className="glow-btn px-6 py-3 text-xs uppercase font-black"
-                                                >
-                                                    <GitBranch className="w-4 h-4" />
-                                                    Connect GitHub Account
-                                                </button>
+                                                <>
+                                                    <button
+                                                        onClick={handleConnectGithub}
+                                                        className="glow-btn px-6 py-3 text-xs uppercase font-black"
+                                                    >
+                                                        <GitBranch className="w-4 h-4" />
+                                                        Connect GitHub Account
+                                                    </button>
+                                                    <button
+                                                        onClick={handleConnectOffline}
+                                                        className="outline-btn px-6 py-3 text-xs uppercase font-black"
+                                                    >
+                                                        <CheckCircle2 className="w-4 h-4" />
+                                                        Work Offline (Local Mode)
+                                                    </button>
+                                                </>
                                             )}
                                         </div>
                                     </div>

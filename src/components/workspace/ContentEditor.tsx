@@ -790,7 +790,7 @@ export default function ContentEditor({
     });
 
     return (
-        <div className="flex flex-col h-full font-[family-name:var(--font-space-grotesk)]">
+        <div className="flex flex-col flex-1 h-full min-h-0 font-[family-name:var(--font-space-grotesk)]">
             {/* ─── Header — Boxy Poppy ─── */}
             <div className="relative px-5 py-4 border-b-[3px] border-black bg-white overflow-hidden">
                 {/* Rainbow accent line at top */}

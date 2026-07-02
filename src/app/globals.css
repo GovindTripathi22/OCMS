@@ -57,7 +57,7 @@
   body {
     background: var(--ocms-bg);
     color: #1a1a1a;
-    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-family: var(--font-space-grotesk), 'Space Grotesk', 'Inter', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { patchJSXWithReport, type ASTChange, type PatchReport } from "@/lib/ast-patcher";
 import { patchHTMLWithReport } from "@/lib/html-patcher";
@@ -12,23 +12,10 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
     try {
-        // 1. Authenticate user and get session or use guest fallback
-        const session = await auth();
-        let userId = session?.user?.id;
-
+        // Authenticate user
+        const userId = await getAuthorizedUser();
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const { repoOwner, repoName, filePath, changes } = await req.json();

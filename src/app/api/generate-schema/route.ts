@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { extractFallbackSchemaFields } from "@/lib/scraper";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { checkAndIncrementQuota } from "@/lib/ratelimit";
-import { prisma } from "@/lib/prisma";
 
 /**
  * POST /api/generate-schema
@@ -15,25 +14,13 @@ import { prisma } from "@/lib/prisma";
 export async function POST(request: Request) {
     try {
         // ── Auth Check ───────────────────────────────────────
-        const session = await auth();
-        let userId = session?.user?.id;
-        let subscription = session?.user?.subscription || "free";
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
-            subscription = "free";
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
+        
+        const subscription = "free";
 
         const id = userId;
 

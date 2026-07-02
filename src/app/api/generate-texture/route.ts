@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
                     "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                    version: "7762fd07cf82c09fd0b1ad0910abc5e7d6940416972008442e222aace21213d8", // SDXL version hash
+                    version: process.env.REPLICATE_MODEL_VERSION || "7762fd07cf82c09fd0b1ad0910abc5e7d6940416972008442e222aace21213d8", // SDXL version hash
                     input: {
                         prompt: `${prompt}, seamless texture, tileable, PBR texture mapping, high-resolution`,
                         negative_prompt: "seams, borders, cutouts, text, watermarks",

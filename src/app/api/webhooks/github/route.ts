@@ -185,8 +185,15 @@ export async function POST(req: NextRequest) {
         const signature = req.headers.get("x-hub-signature-256") || "";
         const event = req.headers.get("x-github-event") || "";
 
-        // Optional signature verification
+        // Enforce signature verification in production
         const secret = process.env.GITHUB_WEBHOOK_SECRET;
+        const isProduction = process.env.NODE_ENV === "production";
+        
+        if (isProduction && !secret) {
+            console.error("[Webhook Error]: GITHUB_WEBHOOK_SECRET is missing in production.");
+            return NextResponse.json({ error: "Webhook secret configuration missing" }, { status: 500 });
+        }
+
         if (secret && !verifySignature(payloadText, signature, secret)) {
             console.error("[Webhook Error]: Signature verification failed.");
             return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
@@ -250,10 +257,10 @@ export async function POST(req: NextRequest) {
                 },
             });
 
-            // Use user's access token or fallback to server credentials if present
-            const token = account?.access_token || process.env.GITHUB_ACCESS_TOKEN;
+            // Use user's access token
+            const token = account?.access_token;
             if (!token) {
-                console.warn(`[Webhook Sync] No GitHub token found for user ${project.userId} or server. Skipping.`);
+                console.warn(`[Webhook Sync] No GitHub token found for user ${project.userId}. Skipping.`);
                 continue;
             }
 

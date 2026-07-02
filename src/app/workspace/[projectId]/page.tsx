@@ -2,8 +2,8 @@ import { Suspense } from "react";
 import WorkspaceClient from "./WorkspaceClient";
 import WorkspaceSkeleton from "@/components/workspace/WorkspaceSkeleton";
 import { prisma } from "@/lib/prisma";
-import { notFound } from "next/navigation";
-import { auth } from "@/auth";
+import { notFound, redirect } from "next/navigation";
+import { getAuthorizedUser } from "@/auth";
 import type { SchemaField } from "@/types/schema";
 
 export default async function WorkspacePage({ 
@@ -13,16 +13,10 @@ export default async function WorkspacePage({
     params: { projectId: string },
     searchParams: { target?: string }
 }) {
-    const session = await auth();
-    let currentUserId = session?.user?.id;
+    const currentUserId = await getAuthorizedUser();
 
     if (!currentUserId) {
-        // Find or create Guest User
-        let guestUser = await prisma.user.findFirst({ where: { email: "guest@ocms.ai" } });
-        if (!guestUser) {
-            guestUser = await prisma.user.create({ data: { name: "Guest User", email: "guest@ocms.ai" } });
-        }
-        currentUserId = guestUser.id;
+        redirect("/");
     }
 
     let project = await prisma.project.findUnique({
@@ -74,10 +68,10 @@ export default async function WorkspacePage({
 
     const projectData = {
         id: project.id,
-        githubOwner: project.githubOwner || "GovindTripathi22",
-        githubRepo: project.githubRepo || "OCMS",
-        targetFilePath: project.targetFilePath || "src/app/page.tsx",
-        sourceUrl: project.sourceUrl || "https://example.com"
+        githubOwner: project.githubOwner || "",
+        githubRepo: project.githubRepo || "",
+        targetFilePath: project.targetFilePath || "",
+        sourceUrl: project.sourceUrl || ""
     };
 
     return (

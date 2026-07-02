@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { Octokit } from "@octokit/rest";
 import type { SchemaField } from "@/types/schema";
 
@@ -146,13 +146,7 @@ export async function GET(
     { params }: { params: { projectId: string } }
 ) {
     try {
-        const session = await auth();
-        let userId = session?.user?.id;
-
-        if (!userId) {
-            const guestUser = await prisma.user.findFirst({ where: { email: "guest@ocms.ai" } });
-            userId = guestUser?.id;
-        }
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -232,13 +226,7 @@ export async function POST(
     { params }: { params: { projectId: string } }
 ) {
     try {
-        const session = await auth();
-        let userId = session?.user?.id;
-
-        if (!userId) {
-            const guestUser = await prisma.user.findFirst({ where: { email: "guest@ocms.ai" } });
-            userId = guestUser?.id;
-        }
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

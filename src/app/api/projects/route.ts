@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { Prisma } from "@prisma/client";
+import { validateUrlForSsrf } from "@/lib/ssrf";
 
 export async function POST(req: Request) {
     try {
@@ -12,26 +13,19 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "URL is required" }, { status: 400 });
         }
 
-        // Get the current user or use a fallback "Guest" user for development
-        const session = await auth();
-        let userId = session?.user?.id;
-
+        // Get the current authorized user
+        const userId = await getAuthorizedUser();
         if (!userId) {
-            // Check if a Guest user already exists
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
 
-            if (!guestUser) {
-                // Create a Guest user
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+        // Validate URL format and security via shared SSRF utility
+        const validation = await validateUrlForSsrf(url);
+        if (!validation.safe) {
+            return NextResponse.json(
+                { error: validation.error || "Forbidden URL" },
+                { status: validation.error?.includes("blocked") ? 403 : 400 }
+            );
         }
 
         // Automatically scrape and generate schema from the real site

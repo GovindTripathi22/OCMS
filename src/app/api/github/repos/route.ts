@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Octokit } from "@octokit/rest";
 import fs from "fs";
@@ -9,22 +9,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
     try {
-        const session = await auth();
-        let userId = session?.user?.id;
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const account = await prisma.account.findFirst({
@@ -67,7 +55,10 @@ export async function GET(req: NextRequest) {
                                 continue;
                             }
 
-                            const stat = fs.statSync(fullPath);
+                            const stat = fs.lstatSync(fullPath);
+                            if (stat.isSymbolicLink()) {
+                                continue;
+                            }
                             if (stat.isDirectory()) {
                                 scanDir(fullPath);
                             } else {

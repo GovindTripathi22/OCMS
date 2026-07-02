@@ -21,7 +21,7 @@ export async function POST(request: Request) {
 
         return NextResponse.json({
             message: "GitHub OAuth placeholder — exchange code for token here",
-            code,
+            success: true,
         });
     } catch {
         return NextResponse.json(

@@ -1,27 +1,20 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
 export async function POST() {
     try {
-        const session = await auth();
-        let userId = session?.user?.id;
+        const isProduction = process.env.NODE_ENV === "production";
+        const allowGuest = process.env.ALLOW_GUEST_ACCESS === "true";
+        if (isProduction && !allowGuest) {
+            return NextResponse.json({ error: "Unauthorized - mock auth disabled in production" }, { status: 401 });
+        }
 
+        const userId = await getAuthorizedUser();
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         // Upsert Account record with mock token

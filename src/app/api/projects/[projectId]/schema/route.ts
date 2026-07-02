@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 
 export async function PUT(
     req: NextRequest,
@@ -13,22 +13,10 @@ export async function PUT(
             return NextResponse.json({ error: "Schema is required" }, { status: 400 });
         }
 
-        const session = await auth();
-        let userId = session?.user?.id;
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const existingProject = await prisma.project.findFirst({

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import postcss, { type Declaration, type Rule } from "postcss";
+import { validateUrlForSsrf } from "@/lib/ssrf";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +30,7 @@ interface RenderContext {
     rules: CssRule[];
     nodeCount: { value: number };
     maxNodes: number;
+    selectorCache?: Map<string, Set<DomNode>>;
 }
 
 const SKIP_TAGS = new Set(["script", "style", "link", "meta", "noscript", "template", "source"]);
@@ -52,6 +54,15 @@ export async function POST(req: NextRequest) {
             targetUrl = new URL(url);
         } catch {
             return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+        }
+
+        // Validate URL format and security via shared SSRF utility
+        const validation = await validateUrlForSsrf(url);
+        if (!validation.safe) {
+            return NextResponse.json(
+                { error: validation.error || "Forbidden URL" },
+                { status: validation.error?.includes("blocked") ? 403 : 400 }
+            );
         }
 
         const fetchRes = await fetch(targetUrl.href, {
@@ -267,7 +278,7 @@ function computeStyles(context: RenderContext, node: DomNode): StyleBundle {
     const bundle: StyleBundle = { base: {}, sm: {}, md: {}, lg: {} };
 
     for (const rule of context.rules) {
-        if (!elementMatchesSelector(context.$, node, rule.selector)) continue;
+        if (!elementMatchesSelector(context, node, rule.selector)) continue;
         Object.assign(rule.media ? bundle[rule.media] : bundle.base, rule.declarations);
     }
 
@@ -275,12 +286,21 @@ function computeStyles(context: RenderContext, node: DomNode): StyleBundle {
     return bundle;
 }
 
-function elementMatchesSelector($: cheerio.CheerioAPI, node: DomNode, selector: string): boolean {
-    try {
-        return $(selector).toArray().includes(node as never);
-    } catch {
-        return false;
+function elementMatchesSelector(context: RenderContext, node: DomNode, selector: string): boolean {
+    if (!context.selectorCache) {
+        context.selectorCache = new Map();
     }
+    let matchedNodes = context.selectorCache.get(selector);
+    if (!matchedNodes) {
+        try {
+            const elements = context.$(selector).toArray();
+            matchedNodes = new Set(elements);
+        } catch {
+            matchedNodes = new Set();
+        }
+        context.selectorCache.set(selector, matchedNodes);
+    }
+    return matchedNodes.has(node as DomNode);
 }
 
 function buildAttributes(context: RenderContext, node: DomNode, tagName: string, className: string, styles: StyleMap): string {

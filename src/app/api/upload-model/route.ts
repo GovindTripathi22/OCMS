@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { Document, NodeIO } from "@gltf-transform/core";
 import { weld, dedup, prune, quantize } from "@gltf-transform/functions";
 
@@ -49,22 +49,10 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-        const session = await auth();
-        let userId = session?.user?.id;
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const formData = await req.formData();

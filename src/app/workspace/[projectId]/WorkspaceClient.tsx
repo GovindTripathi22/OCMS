@@ -7,7 +7,6 @@ import PermissionWizard from "@/components/workspace/PermissionWizard";
 import type { SchemaField } from "@/types/schema";
 import { PBR_PRESETS } from "@/lib/pbr-presets";
 
-
 interface WorkspaceClientProps {
     project: {
         id: string;
@@ -19,10 +18,21 @@ interface WorkspaceClientProps {
     initialSchema: SchemaField[];
 }
 
+interface ModalState {
+    field: SchemaField;
+    value: string;
+    alt: string;
+    objectFit: string;
+    borderRadius: string;
+    roughness: number;
+    metalness: number;
+    textureUrl: string;
+}
+
 export default function WorkspaceClient({ project, initialSchema }: WorkspaceClientProps) {
     const [schema, setSchema] = useState<SchemaField[]>(initialSchema);
     const [history, setHistory] = useState<SchemaField[][]>([initialSchema]);
-    const [historyIndex, setHistoryIndex] = useState(0);
+
     const [previewUrl, setPreviewUrl] = useState(project.sourceUrl);
     const [iframeLoaded, setIframeLoaded] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
@@ -36,22 +46,59 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const inlineEditRef = useRef(false);
 
-    const [editingField, setEditingField] = useState<SchemaField | null>(null);
-    const [modalAlt, setModalAlt] = useState("");
-    const [modalObjectFit, setModalObjectFit] = useState("");
-    const [modalBorderRadius, setModalBorderRadius] = useState("");
-    const [modalValue, setModalValue] = useState("");
-    const [modalRoughness, setModalRoughness] = useState(0.5);
-    const [modalMetalness, setModalMetalness] = useState(1.0);
-    const [modalTextureUrl, setModalTextureUrl] = useState("");
+    // Consolidated modal state
+    const [modalState, setModalState] = useState<ModalState | null>(null);
+
+    // Toast notification state
+    const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+    const showToast = useCallback((message: string, type: "success" | "error" = "success") => {
+        setToast({ message, type });
+    }, []);
+
+    // Dismiss toast automatically
+    useEffect(() => {
+        if (!toast) return;
+        const timer = setTimeout(() => {
+            setToast(null);
+        }, 4000);
+        return () => clearTimeout(timer);
+    }, [toast]);
+
+    // Refs for performance optimizations
+    const historyIndexRef = useRef(0);
+    const isDirtyRef = useRef(false);
+
+    // Shared postMessage payload builder
+    const buildChangesPayload = useCallback((fields: SchemaField[]) => {
+        return fields
+            .filter((f) => f.selector)
+            .map((f) => ({
+                fieldId: f.id,
+                selector: f.selector,
+                type: f.type,
+                value: f.value,
+                alt: f.alt,
+                objectFit: f.objectFit,
+                borderRadius: f.borderRadius,
+                roughness: f.roughness,
+                metalness: f.metalness,
+                textureUrl: f.textureUrl,
+            }));
+    }, []);
 
     const pushHistory = useCallback((next: SchemaField[]) => {
-        setHistory((currentHistory) => [
-            ...currentHistory.slice(0, historyIndex + 1),
-            next,
-        ]);
-        setHistoryIndex((currentIndex) => currentIndex + 1);
-    }, [historyIndex]);
+        setHistory((currentHistory) => {
+            const idx = historyIndexRef.current;
+            const updated = [
+                ...currentHistory.slice(0, idx + 1),
+                next,
+            ];
+            historyIndexRef.current = updated.length - 1;
+
+            return updated;
+        });
+        isDirtyRef.current = true;
+    }, []);
 
     const handleFieldUpdate = useCallback((fieldId: string, updates: Partial<SchemaField>) => {
         setSchema((prev) => {
@@ -64,44 +111,32 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         });
     }, [pushHistory]);
 
-    useEffect(() => {
-        if (editingField) {
-            setModalAlt(editingField.alt || "");
-            setModalObjectFit(editingField.objectFit || "cover");
-            setModalBorderRadius(editingField.borderRadius || "none");
-            setModalValue(editingField.value || "");
-            setModalRoughness(editingField.roughness !== undefined ? editingField.roughness : 0.5);
-            setModalMetalness(editingField.metalness !== undefined ? editingField.metalness : 1.0);
-            setModalTextureUrl(editingField.textureUrl || "");
-        }
-    }, [editingField]);
-
     const handleSaveModal = () => {
-        if (!editingField) return;
+        if (!modalState) return;
         
         const updates: Partial<SchemaField> = {
-            value: modalValue,
-            alt: modalAlt,
-            objectFit: modalObjectFit,
-            borderRadius: modalBorderRadius,
-            roughness: modalRoughness,
-            metalness: modalMetalness,
-            textureUrl: modalTextureUrl,
+            value: modalState.value,
+            alt: modalState.alt,
+            objectFit: modalState.objectFit,
+            borderRadius: modalState.borderRadius,
+            roughness: modalState.roughness,
+            metalness: modalState.metalness,
+            textureUrl: modalState.textureUrl,
         };
         
         setSchema((prev) => {
-            const next = prev.map((f) => (f.id === editingField.id ? { ...f, ...updates } : f));
+            const next = prev.map((f) => (f.id === modalState.field.id ? { ...f, ...updates } : f));
             pushHistory(next);
             return next;
         });
         
-        setEditingField(null);
+        setModalState(null);
     };
 
     const handleScanPage = useCallback(async () => {
         const iframe = iframeRef.current;
         if (!iframe?.contentDocument) {
-            alert("Preview is not loaded yet.");
+            showToast("Preview is not loaded yet.", "error");
             return;
         }
 
@@ -125,18 +160,23 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
             if (data.schema) {
                 setSchema(data.schema);
-                setHistory((prev) => [...prev.slice(0, historyIndex + 1), data.schema]);
-                setHistoryIndex((prev) => prev + 1);
+                const idx = historyIndexRef.current;
+                setHistory((prev) => {
+                    const updated = [...prev.slice(0, idx + 1), data.schema];
+                    historyIndexRef.current = updated.length - 1;
+
+                    return updated;
+                });
+                isDirtyRef.current = true;
+                showToast("Page content scanned successfully!");
             }
         } catch (err: unknown) {
             const errMsg = err instanceof Error ? err.message : "Failed to scan page";
-            alert(errMsg);
+            showToast(errMsg, "error");
         } finally {
             setIsScanning(false);
         }
-    }, [project.id, previewUrl, historyIndex]);
-
-
+    }, [project.id, previewUrl, showToast]);
 
     const handleFieldChange = useCallback((fieldId: string, newValue: string) => {
         setSchema((prev) => {
@@ -145,6 +185,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
             const next = prev.map((f) => (f.id === fieldId ? { ...f, value: newValue } : f));
             if (!inlineEditRef.current) pushHistory(next);
+            else isDirtyRef.current = true;
             return next;
         });
     }, [pushHistory]);
@@ -165,30 +206,17 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         const iframe = iframeRef.current;
         if (!iframe?.contentWindow || !iframeLoaded) return;
 
-        const changesPayload = schema
-            .filter((f) => f.selector)
-            .map((f) => ({
-                fieldId: f.id,
-                selector: f.selector,
-                type: f.type,
-                value: f.value,
-                alt: f.alt,
-                objectFit: f.objectFit,
-                borderRadius: f.borderRadius,
-                roughness: f.roughness,
-                metalness: f.metalness,
-                textureUrl: f.textureUrl,
-            }));
+        const changesPayload = buildChangesPayload(schema);
 
         iframe.contentWindow.postMessage(
             { source: "ocms-live-bridge", changes: changesPayload },
-            "*"
+            window.location.origin
         );
-    }, [schema, iframeLoaded]);
+    }, [schema, iframeLoaded, buildChangesPayload]);
 
     // Debounced autosave effect for persisting schema edits to database
     useEffect(() => {
-        if (JSON.stringify(schema) === JSON.stringify(initialSchema)) return;
+        if (!isDirtyRef.current) return;
 
         const timer = setTimeout(async () => {
             try {
@@ -197,7 +225,9 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ schema }),
                 });
-                if (!response.ok) {
+                if (response.ok) {
+                    isDirtyRef.current = false;
+                } else {
                     console.error("[Autosave] Failed to update project schema");
                 }
             } catch (err) {
@@ -206,7 +236,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         }, 1500);
 
         return () => clearTimeout(timer);
-    }, [schema, project.id, initialSchema]);
+    }, [schema, project.id]);
 
     const broadcastGhostEvent = useCallback((type: "AI_EDIT_START" | "AI_EDIT_END", selector?: string, text?: string) => {
         const iframe = iframeRef.current;
@@ -214,123 +244,143 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
         iframe.contentWindow.postMessage(
             { source: "ocms-editor", type, selector, text },
-            "*"
+            window.location.origin
         );
     }, [iframeLoaded]);
 
     useEffect(() => {
         const handleMessage = async (event: MessageEvent) => {
+            // Lock origin checks to same origin to prevent external origins spoofing messages
+            if (event.origin !== window.location.origin) return;
             if (event.source !== iframeRef.current?.contentWindow) return;
             const { source, fieldId, newValue, file, action, value } = event.data;
 
-            if (source === "ocms-iframe-ready") {
-                setIframeLoaded(true);
-                
-                // Update parent's previewUrl when navigation happens inside iframe
-                const innerUrl = event.data.url;
-                if (innerUrl) {
-                    try {
-                        const parsed = new URL(innerUrl);
-                        const targetUrl = parsed.searchParams.get("url");
-                        if (targetUrl && targetUrl !== previewUrl) {
-                            setPreviewUrl(targetUrl);
+            try {
+                if (source === "ocms-iframe-ready") {
+                    setIframeLoaded(true);
+                    
+                    // Update parent's previewUrl when navigation happens inside iframe
+                    const innerUrl = event.data.url;
+                    if (innerUrl) {
+                        try {
+                            const parsed = new URL(innerUrl);
+                            const targetUrl = parsed.searchParams.get("url");
+                            if (targetUrl && targetUrl !== previewUrl) {
+                                setPreviewUrl(targetUrl);
+                            }
+                        } catch (e) {
+                            console.error("[WorkspaceClient] Failed to parse navigated iframe URL:", e);
                         }
-                    } catch (e) {
-                        console.error("[WorkspaceClient] Failed to parse navigated iframe URL:", e);
                     }
+
+                    const changesPayload = buildChangesPayload(schema);
+                    iframeRef.current?.contentWindow?.postMessage(
+                        { source: "ocms-live-bridge", changes: changesPayload },
+                        window.location.origin
+                    );
+                    return;
                 }
 
-                const changesPayload = schema
-                    .filter((f) => f.selector)
-                    .map((f) => ({
-                        fieldId: f.id,
-                        selector: f.selector,
-                        type: f.type,
-                        value: f.value,
-                        alt: f.alt,
-                        objectFit: f.objectFit,
-                        borderRadius: f.borderRadius,
-                        roughness: f.roughness,
-                        metalness: f.metalness,
-                        textureUrl: f.textureUrl,
-                    }));
-                iframeRef.current?.contentWindow?.postMessage(
-                    { source: "ocms-live-bridge", changes: changesPayload },
-                    "*"
-                );
-                return;
-            }
-
-            if (source === "ocms-inline-edit") {
-                inlineEditRef.current = true;
-                handleFieldChange(fieldId, newValue);
-                inlineEditRef.current = false;
-                setHistory((currentHistory) => {
-                    const base = currentHistory[historyIndex] ?? schema;
-                    const next = base.map((f) => (f.id === fieldId ? { ...f, value: newValue } : f));
-                    return [...currentHistory.slice(0, historyIndex + 1), next];
-                });
-                setHistoryIndex((currentIndex) => currentIndex + 1);
-            }
-
-            if (source === "ocms-inline-add-field" && event.data.field) {
-                const newField = event.data.field;
-                setSchema((prev) => {
-                    if (prev.some((f) => f.id === newField.id || (f.selector === newField.selector && f.type === newField.type))) {
-                        return prev;
-                    }
-                    const next = [...prev, newField];
+                if (source === "ocms-inline-edit") {
+                    inlineEditRef.current = true;
+                    handleFieldChange(fieldId, newValue);
+                    inlineEditRef.current = false;
                     setHistory((currentHistory) => {
-                        return [...currentHistory.slice(0, historyIndex + 1), next];
+                        const idx = historyIndexRef.current;
+                        const base = currentHistory[idx] ?? schema;
+                        const next = base.map((f) => (f.id === fieldId ? { ...f, value: newValue } : f));
+                        const updated = [...currentHistory.slice(0, idx + 1), next];
+                        historyIndexRef.current = updated.length - 1;
+
+                        return updated;
                     });
-                    setHistoryIndex((currentIndex) => currentIndex + 1);
-                    return next;
-                });
-            }
+                }
 
-            if (source === "ocms-doubleclick-image" && event.data.field) {
-                setEditingField(event.data.field);
-            }
+                if (source === "ocms-inline-add-field" && event.data.field) {
+                    const newField = event.data.field;
+                    setSchema((prev) => {
+                        if (prev.some((f) => f.id === newField.id || (f.selector === newField.selector && f.type === newField.type))) {
+                            return prev;
+                        }
+                        const next = [...prev, newField];
+                        setHistory((currentHistory) => {
+                            const idx = historyIndexRef.current;
+                            const updated = [...currentHistory.slice(0, idx + 1), next];
+                            historyIndexRef.current = updated.length - 1;
 
-            if (source === "ocms-model-drop" && file instanceof File) {
-                const targetFieldId =
-                    fieldId ||
-                    schema.find((f) => f.type === "3d-model")?.id ||
-                    schema.find((f) => f.type === "image")?.id ||
-                    schema[0]?.id;
+                            return updated;
+                        });
+                        return next;
+                    });
+                }
 
-                if (!targetFieldId) return;
+                if (source === "ocms-doubleclick-image" && event.data.field) {
+                    const field = event.data.field;
+                    setModalState({
+                        field,
+                        value: field.value || "",
+                        alt: field.alt || "",
+                        objectFit: field.objectFit || "cover",
+                        borderRadius: field.borderRadius || "none",
+                        roughness: field.roughness !== undefined ? field.roughness : 0.5,
+                        metalness: field.metalness !== undefined ? field.metalness : 1.0,
+                        textureUrl: field.textureUrl || "",
+                    });
+                }
 
-                const formData = new FormData();
-                formData.append("model", file);
-                formData.append("projectId", project.id);
+                if (source === "ocms-model-drop" && file instanceof File) {
+                    const targetFieldId =
+                        fieldId ||
+                        schema.find((f) => f.type === "3d-model")?.id ||
+                        schema.find((f) => f.type === "image")?.id ||
+                        schema[0]?.id;
 
-                const response = await fetch("/api/upload-model", {
-                    method: "POST",
-                    body: formData,
-                });
+                    if (!targetFieldId) return;
 
-                if (!response.ok) return;
-                const asset = await response.json();
-                handleModelInjected(targetFieldId, asset.path || asset.urlHighPoly);
-            }
+                    const formData = new FormData();
+                    formData.append("model", file);
+                    formData.append("projectId", project.id);
 
-            if (source === "ocms-toolbar-action" && fieldId && value) {
-                const response = await fetch("/api/inline-text-action", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ action, value }),
-                });
+                    const response = await fetch("/api/upload-model", {
+                        method: "POST",
+                        body: formData,
+                    });
 
-                if (!response.ok) return;
-                const data = await response.json();
-                if (data.value) handleFieldChange(fieldId, data.value);
+                    if (!response.ok) {
+                        const errData = await response.json().catch(() => ({}));
+                        throw new Error(errData.error || `Upload failed with status ${response.status}`);
+                    }
+                    const asset = await response.json();
+                    handleModelInjected(targetFieldId, asset.path || asset.urlHighPoly);
+                    showToast("3D model uploaded successfully!");
+                }
+
+                if (source === "ocms-toolbar-action" && fieldId && value) {
+                    const response = await fetch("/api/inline-text-action", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action, value }),
+                    });
+
+                    if (!response.ok) {
+                        const errData = await response.json().catch(() => ({}));
+                        throw new Error(errData.error || `Text formatting failed with status ${response.status}`);
+                    }
+                    const data = await response.json();
+                    if (data.value) {
+                        handleFieldChange(fieldId, data.value);
+                        showToast(`Text formatting action '${action}' completed!`);
+                    }
+                }
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                showToast(msg, "error");
             }
         };
 
         window.addEventListener("message", handleMessage);
         return () => window.removeEventListener("message", handleMessage);
-    }, [handleFieldChange, handleModelInjected, historyIndex, project.id, schema, previewUrl]);
+    }, [handleFieldChange, handleModelInjected, project.id, schema, previewUrl, buildChangesPayload, showToast]);
 
     const handleSchemaReplace = useCallback((newSchema: SchemaField[]) => {
         setSchema(newSchema);
@@ -339,7 +389,8 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
     const seekHistory = useCallback((percent: number) => {
         const index = Math.floor((percent / 100) * (history.length - 1));
-        setHistoryIndex(index);
+        historyIndexRef.current = index;
+
         setSchema(history[index]);
     }, [history]);
 
@@ -382,16 +433,16 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
             </div>
 
             {/* Element Options Modal */}
-            {editingField && (
+            {modalState && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
                     <div className="w-full max-w-md bg-[#fcfbf9] border-[4px] border-black rounded-xl shadow-[8px_8px_0px_#000] p-6 text-black relative animate-fade-in">
                         {/* Header */}
                         <div className="flex items-center justify-between pb-4 border-b-2 border-black mb-4">
                             <h3 className="text-base font-black uppercase tracking-tight">
-                                ⚙️ {editingField.type === "3d-model" ? "3D Model Options" : "Image Options"}
+                                ⚙️ {modalState.field.type === "3d-model" ? "3D Model Options" : "Image Options"}
                             </h3>
                             <button
-                                onClick={() => setEditingField(null)}
+                                onClick={() => setModalState(null)}
                                 className="w-8 h-8 flex items-center justify-center border-2 border-black rounded-md bg-white hover:bg-[var(--ocms-orange)] hover:text-white transition-all shadow-[2px_2px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px]"
                             >
                                 ✕
@@ -401,14 +452,14 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         {/* Body */}
                         <div className="space-y-4">
                             {/* Type Specific Fields */}
-                            {editingField.type === "image" && (
+                            {modalState.field.type === "image" && (
                                 <>
                                     <div className="space-y-1">
                                         <label className="text-[10px] font-black uppercase tracking-wider">Image Source URL</label>
                                         <input
                                             type="text"
-                                            value={modalValue}
-                                            onChange={(e) => setModalValue(e.target.value)}
+                                            value={modalState.value}
+                                            onChange={(e) => setModalState(prev => prev ? { ...prev, value: e.target.value } : null)}
                                             className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-mono font-bold"
                                             placeholder="https://..."
                                         />
@@ -417,8 +468,8 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                                         <label className="text-[10px] font-black uppercase tracking-wider">Alt Text (SEO)</label>
                                         <input
                                             type="text"
-                                            value={modalAlt}
-                                            onChange={(e) => setModalAlt(e.target.value)}
+                                            value={modalState.alt}
+                                            onChange={(e) => setModalState(prev => prev ? { ...prev, alt: e.target.value } : null)}
                                             className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
                                             placeholder="Image description..."
                                         />
@@ -427,8 +478,8 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-black uppercase tracking-wider">Object Fit</label>
                                             <select
-                                                value={modalObjectFit}
-                                                onChange={(e) => setModalObjectFit(e.target.value)}
+                                                value={modalState.objectFit}
+                                                onChange={(e) => setModalState(prev => prev ? { ...prev, objectFit: e.target.value } : null)}
                                                 className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
                                             >
                                                 <option value="cover">Cover</option>
@@ -440,8 +491,8 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-black uppercase tracking-wider">Border Corners</label>
                                             <select
-                                                value={modalBorderRadius}
-                                                onChange={(e) => setModalBorderRadius(e.target.value)}
+                                                value={modalState.borderRadius}
+                                                onChange={(e) => setModalState(prev => prev ? { ...prev, borderRadius: e.target.value } : null)}
                                                 className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
                                             >
                                                 <option value="none">Sharp (None)</option>
@@ -455,14 +506,14 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                                 </>
                             )}
 
-                            {editingField.type === "3d-model" && (
+                            {modalState.field.type === "3d-model" && (
                                 <>
                                     <div className="space-y-1">
                                         <label className="text-[10px] font-black uppercase tracking-wider">3D Model Path (.glb)</label>
                                         <input
                                             type="text"
-                                            value={modalValue}
-                                            onChange={(e) => setModalValue(e.target.value)}
+                                            value={modalState.value}
+                                            onChange={(e) => setModalState(prev => prev ? { ...prev, value: e.target.value } : null)}
                                             className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-orange)] font-mono font-bold"
                                             placeholder="/models/..."
                                         />
@@ -477,9 +528,12 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                                                     key={preset.name}
                                                     type="button"
                                                     onClick={() => {
-                                                        setModalRoughness(preset.roughness);
-                                                        setModalMetalness(preset.metalness);
-                                                        setModalTextureUrl(preset.textureUrl);
+                                                        setModalState(prev => prev ? {
+                                                            ...prev,
+                                                            roughness: preset.roughness,
+                                                            metalness: preset.metalness,
+                                                            textureUrl: preset.textureUrl
+                                                        } : null);
                                                     }}
                                                     className="flex items-center gap-2 p-2 border-[2.5px] border-black rounded-md bg-white hover:bg-slate-50 active:translate-x-[1px] active:translate-y-[1px] shadow-[2px_2px_0px_#000] active:shadow-none transition-all text-left"
                                                 >
@@ -502,30 +556,30 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                                         <div className="space-y-1">
                                             <div className="flex justify-between items-center text-[10px] font-black uppercase">
                                                 <span>Roughness</span>
-                                                <span className="bg-[var(--ocms-yellow)] px-1 border border-black rounded-[2px]">{modalRoughness.toFixed(2)}</span>
+                                                <span className="bg-[var(--ocms-yellow)] px-1 border border-black rounded-[2px]">{modalState.roughness.toFixed(2)}</span>
                                             </div>
                                             <input
                                                 type="range"
                                                 min="0"
                                                 max="1"
                                                 step="0.05"
-                                                value={modalRoughness}
-                                                onChange={(e) => setModalRoughness(parseFloat(e.target.value))}
+                                                value={modalState.roughness}
+                                                onChange={(e) => setModalState(prev => prev ? { ...prev, roughness: parseFloat(e.target.value) } : null)}
                                                 className="w-full h-2 bg-white border-2 border-black rounded-full accent-black cursor-pointer"
                                             />
                                         </div>
                                         <div className="space-y-1">
                                             <div className="flex justify-between items-center text-[10px] font-black uppercase">
                                                 <span>Metalness</span>
-                                                <span className="bg-[var(--ocms-blue)] text-black px-1 border border-black rounded-[2px]">{modalMetalness.toFixed(2)}</span>
+                                                <span className="bg-[var(--ocms-blue)] text-black px-1 border border-black rounded-[2px]">{modalState.metalness.toFixed(2)}</span>
                                             </div>
                                             <input
                                                 type="range"
                                                 min="0"
                                                 max="1"
                                                 step="0.05"
-                                                value={modalMetalness}
-                                                onChange={(e) => setModalMetalness(parseFloat(e.target.value))}
+                                                value={modalState.metalness}
+                                                onChange={(e) => setModalState(prev => prev ? { ...prev, metalness: parseFloat(e.target.value) } : null)}
                                                 className="w-full h-2 bg-white border-2 border-black rounded-full accent-black cursor-pointer"
                                             />
                                         </div>
@@ -535,8 +589,8 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                                         <label className="text-[10px] font-black uppercase tracking-wider">Texture URL (Optional Override)</label>
                                         <input
                                             type="text"
-                                            value={modalTextureUrl}
-                                            onChange={(e) => setModalTextureUrl(e.target.value)}
+                                            value={modalState.textureUrl}
+                                            onChange={(e) => setModalState(prev => prev ? { ...prev, textureUrl: e.target.value } : null)}
                                             className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-[9px] outline-none focus:shadow-[2px_2px_0px_var(--ocms-orange)] font-mono font-bold"
                                             placeholder="data:image/svg+xml;..."
                                         />
@@ -549,7 +603,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         <div className="flex justify-end gap-3 mt-6 pt-4 border-t-2 border-black">
                             <button
                                 type="button"
-                                onClick={() => setEditingField(null)}
+                                onClick={() => setModalState(null)}
                                 className="px-4 py-2 border-[3px] border-black rounded-md bg-white font-black text-xs uppercase shadow-[3px_3px_0px_#000] hover:bg-slate-100 transition-all hover:translate-x-[-1px] hover:translate-y-[-1px]"
                             >
                                 Cancel
@@ -562,6 +616,19 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                                 Save Changes
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Custom Neobrutalist Toast Notification */}
+            {toast && (
+                <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
+                    <div className={`px-4 py-3 border-[3px] border-black rounded-md shadow-[4px_4px_0px_#000] font-black text-xs uppercase flex items-center gap-3 ${
+                        toast.type === "error" ? "bg-[var(--ocms-rose)] text-black" : "bg-[var(--ocms-green)] text-black"
+                    }`}>
+                        <span>{toast.type === "error" ? "⚠️" : "⚡"}</span>
+                        <span>{toast.message}</span>
+                        <button onClick={() => setToast(null)} className="ml-2 font-bold hover:opacity-75">✕</button>
                     </div>
                 </div>
             )}

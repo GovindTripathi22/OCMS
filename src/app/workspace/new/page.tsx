@@ -45,8 +45,8 @@ export default function NewWorkspacePage() {
             { t: 700, msg: "[CONNECT] Requesting remote DOM payload..." },
             { t: 1150, msg: "[DOM] Waiting for HTML stream..." },
             { t: 1650, msg: "[CLEANER] Preserving semantic text, image src, and href values..." },
-            { t: 2200, msg: "[AI] Preparing selector-aware schema prompt..." },
-            { t: 2850, msg: "[AI] Matching headings, CTAs, media, and content blocks..." },
+            { t: 2200, msg: "[PARSER] Starting selector-aware DOM hierarchy analysis..." },
+            { t: 2850, msg: "[PARSER] Matching structural headings, CTAs, media, and content blocks..." },
             { t: 3550, msg: "[VALIDATOR] Cheerio selector validation queued..." },
             { t: 4300, msg: "[DATABASE] Preparing project workspace record..." },
         ];
@@ -126,7 +126,7 @@ export default function NewWorkspacePage() {
     const stepMessages = {
         idle: "Initialize Workspace",
         scraping: "Scraping website...",
-        ai: "AI generating schema...",
+        ai: "Extracting content fields...",
         validating: "Validating selectors...",
         saving: "Saving workspace...",
         ready: "Workspace ready!",
@@ -134,7 +134,7 @@ export default function NewWorkspacePage() {
 
     const loadingSteps = [
         { id: "scraping", label: "Scrape" },
-        { id: "ai", label: "Schema" },
+        { id: "ai", label: "Parse" },
         { id: "validating", label: "Validate" },
         { id: "saving", label: "Save" },
     ] as const;
@@ -167,7 +167,7 @@ export default function NewWorkspacePage() {
                     <span className="shimmer-text"> website URL</span>
                 </h1>
                 <p className="text-slate-800 text-base sm:text-lg font-bold max-w-md mx-auto">
-                    We&apos;ll scrape it, generate an AI schema, and open your live editing workspace.
+                    We&apos;ll scrape it, parse a local content schema, and open your live editing workspace.
                 </p>
             </div>
 
@@ -215,7 +215,7 @@ export default function NewWorkspacePage() {
                                 let color = "text-[#22c55e]";
                                 if (log.startsWith("[SUCCESS]")) color = "text-emerald-400 font-extrabold";
                                 if (log.startsWith("[SYSTEM]")) color = "text-[var(--ocms-yellow)]";
-                                if (log.startsWith("[AI]")) color = "text-pink-400 font-bold";
+                                if (log.startsWith("[PARSER]")) color = "text-pink-400 font-bold";
                                 if (log.startsWith("[CONNECT]")) color = "text-cyan-400";
                                 return (
                                     <div key={index} className={`${color} leading-relaxed animate-fade-in`}>

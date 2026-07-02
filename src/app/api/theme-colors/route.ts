@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Octokit } from "@octokit/rest";
 
@@ -60,23 +60,10 @@ function patchCssWithThemeColors(currentCss: string, colors: string[]): string {
  */
 export async function POST(req: NextRequest) {
     try {
-        // 1. Auth — session or guest fallback
-        const session = await auth();
-        let userId = session?.user?.id;
-
+        // Auth Check
+        const userId = await getAuthorizedUser();
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         // 2. Parse request

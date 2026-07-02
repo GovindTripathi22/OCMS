@@ -2,8 +2,6 @@ import Link from "next/link";
 import { ArrowRight, Globe, Cpu, Box, Terminal, Braces, ScanLine, Sparkles, Zap, Shield } from "lucide-react";
 import EnvHealthBanner from "@/components/EnvHealthBanner";
 
-// UX Audit Bypass: aria-label placeholder
-
 export default function HomePage() {
   return (
     <main className="min-h-screen relative overflow-hidden bg-[#f6f4ee]">

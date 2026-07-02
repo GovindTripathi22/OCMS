@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as cheerio from "cheerio";
+import type { AnyNode } from "domhandler";
 import { type ASTChange, type PatchReport } from "@/lib/ast-patcher";
 
 function normalizeText(value: string): string {
@@ -35,7 +35,7 @@ function mergeHtmlInlineStyles(existingStyle: string | undefined, newStyles: Rec
         .join("; ");
 }
 
-function getHtmlElementValue(el: cheerio.Cheerio<any>, type: "text" | "image" | "link" | "3d-model"): string | null {
+function getHtmlElementValue(el: cheerio.Cheerio<AnyNode>, type: "text" | "image" | "link" | "3d-model"): string | null {
     const fieldType = type.toLowerCase();
     if (fieldType === "image") {
         const targetImg = el.is("img") ? el : el.find("img").first();
@@ -62,7 +62,7 @@ function chooseHtmlTarget(
     $: cheerio.CheerioAPI,
     selector: string,
     change: ASTChange
-): cheerio.Cheerio<any> | null {
+): cheerio.Cheerio<AnyNode> | null {
     const candidates = $(selector);
     if (!candidates.length) return null;
 

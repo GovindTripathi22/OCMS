@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { Prisma } from "@prisma/client";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
+import { validateUrlForSsrf } from "@/lib/ssrf";
 
 export async function POST(
     req: NextRequest,
@@ -22,6 +23,15 @@ export async function POST(
             pathname = parsed.pathname;
         } catch {
             return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
+        }
+
+        // Validate URL format and security via shared SSRF utility
+        const validation = await validateUrlForSsrf(url);
+        if (!validation.safe) {
+            return NextResponse.json(
+                { error: validation.error || "Forbidden URL" },
+                { status: validation.error?.includes("blocked") ? 403 : 400 }
+            );
         }
 
         // Fetch the page content if not provided
@@ -61,22 +71,9 @@ export async function POST(
             path: pathname,
         }));
 
-        const session = await auth();
-        let userId = session?.user?.id;
-
+        const userId = await getAuthorizedUser();
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const existingProject = await prisma.project.findFirst({

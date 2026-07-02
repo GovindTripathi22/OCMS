@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 
 export async function PATCH(
     req: NextRequest,
@@ -9,22 +9,10 @@ export async function PATCH(
     try {
         const { githubOwner, githubRepo, githubBranch, targetFilePath, githubRepoUrl } = await req.json();
 
-        const session = await auth();
-        let userId = session?.user?.id;
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const existingProject = await prisma.project.findFirst({

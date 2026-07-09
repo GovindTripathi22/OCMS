@@ -41,6 +41,11 @@ export function findJSXElements(ast: t.File, selector: string): NodePath<t.JSXEl
     return matches;
 }
 
+export interface MappedExpressionWriteResult {
+    applied: boolean;
+    reason?: string;
+}
+
 export function readJSXElementValue(path: NodePath<t.JSXElement>, type: JSXFieldType): string | null {
     const fieldType = type.toLowerCase();
 
@@ -128,6 +133,73 @@ export function writeJSXElementValue(
         if (options.alt !== undefined) setJSXAttribute(modelNode.openingElement, "alt", options.alt);
         applyStyleOptions(modelNode, options);
     }
+}
+
+export function isInsideMappedExpression(path: NodePath<t.JSXElement>): boolean {
+    return getMappedExpressionContext(path) !== null;
+}
+
+export function writeStaticMappedExpressionValue(
+    path: NodePath<t.JSXElement>,
+    type: JSXFieldType,
+    newValue: string,
+    oldValue?: string
+): MappedExpressionWriteResult {
+    const context = getMappedExpressionContext(path);
+    if (!context) return { applied: false };
+
+    if (!oldValue) {
+        return {
+            applied: false,
+            reason: "ambiguous: element renders via .map() and no old value was provided",
+        };
+    }
+
+    const propertyName = findMappedValueProperty(path.node, type, context.itemName);
+    if (!propertyName) {
+        return {
+            applied: false,
+            reason: "ambiguous: element renders via .map()",
+        };
+    }
+
+    const arrayExpression = resolveStaticArrayExpression(context.sourcePath);
+    if (!arrayExpression) {
+        return {
+            applied: false,
+            reason: "ambiguous: element renders via .map()",
+        };
+    }
+
+    const normalizedOld = normalizeText(oldValue);
+    const matches: t.ObjectProperty[] = [];
+
+    for (const element of arrayExpression.node.elements) {
+        if (!t.isObjectExpression(element)) continue;
+        const property = findObjectProperty(element, propertyName);
+        if (!property) continue;
+        const currentValue = readStaticExpressionValue(property.value as t.Expression);
+        if (currentValue !== null && normalizeText(currentValue) === normalizedOld) {
+            matches.push(property);
+        }
+    }
+
+    if (matches.length === 0) {
+        return {
+            applied: false,
+            reason: "mapped static array did not contain the old value",
+        };
+    }
+
+    if (matches.length > 1) {
+        return {
+            applied: false,
+            reason: "ambiguous: element renders via .map() and old value is not unique",
+        };
+    }
+
+    matches[0].value = t.stringLiteral(newValue);
+    return { applied: true };
 }
 
 export function readStaticJSXAttribute(node: t.JSXElement, name: string): string | null {
@@ -329,9 +401,144 @@ function matchesSimpleSelector(path: NodePath<t.JSXElement>, part: SelectorPart)
         if (part.classes.some((classNamePart) => !classSet.has(classNamePart))) return false;
     }
 
-    if (part.nthOfType !== undefined && nthOfType(path) !== part.nthOfType) return false;
+    if (part.nthOfType !== undefined && nthOfType(path) !== part.nthOfType && !isInsideMappedExpression(path)) return false;
 
     return true;
+}
+
+interface MappedExpressionContext {
+    callPath: NodePath<t.CallExpression>;
+    sourcePath: NodePath<t.Expression>;
+    itemName: string;
+}
+
+function getMappedExpressionContext(path: NodePath<t.JSXElement>): MappedExpressionContext | null {
+    let current: NodePath | null = path.parentPath;
+
+    while (current) {
+        if (current.isCallExpression() && isMapLikeCall(current.node)) {
+            const callback = current.node.arguments[0];
+            if (!t.isArrowFunctionExpression(callback) && !t.isFunctionExpression(callback)) return null;
+            const firstParam = callback.params[0];
+            if (!t.isIdentifier(firstParam)) return null;
+
+            const calleeObject = current.get("callee");
+            if (!calleeObject.isMemberExpression()) return null;
+            const sourcePath = calleeObject.get("object");
+            if (!sourcePath.isExpression()) return null;
+
+            return {
+                callPath: current as NodePath<t.CallExpression>,
+                sourcePath: sourcePath as NodePath<t.Expression>,
+                itemName: firstParam.name,
+            };
+        }
+
+        if (current.isProgram() || current.isFile()) return null;
+        current = current.parentPath;
+    }
+
+    return null;
+}
+
+function isMapLikeCall(node: t.CallExpression): boolean {
+    if (!t.isMemberExpression(node.callee)) return false;
+    const property = node.callee.property;
+    const methodName = t.isIdentifier(property)
+        ? property.name
+        : t.isStringLiteral(property)
+          ? property.value
+          : "";
+    return methodName === "map" || methodName === "flatMap";
+}
+
+function resolveStaticArrayExpression(path: NodePath<t.Expression>): NodePath<t.ArrayExpression> | null {
+    if (path.isArrayExpression()) return path as NodePath<t.ArrayExpression>;
+
+    if (path.isCallExpression() && t.isMemberExpression(path.node.callee)) {
+        const property = path.node.callee.property;
+        const methodName = t.isIdentifier(property)
+            ? property.name
+            : t.isStringLiteral(property)
+              ? property.value
+              : "";
+        if (methodName === "filter") {
+            const objectPath = path.get("callee").get("object");
+            if (objectPath.isExpression()) {
+                return resolveStaticArrayExpression(objectPath as NodePath<t.Expression>);
+            }
+        }
+    }
+
+    if (!path.isIdentifier()) return null;
+
+    const binding = path.scope.getBinding(path.node.name);
+    const bindingPath = binding?.path;
+    if (!bindingPath?.isVariableDeclarator()) return null;
+
+    const initPath = bindingPath.get("init");
+    return initPath.isArrayExpression() ? (initPath as NodePath<t.ArrayExpression>) : null;
+}
+
+function findMappedValueProperty(node: t.JSXElement, type: JSXFieldType, itemName: string): string | null {
+    const fieldType = type.toLowerCase();
+
+    if (fieldType === "image") {
+        const imageNode = findFirstElementNode(node, isImageElement) ?? node;
+        return propertyNameFromJSXAttribute(imageNode, "src", itemName);
+    }
+
+    if (fieldType === "link") {
+        const linkNode = findFirstElementNode(node, isAnchorElement) ?? node;
+        return propertyNameFromJSXAttribute(linkNode, "href", itemName);
+    }
+
+    if (fieldType === "3d-model") {
+        const modelNode = findFirstElementNode(node, isModelElement) ?? node;
+        return propertyNameFromJSXAttribute(modelNode, "src", itemName);
+    }
+
+    return findMappedTextProperty(node, itemName);
+}
+
+function propertyNameFromJSXAttribute(node: t.JSXElement, attributeName: string, itemName: string): string | null {
+    const attribute = findJSXAttribute(node.openingElement, attributeName);
+    if (!attribute?.value || !t.isJSXExpressionContainer(attribute.value)) return null;
+    return propertyNameFromMemberExpression(attribute.value.expression, itemName);
+}
+
+function findMappedTextProperty(node: t.JSXElement | t.JSXFragment, itemName: string): string | null {
+    for (const child of node.children) {
+        if (t.isJSXExpressionContainer(child)) {
+            const propertyName = propertyNameFromMemberExpression(child.expression, itemName);
+            if (propertyName) return propertyName;
+        }
+        if (t.isJSXElement(child) || t.isJSXFragment(child)) {
+            const propertyName = findMappedTextProperty(child, itemName);
+            if (propertyName) return propertyName;
+        }
+    }
+
+    return null;
+}
+
+function propertyNameFromMemberExpression(expression: t.Expression | t.JSXEmptyExpression, itemName: string): string | null {
+    if (!t.isMemberExpression(expression)) return null;
+    if (!t.isIdentifier(expression.object) || expression.object.name !== itemName) return null;
+
+    const property = expression.property;
+    if (t.isIdentifier(property)) return property.name;
+    if (t.isStringLiteral(property)) return property.value;
+    return null;
+}
+
+function findObjectProperty(objectExpression: t.ObjectExpression, propertyName: string): t.ObjectProperty | null {
+    for (const property of objectExpression.properties) {
+        if (!t.isObjectProperty(property)) continue;
+        if (objectKeyName(property.key) === propertyName) return property;
+    }
+
+    return null;
 }
 
 function parentJSXElementPath(path: NodePath<t.JSXElement>): NodePath<t.JSXElement> | null {
@@ -391,7 +598,7 @@ function readStaticAttributeValue(value: t.JSXAttribute["value"]): string | null
     return readStaticExpressionValue(value.expression);
 }
 
-function readStaticExpressionValue(expression: t.Expression | t.JSXEmptyExpression): string | null {
+export function readStaticExpressionValue(expression: t.Expression | t.JSXEmptyExpression): string | null {
     if (t.isStringLiteral(expression)) return expression.value;
     if (t.isNumericLiteral(expression)) return String(expression.value);
     if (t.isBooleanLiteral(expression)) return String(expression.value);

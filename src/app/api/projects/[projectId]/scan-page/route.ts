@@ -5,18 +5,26 @@ import { Prisma } from "@prisma/client";
 import { getAuthorizedUser } from "@/auth";
 import { validateUrlForSsrf } from "@/lib/ssrf";
 
+
+
+
 export async function POST(
     req: NextRequest,
     { params }: { params: { projectId: string } }
 ) {
     try {
+        // Auth check FIRST — before any network requests
+        const userId = await getAuthorizedUser();
+        if (!userId) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         const { url, html } = await req.json();
 
         if (!url) {
             return NextResponse.json({ error: "URL is required" }, { status: 400 });
         }
 
-        const targetUrl = url;
         let pathname = "/";
         try {
             const parsed = new URL(url);
@@ -25,7 +33,7 @@ export async function POST(
             return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
         }
 
-        // Validate URL format and security via shared SSRF utility
+        // Validate URL against SSRF blocklist
         const validation = await validateUrlForSsrf(url);
         if (!validation.safe) {
             return NextResponse.json(
@@ -34,52 +42,11 @@ export async function POST(
             );
         }
 
-        // Fetch the page content if not provided
-        let scrapedHtml = html || "";
-        let finalUrl = targetUrl;
-
-        if (!scrapedHtml) {
-            try {
-                const response = await fetch(targetUrl, {
-                    redirect: "follow",
-                    headers: {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        Accept: "text/html",
-                    },
-                    signal: AbortSignal.timeout(12000), // 12s timeout
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Server responded with status ${response.status}`);
-                }
-
-                scrapedHtml = await response.text();
-                finalUrl = response.url;
-            } catch (err: unknown) {
-                console.error("[Scan Page Fetch Error]:", err);
-                const errMsg = err instanceof Error ? err.message : String(err);
-                return NextResponse.json({ error: `Failed to fetch page content: ${errMsg}` }, { status: 500 });
-            }
-        }
-
-        // Generate schema fields via local scraper
-        let newFields = extractFallbackSchemaFields(scrapedHtml, finalUrl);
-
-        // Set path property on the new fields
-        newFields = newFields.map((f) => ({
-            ...f,
-            path: pathname,
-        }));
-
-        const userId = await getAuthorizedUser();
-        if (!userId) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
+        // Check project ownership before doing any work
         const existingProject = await prisma.project.findFirst({
             where: {
                 id: params.projectId,
-                userId: userId
+                userId: userId,
             }
         });
 
@@ -87,18 +54,79 @@ export async function POST(
             return NextResponse.json({ error: "Project not found or access denied" }, { status: 404 });
         }
 
-        let existingFields: Record<string, unknown>[] = [];
-        if (existingProject.generatedSchema) {
-            existingFields = existingProject.generatedSchema as unknown as Record<string, unknown>[];
+        // Fetch page content if not provided inline
+        let scrapedHtml = html || "";
+        let finalUrl = url;
+        let scrapeFailed = false;
+
+        if (!scrapedHtml) {
+            try {
+                const response = await fetch(url, {
+                    redirect: "follow",
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (compatible; OCMS/1.0; +https://ocms.ai/bot)",
+                        Accept: "text/html",
+                    },
+                    signal: AbortSignal.timeout(12000),
+                });
+
+                if (!response.ok) {
+                    scrapeFailed = true;
+                    console.warn(`[Scan Page] HTTP ${response.status} for ${url}`);
+                } else {
+                    scrapedHtml = await response.text();
+                    finalUrl = response.url;
+                }
+            } catch (err: unknown) {
+                scrapeFailed = true;
+                const errMsg = err instanceof Error ? err.message : String(err);
+                console.error("[Scan Page Fetch Error]:", errMsg);
+            }
         }
 
-        // Filter out old fields for the current path to replace them with fresh ones
+        if (scrapeFailed || !scrapedHtml) {
+            return NextResponse.json({
+                success: false,
+                scrapeFailed: true,
+                error: "Could not fetch page content. The URL may be unreachable or return no HTML.",
+                schema: existingProject.generatedSchema ?? [],
+                newFieldsCount: 0,
+            }, { status: 200 }); // 200 so client can handle gracefully
+        }
+
+        // Generate new fields from the scraped HTML
+        let newFields = extractFallbackSchemaFields(scrapedHtml, finalUrl);
+
+        // Attach path to each new field
+        newFields = newFields.map((f) => ({
+            ...f,
+            path: pathname,
+        }));
+
+        // Parse existing schema
+        let existingFields: Record<string, unknown>[] = [];
+        if (existingProject.generatedSchema) {
+            const raw = existingProject.generatedSchema as unknown;
+            if (Array.isArray(raw)) {
+                existingFields = raw as Record<string, unknown>[];
+            }
+        }
+
+        // Preserve fields for OTHER paths (don't touch them)
         const preservedFields = existingFields.filter((f: Record<string, unknown>) => {
-            const fPath = f.path || "/";
+            const fPath = (f.path as string) || "/";
             return fPath !== pathname;
         });
 
-        const mergedSchema = [...preservedFields, ...newFields];
+        // Deduplicate: skip new fields whose selector already exists in preserved fields
+        const preservedSelectors = new Set(
+            preservedFields.map((f) => f.selector as string).filter(Boolean)
+        );
+        const deduplicatedNewFields = newFields.filter(
+            (f) => !f.selector || !preservedSelectors.has(f.selector)
+        );
+
+        const mergedSchema = [...preservedFields, ...deduplicatedNewFields];
 
         // Update database
         await prisma.project.update({
@@ -111,12 +139,15 @@ export async function POST(
         return NextResponse.json({
             success: true,
             schema: mergedSchema,
-            newFieldsCount: newFields.length,
+            newFieldsCount: deduplicatedNewFields.length,
+            preservedFieldsCount: preservedFields.length,
         });
 
     } catch (error: unknown) {
         console.error("Scan page error:", error);
-        const errMsg = error instanceof Error ? error.message : String(error);
-        return NextResponse.json({ error: "Internal Server Error", details: errMsg }, { status: 500 });
+        return NextResponse.json(
+            { error: "Internal Server Error" },
+            { status: 500 }
+        );
     }
 }

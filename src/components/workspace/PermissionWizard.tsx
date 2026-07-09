@@ -11,9 +11,10 @@ interface PermissionWizardProps {
     projectId?: string;
     currentOwner?: string;
     currentRepo?: string;
+    currentBranch?: string;
     currentFilePath?: string;
     onClose: () => void;
-    onSetupCompleted?: (data: { githubOwner: string; githubRepo: string; targetFilePath: string }) => void;
+    onSetupCompleted?: (data: { githubOwner: string; githubRepo: string; githubBranch: string; targetFilePath: string }) => void;
 }
 
 interface GithubRepo {
@@ -33,6 +34,7 @@ export default function PermissionWizard({
     projectId,
     currentOwner = "",
     currentRepo = "",
+    currentBranch = "main",
     currentFilePath = "",
     onClose,
     onSetupCompleted
@@ -54,7 +56,7 @@ export default function PermissionWizard({
     const [loadingFiles, setLoadingFiles] = useState(false);
     const [selectedFile, setSelectedFile] = useState(currentFilePath);
     const [fileSearch, setFileSearch] = useState("");
-    const [branchName, setBranchName] = useState("main");
+    const [branchName, setBranchName] = useState(currentBranch || "main");
 
     const [isSaving, setIsSaving] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
@@ -89,7 +91,7 @@ export default function PermissionWizard({
                         );
                         if (existing) {
                             setSelectedRepo(existing);
-                            setBranchName(existing.default_branch || "main");
+                            setBranchName(currentBranch || existing.default_branch || "main");
                         } else {
                             // Mock a repo object if not found in list but configured
                             const dummyRepo: GithubRepo = {
@@ -100,6 +102,7 @@ export default function PermissionWizard({
                                 default_branch: "main"
                             };
                             setSelectedRepo(dummyRepo);
+                            setBranchName(currentBranch || "main");
                         }
                     }
                     // Jump to Step 2 or 3 depending on state
@@ -115,7 +118,7 @@ export default function PermissionWizard({
         };
 
         checkStatus();
-    }, [currentOwner, currentRepo]);
+    }, [currentOwner, currentRepo, currentBranch]);
 
     // Fetch files when repo is selected
     useEffect(() => {
@@ -229,6 +232,7 @@ export default function PermissionWizard({
                 onSetupCompleted({
                     githubOwner: selectedRepo.owner,
                     githubRepo: selectedRepo.name,
+                    githubBranch: branchName,
                     targetFilePath: selectedFile,
                 });
             }

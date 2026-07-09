@@ -41,37 +41,34 @@ export default async function WorkspacePage({
         });
     }
 
-
     if (!project) {
         notFound();
     }
 
-    // Safely parse the schema or use fallback
+    // Safely parse the schema — no placeholder fallback in production.
+    // If schema is empty, WorkspaceClient will show a scan prompt.
     let initialSchema: SchemaField[] = [];
     try {
         if (project.generatedSchema) {
-            initialSchema = project.generatedSchema as unknown as SchemaField[];
+            const parsed = project.generatedSchema as unknown as SchemaField[];
+            // Ensure it's a valid non-empty array before using it
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                initialSchema = parsed;
+            }
         }
     } catch (e) {
-        console.error("Failed to parse schema", e);
-    }
-
-    // Default schema if none generated
-    if (!initialSchema || initialSchema.length === 0) {
-        initialSchema = [
-            { id: "hero-title", type: "text", label: "Hero Title", value: "Welcome to Our Site", selector: "h1" },
-            { id: "hero-subtitle", type: "text", label: "Subtitle", value: "Build something amazing today.", selector: ".subtitle" },
-            { id: "hero-image", type: "image", label: "Hero Image", value: "/placeholder.jpg", selector: "img.hero" },
-            { id: "cta-link", type: "link", label: "CTA Link", value: "/get-started", selector: "a.cta" },
-        ];
+        console.error("Failed to parse project schema:", e);
+        // initialSchema stays empty — workspace will prompt user to scan
     }
 
     const projectData = {
         id: project.id,
-        githubOwner: project.githubOwner || "",
-        githubRepo: project.githubRepo || "",
-        targetFilePath: project.targetFilePath || "",
-        sourceUrl: project.sourceUrl || ""
+        name: project.name,
+        githubOwner: project.githubOwner ?? null,
+        githubRepo: project.githubRepo ?? null,
+        githubBranch: project.githubBranch || "main",
+        targetFilePath: project.targetFilePath ?? null,
+        sourceUrl: project.sourceUrl ?? null,
     };
 
     return (
@@ -80,4 +77,3 @@ export default async function WorkspacePage({
         </Suspense>
     );
 }
-

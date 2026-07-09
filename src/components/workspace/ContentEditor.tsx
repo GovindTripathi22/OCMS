@@ -31,6 +31,7 @@ interface ContentEditorProps {
     onModelInjected: (targetFieldId: string, modelPath: string) => void;
     githubOwner?: string;
     githubRepo?: string;
+    githubBranch?: string;
     targetFilePath?: string;
     onHistorySeek?: (percent: number) => void;
     historyCount?: number;
@@ -38,6 +39,7 @@ interface ContentEditorProps {
     onHistoryIndexChange?: (index: number) => void;
     onSchemaReplace?: (newSchema: SchemaField[]) => void;
     broadcastGhostEvent?: (type: "AI_EDIT_START" | "AI_EDIT_END", selector?: string, text?: string) => void;
+    previewMessageNonce?: string;
     previewUrl?: string;
     isScanning?: boolean;
     onScanPage?: (skipAi?: boolean) => void;
@@ -235,15 +237,17 @@ export default function ContentEditor({
     onFieldChange,
     onFieldUpdate,
     onModelInjected,
-    githubOwner = "GovindTripathi22",
-    githubRepo = "OCMS",
-    targetFilePath = "src/app/page.tsx",
+    githubOwner,
+    githubRepo,
+    githubBranch = "main",
+    targetFilePath,
     onHistorySeek,
     historyCount = 1,
     historyIndex = 0,
     onHistoryIndexChange,
     onSchemaReplace,
     broadcastGhostEvent,
+    previewMessageNonce,
     previewUrl,
     isScanning = false,
     onScanPage,
@@ -251,6 +255,7 @@ export default function ContentEditor({
 }: ContentEditorProps) {
     const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
     const [errorMessage, setErrorMessage] = useState("");
+    const [warningMessage, setWarningMessage] = useState("");
     const [isListening, setIsListening] = useState(false);
     const [voiceText, setVoiceText] = useState("");
     const [showCode, setShowCode] = useState(false);
@@ -286,7 +291,8 @@ export default function ContentEditor({
             }
         } catch (err) {
             console.error("Lighthouse Audit Failed:", err);
-            alert(err instanceof Error ? err.message : "Failed to run PageSpeed audit");
+            setErrorMessage(err instanceof Error ? err.message : "Failed to run PageSpeed audit");
+        setSyncStatus("error");
         } finally {
             setIsAuditingLighthouse(false);
         }
@@ -422,17 +428,20 @@ export default function ContentEditor({
                 source: "ocms-material-update",
                 roughness,
                 metalness,
-                textureUrl
+                textureUrl,
+                nonce: previewMessageNonce,
             }, "*");
         }
-    }, [roughness, metalness, textureUrl]);
+    }, [roughness, metalness, textureUrl, previewMessageNonce]);
 
 
 
     const handleApplyMaterialVariant = async () => {
         const modelField = schema.find(f => f.type === "3d-model");
         if (!modelField) {
-            alert("No 3D Model field found in the schema to apply to.");
+            setErrorMessage("No 3D model field found in the schema. Add a 3D model field first.");
+            setSyncStatus("error");
+            setTimeout(() => setSyncStatus("idle"), 4000);
             return;
         }
 
@@ -485,6 +494,7 @@ export default function ContentEditor({
         // ── Build Validation Gate ──
         setSyncStatus("syncing");
         setErrorMessage("");
+        setWarningMessage("");
         setBuildStatus("checking");
         try {
             const buildRes = await fetch("/api/validate-build");
@@ -505,18 +515,16 @@ export default function ContentEditor({
             console.warn("Build validation check failed, proceeding anyway...");
         }
 
-        const summary = changedFields
-            .map((field) => {
-                const original = initialSchema.find((item) => item.id === field.id);
-                const fromValue = original?.value ?? "(new field)";
-                return `${field.id}: "${(fromValue || "").slice(0, 80)}" -> "${(field.value || "").slice(0, 80)}"`;
-            })
-            .join("\n");
-
-        const confirmed = window.confirm(`Save & Sync will commit these changes:\n\n${summary}`);
-        if (!confirmed) {
-            setSyncStatus("idle");
-            return;
+        // Log the summary for debugging — UI shows status via syncStatus states
+        if (changedFields.length > 0) {
+            const summary = changedFields
+                .map((field) => {
+                    const original = initialSchema.find((item) => item.id === field.id);
+                    const fromValue = original?.value ?? "(new field)";
+                    return `${field.id}: "${(fromValue || "").slice(0, 80)}" -> "${(field.value || "").slice(0, 80)}"`;
+                })
+                .join("\n");
+            console.info("[OCMS] Committing changes:\n" + summary);
         }
 
         const changes = changedFields.map((f) => {
@@ -548,6 +556,7 @@ export default function ContentEditor({
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    projectId,
                     repoOwner: githubOwner,
                     repoName: githubRepo,
                     filePath: targetFilePath,
@@ -557,6 +566,11 @@ export default function ContentEditor({
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Unknown error");
             setSyncStatus("success");
+            if (Array.isArray(data.unmatchedSelectors) && data.unmatchedSelectors.length > 0) {
+                setWarningMessage(
+                    `Applied ${data.appliedCount || 0} change(s), but ${data.unmatchedSelectors.length} selector(s) did not match.`
+                );
+            }
 
             if (isGhostModeActive && broadcastGhostEvent) {
                 broadcastGhostEvent("AI_EDIT_END");
@@ -565,6 +579,7 @@ export default function ContentEditor({
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : "Failed to sync";
             setErrorMessage(message);
+            setWarningMessage("");
             setSyncStatus("error");
             setTimeout(() => setSyncStatus("idle"), 5000);
         }
@@ -739,7 +754,8 @@ export default function ContentEditor({
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Failed to steal component");
-            alert("Component stolen successfully! (Code logged to console)");
+        setSyncStatus("success");
+            setTimeout(() => setSyncStatus("idle"), 3000);
             console.log("STOLEN COMPONENT CODE:\n", data.code);
         } catch (err: unknown) {
             setErrorMessage(err instanceof Error ? err.message : "Failed to steal component");
@@ -1638,10 +1654,16 @@ export default function ContentEditor({
                         <span className="truncate">{errorMessage}</span>
                     </div>
                 )}
+                {warningMessage && (
+                    <div className="flex items-center gap-2 text-[9px] text-black font-[family-name:var(--font-jetbrains-mono)] bg-[var(--ocms-yellow)] border-[3px] border-black rounded-md px-3 py-2.5 shadow-[3px_3px_0px_#000] animate-slide-up font-bold">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-black" />
+                        <span className="truncate">{warningMessage}</span>
+                    </div>
+                )}
                 
                 <div className="flex items-center justify-between text-[9px] font-black uppercase text-slate-500 mb-2.5 px-1 select-none">
-                    <span className="truncate max-w-[220px]" title={`${githubOwner}/${githubRepo}:${targetFilePath}`}>
-                        Sync: {githubOwner}/{githubRepo}:{targetFilePath.split("/").pop()}
+                    <span className="truncate max-w-[220px]" title={`${githubOwner}/${githubRepo}@${githubBranch}:${targetFilePath}`}>
+                        Sync: {githubOwner}/{githubRepo}@{githubBranch}:{targetFilePath?.split("/").pop()}
                     </span>
                     {openPermissionWizard && (
                         <button

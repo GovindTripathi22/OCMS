@@ -1,40 +1,29 @@
 import { NextResponse } from "next/server";
 
 /**
- * POST /api/auth/github
- * Handles GitHub OAuth callback — placeholder for NextAuth integration.
+ * This route previously contained a placeholder GitHub OAuth handler.
+ *
+ * GitHub OAuth is fully managed by NextAuth at:
+ *   POST /api/auth/signin/github
+ *   GET  /api/auth/callback/github
+ *
+ * This file is intentionally left as a 410 Gone to prevent
+ * accidental usage of a stale/custom OAuth flow.
  */
-export async function POST(request: Request) {
-    try {
-        const body = await request.json();
-        const { code } = body;
-
-        if (!code) {
-            return NextResponse.json(
-                { error: "Missing authorization code" },
-                { status: 400 }
-            );
-        }
-
-        // TODO: Exchange `code` for access token using GitHub OAuth App credentials
-        // const tokenResponse = await fetch("https://github.com/login/oauth/access_token", { ... })
-
-        return NextResponse.json({
-            message: "GitHub OAuth placeholder — exchange code for token here",
-            success: true,
-        });
-    } catch {
-        return NextResponse.json(
-            { error: "Authentication failed" },
-            { status: 500 }
-        );
-    }
+export async function GET() {
+    return NextResponse.json(
+        {
+            error: "This endpoint is deprecated. GitHub OAuth is handled by NextAuth at /api/auth/signin/github",
+        },
+        { status: 410 }
+    );
 }
 
-export async function GET() {
-    return NextResponse.json({
-        provider: "github",
-        status: "ready",
-        message: "Use POST with { code } to authenticate",
-    });
+export async function POST() {
+    return NextResponse.json(
+        {
+            error: "This endpoint is deprecated. GitHub OAuth is handled by NextAuth at /api/auth/signin/github",
+        },
+        { status: 410 }
+    );
 }

@@ -58,6 +58,64 @@ const jsxMissReport = patchJSXWithReport(jsxFixture, [
 assert.equal(jsxMissReport.appliedCount, 0);
 assert.deepEqual(jsxMissReport.unmatchedSelectors, ["section.hero h2.missing"]);
 
+const jsxPartialReport = patchJSXWithReport(jsxFixture, [
+    { type: "text", selector: "main > section.hero h1.title", oldValue: "Old Hero", newValue: "Partially Updated Hero" },
+    { type: "text", selector: "section.hero h2.stale", oldValue: "Stale", newValue: "Should Not Apply" },
+]);
+assert.equal(jsxPartialReport.appliedCount, 1, "partial JSX batch should apply matching selectors");
+assert.deepEqual(jsxPartialReport.matchedSelectors, ["main > section.hero h1.title"]);
+assert.deepEqual(jsxPartialReport.unmatchedSelectors, ["section.hero h2.stale"]);
+assert.match(jsxPartialReport.code, /Partially Updated Hero/);
+
+const mappedListFixture = `
+const cards = [
+    { title: "First Card", description: "First description" },
+    { title: "Second Card", description: "Second description" },
+    { title: "Third Card", description: "Third description" },
+];
+
+export default function Cards() {
+    return (
+        <section className="cards">
+            {cards.map((card) => (
+                <article className="card" key={card.title}>
+                    <h3>{card.title}</h3>
+                    <p>{card.description}</p>
+                </article>
+            ))}
+        </section>
+    );
+}
+`;
+
+const mappedListReport = patchJSXWithReport(mappedListFixture, [
+    {
+        type: "text",
+        selector: "section.cards article.card:nth-of-type(2) h3",
+        oldValue: "Second Card",
+        newValue: "Updated Second Card",
+    },
+]);
+
+assert.equal(mappedListReport.appliedCount, 1, "mapped JSX static array edit should apply once");
+assert.deepEqual(mappedListReport.unmatchedSelectors, [], "mapped JSX static array edit should match");
+assert.match(mappedListReport.code, /title:\s*"First Card"/);
+assert.match(mappedListReport.code, /title:\s*"Updated Second Card"/);
+assert.match(mappedListReport.code, /title:\s*"Third Card"/);
+assert.doesNotMatch(mappedListReport.code, /<h3>\s*\{"Updated Second Card"\}\s*<\/h3>/);
+
+const mappedAmbiguousReport = patchJSXWithReport(mappedListFixture, [
+    {
+        type: "text",
+        selector: "section.cards article.card:nth-of-type(2) h3",
+        newValue: "No Old Value",
+    },
+]);
+assert.equal(mappedAmbiguousReport.appliedCount, 0);
+assert.deepEqual(mappedAmbiguousReport.unmatchedSelectors, [
+    "section.cards article.card:nth-of-type(2) h3 (ambiguous: element renders via .map() and no old value was provided)",
+]);
+
 const htmlFixture = `
 <header class="hero">
     <h1 id="hero-title">Old Hero</h1>

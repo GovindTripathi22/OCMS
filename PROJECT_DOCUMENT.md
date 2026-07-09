@@ -58,7 +58,7 @@ To save content modifications permanently, OCMS does not rewrite files from scra
 2. **Cheerio Patching (`src/lib/html-patcher.ts`)**: Loads HTML files, locates selectors, updates text/attributes, merges inline styles, and outputs the updated HTML.
 
 ### C. GitHub Octokit Sync
-The GitHub Sync module (`src/lib/github-sync.ts`) authenticates via NextAuth OAuth tokens, pulls the source code file from the user's repo, performs regex/AST-based replacement of the modified values, commits the changes, and pushes them back. A webhook handler (`src/app/api/webhooks/github/route.ts`) handles reverse syncing when changes are pushed directly to the repository.
+The publish-changes route (`src/app/api/publish-changes/route.ts`) authenticates via NextAuth OAuth tokens, pulls the source code file from the user's repo, performs AST-based or Cheerio-based patching of the modified values, writes the changes locally if in offline mode, and commits and pushes the updated file back to GitHub via Octokit. A webhook handler (`src/app/api/webhooks/github/route.ts`) handles reverse syncing when changes are pushed directly to the repository.
 
 ### D. 3D Model Optimization Pipeline
 When a user uploads a 3D asset via `ModelDropzone.tsx`, it calls `/api/upload-model`. The engine uses `@gltf-transform` to run clean/optimize passes (`dedup`, `flatten`, `join`, `weld`, `quantize`), reducing model size significantly. Material presets (`src/lib/pbr-presets.ts`) allow applying custom PBR maps (chrome, wood, etc.) by writing metalness, roughness, and texture parameters directly to the model's material attributes.
@@ -89,7 +89,6 @@ d:\MODEL\ocms\
 │   │   └── schema.ts
 │   ├── lib/
 │   │   ├── ast-patcher.ts
-│   │   ├── github-sync.ts
 │   │   ├── gsd-parser.ts
 │   │   ├── html-patcher.ts
 │   │   ├── jsx-ast-helpers.ts
@@ -167,8 +166,6 @@ d:\MODEL\ocms\
 │           │   └── route.ts
 │           ├── steal-component/
 │           │   └── route.ts
-│           ├── sync/
-│           │   └── route.ts
 │           ├── theme-colors/
 │           │   └── route.ts
 │           ├── upload-model/
@@ -185,6 +182,138 @@ d:\MODEL\ocms\
 ---
 
 ## 3. CONFIGURATION & MANIFEST FILES
+
+### `.editorconfig`
+**File Path:** `file:///d:/MODEL/ocms/.editorconfig`
+
+```
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+charset = utf-8
+indent_style = space
+indent_size = 4
+```
+
+---
+
+### `.env.example`
+**File Path:** `file:///d:/MODEL/ocms/.env.example`
+
+```
+# Copy this file to .env.local and fill in the values
+
+# Database (SQLite is default, file:./dev.db)
+DATABASE_URL="file:./dev.db"
+
+# Auth Secret - generate with: openssl rand -base64 33
+AUTH_SECRET=""
+
+# NextAuth URL (set to your deployment URL in production)
+NEXTAUTH_URL="http://localhost:3000"
+
+# GitHub OAuth (https://github.com/settings/developers)
+GITHUB_CLIENT_ID=""
+GITHUB_CLIENT_SECRET=""
+
+# Optional: Only needed for local file sync (leave blank to fallback to process.cwd())
+LOCAL_WORKSPACE_PATH=""
+
+# Optional: Only needed if you want to support Replicate API for texture generation
+REPLICATE_API_TOKEN=""
+```
+
+---
+
+### `.eslintrc.json`
+**File Path:** `file:///d:/MODEL/ocms/.eslintrc.json`
+
+```json
+{
+  "extends": ["next/core-web-vitals", "next/typescript"]
+}
+```
+
+---
+
+### `.gitattributes`
+**File Path:** `file:///d:/MODEL/ocms/.gitattributes`
+
+```
+* text=auto eol=lf
+*.md text eol=lf
+*.tsx text eol=lf
+*.ts text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+```
+
+---
+
+### `.gitignore`
+**File Path:** `file:///d:/MODEL/ocms/.gitignore`
+
+```
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+node_modules/
+dist/
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+.env
+prisma/dev.db
+scratch/
+```
+
+---
+
+### `next.config.mjs`
+**File Path:** `file:///d:/MODEL/ocms/next.config.mjs`
+
+```
+/** @type {import('next').NextConfig} */
+const nextConfig = {};
+
+export default nextConfig;
+```
+
+---
 
 ### `package.json`
 **File Path:** `file:///d:/MODEL/ocms/package.json`
@@ -212,8 +341,8 @@ d:\MODEL\ocms\
     "@gltf-transform/functions": "^4.3.0",
     "@octokit/rest": "^22.0.1",
     "@prisma/client": "^6.16.2",
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.5.0",
+    "@react-three/drei": "^9.122.0",
+    "@react-three/fiber": "^8.17.10",
     "@types/three": "^0.183.1",
     "cheerio": "^1.2.0",
     "lucide-react": "^0.575.0",
@@ -222,7 +351,8 @@ d:\MODEL\ocms\
     "next-auth": "^5.0.0-beta.30",
     "react": "^18",
     "react-dom": "^18",
-    "three": "^0.183.2"
+    "three": "^0.183.2",
+    "undici": "^7.22.0"
   },
   "devDependencies": {
     "@types/node": "^20",
@@ -236,7 +366,72 @@ d:\MODEL\ocms\
     "typescript": "^5"
   }
 }
+```
 
+---
+
+### `packages/ghost-cursor/package.json`
+**File Path:** `file:///d:/MODEL/ocms/packages/ghost-cursor/package.json`
+
+```json
+{
+  "name": "@ocms/ghost-cursor",
+  "version": "1.0.0",
+  "description": "Ghost cursor SDK for OCMS live preview",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch"
+  },
+  "keywords": ["ocms", "cursor", "ai"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+```
+
+---
+
+### `packages/ghost-cursor/tsconfig.json`
+**File Path:** `file:///d:/MODEL/ocms/packages/ghost-cursor/tsconfig.json`
+
+```json
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "commonjs",
+    "lib": ["dom", "esnext"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "declaration": true,
+    "incremental": false
+  },
+  "include": ["src/**/*"]
+}
+```
+
+---
+
+### `postcss.config.mjs`
+**File Path:** `file:///d:/MODEL/ocms/postcss.config.mjs`
+
+```
+/** @type {import('postcss-load-config').Config} */
+const config = {
+  plugins: {
+    tailwindcss: {},
+  },
+};
+
+export default config;
 ```
 
 ---
@@ -263,8 +458,8 @@ const config: Config = {
         "ocms-accent": "#10b981",
       },
       fontFamily: {
-        sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],
-        mono: ["var(--font-geist-mono)", "monospace"],
+        sans: ["var(--font-space-grotesk)", "system-ui", "sans-serif"],
+        mono: ["var(--font-jetbrains-mono)", "monospace"],
       },
       backdropBlur: {
         glass: "16px",
@@ -289,37 +484,6 @@ const config: Config = {
   plugins: [],
 };
 export default config;
-
-```
-
----
-
-### `postcss.config.mjs`
-**File Path:** `file:///d:/MODEL/ocms/postcss.config.mjs`
-
-```javascript
-/** @type {import('postcss-load-config').Config} */
-const config = {
-  plugins: {
-    tailwindcss: {},
-  },
-};
-
-export default config;
-
-```
-
----
-
-### `next.config.mjs`
-**File Path:** `file:///d:/MODEL/ocms/next.config.mjs`
-
-```javascript
-/** @type {import('next').NextConfig} */
-const nextConfig = {};
-
-export default nextConfig;
-
 ```
 
 ---
@@ -354,7 +518,6 @@ export default nextConfig;
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]
 }
-
 ```
 
 ---
@@ -385,41 +548,27 @@ export default nextConfig;
     "src/lib/publish-change-normalizer.ts"
   ]
 }
-
-```
-
----
-
-### `.env.example`
-**File Path:** `file:///d:/MODEL/ocms/.env.example`
-
-```
-# Copy this file to .env.local and fill in the values
-
-# Database (SQLite is default, file:./dev.db)
-DATABASE_URL="file:./dev.db"
-
-# Auth Secret - generate with: openssl rand -base64 33
-AUTH_SECRET=""
-
-# NextAuth URL (set to your deployment URL in production)
-NEXTAUTH_URL="http://localhost:3000"
-
-# GitHub OAuth (https://github.com/settings/developers)
-GITHUB_CLIENT_ID=""
-GITHUB_CLIENT_SECRET=""
-
-# Optional: Only needed for local file sync (leave blank to fallback to process.cwd())
-LOCAL_WORKSPACE_PATH=""
-
-# Optional: Only needed if you want to support Replicate API for texture generation
-REPLICATE_API_TOKEN=""
-
 ```
 
 ---
 
 ## 4. DATABASE SCHEMA (PRISMA)
+
+### `prisma.config.ts`
+**File Path:** `file:///d:/MODEL/ocms/prisma.config.ts`
+
+```typescript
+import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  migrations: {
+    path: "prisma/migrations",
+  },
+});
+```
+
+---
 
 ### `prisma/schema.prisma`
 **File Path:** `file:///d:/MODEL/ocms/prisma/schema.prisma`
@@ -606,12 +755,24 @@ enum SubscriptionType {
   FREE  // 10 generations/month, basic features
   PRO   // 100 operations/month, GitHub sync, priority support
 }
-
 ```
 
 ---
 
 ## 5. TYPE DEFINITIONS
+
+### `next-env.d.ts`
+**File Path:** `file:///d:/MODEL/ocms/next-env.d.ts`
+
+```typescript
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/app/building-your-application/configuring/typescript for more information.
+```
+
+---
 
 ### `src/types/schema.ts`
 **File Path:** `file:///d:/MODEL/ocms/src/types/schema.ts`
@@ -633,12 +794,133 @@ export interface SchemaField {
     textureUrl?: string;
 }
 
-
 ```
 
 ---
 
 ## 6. AUTHENTICATION
+
+### `src/app/api/auth/[...nextauth]/route.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/app/api/auth/[...nextauth]/route.ts`
+
+```typescript
+import { handlers } from "@/auth"
+
+export const runtime = "nodejs"
+
+export const { GET, POST } = handlers
+```
+
+---
+
+### `src/app/api/auth/github/route.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/app/api/auth/github/route.ts`
+
+```typescript
+import { NextResponse } from "next/server";
+
+/**
+ * POST /api/auth/github
+ * Handles GitHub OAuth callback — placeholder for NextAuth integration.
+ */
+export async function POST(request: Request) {
+    try {
+        const body = await request.json();
+        const { code } = body;
+
+        if (!code) {
+            return NextResponse.json(
+                { error: "Missing authorization code" },
+                { status: 400 }
+            );
+        }
+
+        // TODO: Exchange `code` for access token using GitHub OAuth App credentials
+        // const tokenResponse = await fetch("https://github.com/login/oauth/access_token", { ... })
+
+        return NextResponse.json({
+            message: "GitHub OAuth placeholder — exchange code for token here",
+            success: true,
+        });
+    } catch {
+        return NextResponse.json(
+            { error: "Authentication failed" },
+            { status: 500 }
+        );
+    }
+}
+
+export async function GET() {
+    return NextResponse.json({
+        provider: "github",
+        status: "ready",
+        message: "Use POST with { code } to authenticate",
+    });
+}
+```
+
+---
+
+### `src/app/api/auth/mock/route.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/app/api/auth/mock/route.ts`
+
+```typescript
+import { NextResponse } from "next/server";
+import { getAuthorizedUser } from "@/auth";
+import { prisma } from "@/lib/prisma";
+
+export const dynamic = "force-dynamic";
+
+export async function POST() {
+    try {
+        const isProduction = process.env.NODE_ENV === "production";
+        const allowGuest = process.env.ALLOW_GUEST_ACCESS === "true";
+        if (isProduction && !allowGuest) {
+            return NextResponse.json({ error: "Unauthorized - mock auth disabled in production" }, { status: 401 });
+        }
+
+        const userId = await getAuthorizedUser();
+        if (!userId) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
+        // Upsert Account record with mock token
+        const existingAccount = await prisma.account.findFirst({
+            where: {
+                userId: userId,
+                provider: "github"
+            }
+        });
+
+        if (existingAccount) {
+            await prisma.account.update({
+                where: { id: existingAccount.id },
+                data: {
+                    access_token: "mock_token",
+                    providerAccountId: "mock_github_user",
+                }
+            });
+        } else {
+            await prisma.account.create({
+                data: {
+                    userId: userId,
+                    type: "oauth",
+                    provider: "github",
+                    providerAccountId: "mock_github_user",
+                    access_token: "mock_token"
+                }
+            });
+        }
+
+        return NextResponse.json({ success: true, message: "Mock account registered successfully." });
+    } catch (error) {
+        console.error("Mock auth error:", error);
+        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    }
+}
+```
+
+---
 
 ### `src/auth.ts`
 **File Path:** `file:///d:/MODEL/ocms/src/auth.ts`
@@ -655,6 +937,9 @@ declare module "next-auth" {
             id: string;
             subscription: string;
         } & DefaultSession["user"];
+    }
+    interface User {
+        subscription?: string;
     }
 }
 
@@ -676,14 +961,41 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session: async ({ session, user }) => {
             if (session.user) {
                 session.user.id = user.id;
-                // @ts-expect-error - Prisma User model has subscription field
-                session.user.subscription = user.subscription;
+                session.user.subscription = user.subscription || "free";
             }
             return session;
         },
     },
 });
 
+export async function getAuthorizedUser(): Promise<string | null> {
+    const session = await auth();
+    let userId = session?.user?.id;
+
+    if (!userId) {
+        const isProduction = process.env.NODE_ENV === "production";
+        const allowGuest = process.env.ALLOW_GUEST_ACCESS === "true";
+        
+        if (isProduction && !allowGuest) {
+            return null;
+        }
+
+        // Fallback to Guest user in development or if explicitly allowed
+        let guestUser = await prisma.user.findFirst({
+            where: { email: "guest@ocms.ai" }
+        });
+        if (!guestUser) {
+            guestUser = await prisma.user.create({
+                data: {
+                    name: "Guest User",
+                    email: "guest@ocms.ai",
+                }
+            });
+        }
+        userId = guestUser.id;
+    }
+    return userId;
+}
 ```
 
 ---
@@ -749,7 +1061,6 @@ export const config = {
         '/((?!_next/static|_next/image|_next/webpack-hmr|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
     ],
 };
-
 ```
 
 ---
@@ -819,7 +1130,7 @@ export const config = {
   body {
     background: var(--ocms-bg);
     color: #1a1a1a;
-    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-family: var(--font-space-grotesk), 'Space Grotesk', 'Inter', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -1296,14 +1607,12 @@ export const config = {
 ### `src/app/layout.tsx`
 **File Path:** `file:///d:/MODEL/ocms/src/app/layout.tsx`
 
-```typescript
+```tsx
 import type { Metadata } from "next";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import Navbar from "@/components/Navbar";
-
-// UX Audit Bypass: aria-label placeholder
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
@@ -1367,7 +1676,6 @@ export default function RootLayout({
     </html>
   );
 }
-
 ```
 
 ---
@@ -1377,12 +1685,10 @@ export default function RootLayout({
 ### `src/app/page.tsx`
 **File Path:** `file:///d:/MODEL/ocms/src/app/page.tsx`
 
-```typescript
+```tsx
 import Link from "next/link";
 import { ArrowRight, Globe, Cpu, Box, Terminal, Braces, ScanLine, Sparkles, Zap, Shield } from "lucide-react";
 import EnvHealthBanner from "@/components/EnvHealthBanner";
-
-// UX Audit Bypass: aria-label placeholder
 
 export default function HomePage() {
   return (
@@ -1676,6 +1982,756 @@ export default function HomePage() {
     </main>
   );
 }
+```
+
+---
+
+### `src/app/workspace/[projectId]/WorkspaceClient.tsx`
+**File Path:** `file:///d:/MODEL/ocms/src/app/workspace/[projectId]/WorkspaceClient.tsx`
+
+```tsx
+"use client";
+
+import { useState, useCallback, useRef, useEffect } from "react";
+import ContentEditor from "@/components/workspace/ContentEditor";
+import LivePreview from "@/components/workspace/LivePreview";
+import PermissionWizard from "@/components/workspace/PermissionWizard";
+import type { SchemaField } from "@/types/schema";
+import { PBR_PRESETS } from "@/lib/pbr-presets";
+
+interface WorkspaceClientProps {
+    project: {
+        id: string;
+        githubOwner: string;
+        githubRepo: string;
+        targetFilePath: string;
+        sourceUrl: string;
+    };
+    initialSchema: SchemaField[];
+}
+
+interface ModalState {
+    field: SchemaField;
+    value: string;
+    alt: string;
+    objectFit: string;
+    borderRadius: string;
+    roughness: number;
+    metalness: number;
+    textureUrl: string;
+}
+
+export default function WorkspaceClient({ project, initialSchema }: WorkspaceClientProps) {
+    const [schema, setSchema] = useState<SchemaField[]>(initialSchema);
+    const [history, setHistory] = useState<SchemaField[][]>([initialSchema]);
+
+    const [previewUrl, setPreviewUrl] = useState(project.sourceUrl);
+    const [iframeLoaded, setIframeLoaded] = useState(false);
+    const [isScanning, setIsScanning] = useState(false);
+
+    // GitHub Repo configuration state
+    const [githubOwner, setGithubOwner] = useState(project.githubOwner);
+    const [githubRepo, setGithubRepo] = useState(project.githubRepo);
+    const [targetFilePath, setTargetFilePath] = useState(project.targetFilePath);
+    const [showPermissionWizard, setShowPermissionWizard] = useState(false);
+
+    const iframeRef = useRef<HTMLIFrameElement>(null);
+    const inlineEditRef = useRef(false);
+
+    // Consolidated modal state
+    const [modalState, setModalState] = useState<ModalState | null>(null);
+
+    // Toast notification state
+    const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+    const showToast = useCallback((message: string, type: "success" | "error" = "success") => {
+        setToast({ message, type });
+    }, []);
+
+    // Dismiss toast automatically
+    useEffect(() => {
+        if (!toast) return;
+        const timer = setTimeout(() => {
+            setToast(null);
+        }, 4000);
+        return () => clearTimeout(timer);
+    }, [toast]);
+
+    // Refs for performance optimizations
+    const historyIndexRef = useRef(0);
+    const isDirtyRef = useRef(false);
+
+    // Shared postMessage payload builder
+    const buildChangesPayload = useCallback((fields: SchemaField[]) => {
+        return fields
+            .filter((f) => f.selector)
+            .map((f) => ({
+                fieldId: f.id,
+                selector: f.selector,
+                type: f.type,
+                value: f.value,
+                alt: f.alt,
+                objectFit: f.objectFit,
+                borderRadius: f.borderRadius,
+                roughness: f.roughness,
+                metalness: f.metalness,
+                textureUrl: f.textureUrl,
+            }));
+    }, []);
+
+    const pushHistory = useCallback((next: SchemaField[]) => {
+        setHistory((currentHistory) => {
+            const idx = historyIndexRef.current;
+            const updated = [
+                ...currentHistory.slice(0, idx + 1),
+                next,
+            ];
+            historyIndexRef.current = updated.length - 1;
+
+            return updated;
+        });
+        isDirtyRef.current = true;
+    }, []);
+
+    const handleFieldUpdate = useCallback((fieldId: string, updates: Partial<SchemaField>) => {
+        setSchema((prev) => {
+            const currentField = prev.find((f) => f.id === fieldId);
+            if (!currentField) return prev;
+
+            const next = prev.map((f) => (f.id === fieldId ? { ...f, ...updates } : f));
+            pushHistory(next);
+            return next;
+        });
+    }, [pushHistory]);
+
+    const handleSaveModal = () => {
+        if (!modalState) return;
+        
+        const updates: Partial<SchemaField> = {
+            value: modalState.value,
+            alt: modalState.alt,
+            objectFit: modalState.objectFit,
+            borderRadius: modalState.borderRadius,
+            roughness: modalState.roughness,
+            metalness: modalState.metalness,
+            textureUrl: modalState.textureUrl,
+        };
+        
+        setSchema((prev) => {
+            const next = prev.map((f) => (f.id === modalState.field.id ? { ...f, ...updates } : f));
+            pushHistory(next);
+            return next;
+        });
+        
+        setModalState(null);
+    };
+
+    const handleScanPage = useCallback(async () => {
+        const iframe = iframeRef.current;
+        if (!iframe?.contentDocument) {
+            showToast("Preview is not loaded yet.", "error");
+            return;
+        }
+
+        setIsScanning(true);
+        try {
+            // Retrieve outer HTML directly from the iframe's loaded DOM!
+            const html = iframe.contentDocument.documentElement.outerHTML;
+            const currentUrl = previewUrl;
+
+            const response = await fetch(`/api/projects/${project.id}/scan-page`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ 
+                    url: currentUrl,
+                    html: html
+                }),
+            });
+
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || "Failed to scan page");
+
+            if (data.schema) {
+                setSchema(data.schema);
+                const idx = historyIndexRef.current;
+                setHistory((prev) => {
+                    const updated = [...prev.slice(0, idx + 1), data.schema];
+                    historyIndexRef.current = updated.length - 1;
+
+                    return updated;
+                });
+                isDirtyRef.current = true;
+                showToast("Page content scanned successfully!");
+            }
+        } catch (err: unknown) {
+            const errMsg = err instanceof Error ? err.message : "Failed to scan page";
+            showToast(errMsg, "error");
+        } finally {
+            setIsScanning(false);
+        }
+    }, [project.id, previewUrl, showToast]);
+
+    const handleFieldChange = useCallback((fieldId: string, newValue: string) => {
+        setSchema((prev) => {
+            const currentField = prev.find((f) => f.id === fieldId);
+            if (!currentField || currentField.value === newValue) return prev;
+
+            const next = prev.map((f) => (f.id === fieldId ? { ...f, value: newValue } : f));
+            if (!inlineEditRef.current) pushHistory(next);
+            else isDirtyRef.current = true;
+            return next;
+        });
+    }, [pushHistory]);
+
+    const handleModelInjected = useCallback((targetFieldId: string, modelPath: string) => {
+        setSchema((prev) => {
+            const next = prev.map((f) =>
+                f.id === targetFieldId
+                    ? { ...f, type: "3d-model" as const, value: modelPath }
+                    : f
+            );
+            pushHistory(next);
+            return next;
+        });
+    }, [pushHistory]);
+
+    useEffect(() => {
+        const iframe = iframeRef.current;
+        if (!iframe?.contentWindow || !iframeLoaded) return;
+
+        const changesPayload = buildChangesPayload(schema);
+
+        iframe.contentWindow.postMessage(
+            { source: "ocms-live-bridge", changes: changesPayload },
+            window.location.origin
+        );
+    }, [schema, iframeLoaded, buildChangesPayload]);
+
+    // Debounced autosave effect for persisting schema edits to database
+    useEffect(() => {
+        if (!isDirtyRef.current) return;
+
+        const timer = setTimeout(async () => {
+            try {
+                const response = await fetch(`/api/projects/${project.id}/schema`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ schema }),
+                });
+                if (response.ok) {
+                    isDirtyRef.current = false;
+                } else {
+                    console.error("[Autosave] Failed to update project schema");
+                }
+            } catch (err) {
+                console.error("[Autosave] Network error updating schema:", err);
+            }
+        }, 1500);
+
+        return () => clearTimeout(timer);
+    }, [schema, project.id]);
+
+    const broadcastGhostEvent = useCallback((type: "AI_EDIT_START" | "AI_EDIT_END", selector?: string, text?: string) => {
+        const iframe = iframeRef.current;
+        if (!iframe?.contentWindow || !iframeLoaded) return;
+
+        iframe.contentWindow.postMessage(
+            { source: "ocms-editor", type, selector, text },
+            window.location.origin
+        );
+    }, [iframeLoaded]);
+
+    useEffect(() => {
+        const handleMessage = async (event: MessageEvent) => {
+            // Lock origin checks to same origin to prevent external origins spoofing messages
+            if (event.origin !== window.location.origin) return;
+            if (event.source !== iframeRef.current?.contentWindow) return;
+            const { source, fieldId, newValue, file, action, value } = event.data;
+
+            try {
+                if (source === "ocms-iframe-ready") {
+                    setIframeLoaded(true);
+                    
+                    // Update parent's previewUrl when navigation happens inside iframe
+                    const innerUrl = event.data.url;
+                    if (innerUrl) {
+                        try {
+                            const parsed = new URL(innerUrl);
+                            const targetUrl = parsed.searchParams.get("url");
+                            if (targetUrl && targetUrl !== previewUrl) {
+                                setPreviewUrl(targetUrl);
+                            }
+                        } catch (e) {
+                            console.error("[WorkspaceClient] Failed to parse navigated iframe URL:", e);
+                        }
+                    }
+
+                    const changesPayload = buildChangesPayload(schema);
+                    iframeRef.current?.contentWindow?.postMessage(
+                        { source: "ocms-live-bridge", changes: changesPayload },
+                        window.location.origin
+                    );
+                    return;
+                }
+
+                if (source === "ocms-inline-edit") {
+                    inlineEditRef.current = true;
+                    handleFieldChange(fieldId, newValue);
+                    inlineEditRef.current = false;
+                    setHistory((currentHistory) => {
+                        const idx = historyIndexRef.current;
+                        const base = currentHistory[idx] ?? schema;
+                        const next = base.map((f) => (f.id === fieldId ? { ...f, value: newValue } : f));
+                        const updated = [...currentHistory.slice(0, idx + 1), next];
+                        historyIndexRef.current = updated.length - 1;
+
+                        return updated;
+                    });
+                }
+
+                if (source === "ocms-inline-add-field" && event.data.field) {
+                    const newField = event.data.field;
+                    setSchema((prev) => {
+                        if (prev.some((f) => f.id === newField.id || (f.selector === newField.selector && f.type === newField.type))) {
+                            return prev;
+                        }
+                        const next = [...prev, newField];
+                        setHistory((currentHistory) => {
+                            const idx = historyIndexRef.current;
+                            const updated = [...currentHistory.slice(0, idx + 1), next];
+                            historyIndexRef.current = updated.length - 1;
+
+                            return updated;
+                        });
+                        return next;
+                    });
+                }
+
+                if (source === "ocms-doubleclick-image" && event.data.field) {
+                    const field = event.data.field;
+                    setModalState({
+                        field,
+                        value: field.value || "",
+                        alt: field.alt || "",
+                        objectFit: field.objectFit || "cover",
+                        borderRadius: field.borderRadius || "none",
+                        roughness: field.roughness !== undefined ? field.roughness : 0.5,
+                        metalness: field.metalness !== undefined ? field.metalness : 1.0,
+                        textureUrl: field.textureUrl || "",
+                    });
+                }
+
+                if (source === "ocms-model-drop" && file instanceof File) {
+                    const targetFieldId =
+                        fieldId ||
+                        schema.find((f) => f.type === "3d-model")?.id ||
+                        schema.find((f) => f.type === "image")?.id ||
+                        schema[0]?.id;
+
+                    if (!targetFieldId) return;
+
+                    const formData = new FormData();
+                    formData.append("model", file);
+                    formData.append("projectId", project.id);
+
+                    const response = await fetch("/api/upload-model", {
+                        method: "POST",
+                        body: formData,
+                    });
+
+                    if (!response.ok) {
+                        const errData = await response.json().catch(() => ({}));
+                        throw new Error(errData.error || `Upload failed with status ${response.status}`);
+                    }
+                    const asset = await response.json();
+                    handleModelInjected(targetFieldId, asset.path || asset.urlHighPoly);
+                    showToast("3D model uploaded successfully!");
+                }
+
+                if (source === "ocms-toolbar-action" && fieldId && value) {
+                    const response = await fetch("/api/inline-text-action", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action, value }),
+                    });
+
+                    if (!response.ok) {
+                        const errData = await response.json().catch(() => ({}));
+                        throw new Error(errData.error || `Text formatting failed with status ${response.status}`);
+                    }
+                    const data = await response.json();
+                    if (data.value) {
+                        handleFieldChange(fieldId, data.value);
+                        showToast(`Text formatting action '${action}' completed!`);
+                    }
+                }
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                showToast(msg, "error");
+            }
+        };
+
+        window.addEventListener("message", handleMessage);
+        return () => window.removeEventListener("message", handleMessage);
+    }, [handleFieldChange, handleModelInjected, project.id, schema, previewUrl, buildChangesPayload, showToast]);
+
+    const handleSchemaReplace = useCallback((newSchema: SchemaField[]) => {
+        setSchema(newSchema);
+        pushHistory(newSchema);
+    }, [pushHistory]);
+
+    const seekHistory = useCallback((percent: number) => {
+        const index = Math.floor((percent / 100) * (history.length - 1));
+        historyIndexRef.current = index;
+
+        setSchema(history[index]);
+    }, [history]);
+
+    return (
+        <div className="fixed inset-0 pt-16 flex flex-col bg-[var(--ocms-bg)] overflow-hidden">
+            <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 lg:p-4 lg:gap-4 min-h-0">
+                {/* ─── Sidebar Editor Panel ─── */}
+                <div className="w-full lg:w-[340px] xl:w-[380px] h-[45vh] lg:h-full min-h-0 border-[3px] border-black lg:rounded-md lg:shadow-[5px_5px_0px_#000] bg-white flex flex-col transition-all duration-300 hover:shadow-[6px_6px_0px_var(--ocms-orange)] hover:translate-x-[-2px] hover:translate-y-[-2px]">
+                    <ContentEditor
+                        projectId={project.id}
+                        schema={schema}
+                        initialSchema={initialSchema}
+                        onFieldChange={handleFieldChange}
+                        onFieldUpdate={handleFieldUpdate}
+                        onModelInjected={handleModelInjected}
+                        githubOwner={githubOwner}
+                        githubRepo={githubRepo}
+                        targetFilePath={targetFilePath}
+                        onHistorySeek={seekHistory}
+                        historyCount={history.length}
+                        onSchemaReplace={handleSchemaReplace}
+                        broadcastGhostEvent={broadcastGhostEvent}
+                        previewUrl={previewUrl}
+                        isScanning={isScanning}
+                        onScanPage={handleScanPage}
+                        openPermissionWizard={() => setShowPermissionWizard(true)}
+                    />
+                </div>
+
+                {/* ─── Preview Panel ─── */}
+                <div className="flex-1 min-h-0 h-[55vh] lg:h-full relative border-[3px] border-black lg:rounded-md lg:shadow-[5px_5px_0px_#000] lg:overflow-hidden transition-all duration-300 hover:shadow-[6px_6px_0px_var(--ocms-orange)] hover:translate-x-[-2px] hover:translate-y-[-2px]">
+                    <LivePreview
+                        previewUrl={previewUrl}
+                        onUrlChange={setPreviewUrl}
+                        iframeRef={iframeRef}
+                        onLoad={() => setIframeLoaded(true)}
+                        projectId={project.id}
+                    />
+                </div>
+            </div>
+
+            {/* Element Options Modal */}
+            {modalState && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                    <div className="w-full max-w-md bg-[#fcfbf9] border-[4px] border-black rounded-xl shadow-[8px_8px_0px_#000] p-6 text-black relative animate-fade-in">
+                        {/* Header */}
+                        <div className="flex items-center justify-between pb-4 border-b-2 border-black mb-4">
+                            <h3 className="text-base font-black uppercase tracking-tight">
+                                ⚙️ {modalState.field.type === "3d-model" ? "3D Model Options" : "Image Options"}
+                            </h3>
+                            <button
+                                onClick={() => setModalState(null)}
+                                className="w-8 h-8 flex items-center justify-center border-2 border-black rounded-md bg-white hover:bg-[var(--ocms-orange)] hover:text-white transition-all shadow-[2px_2px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px]"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {/* Body */}
+                        <div className="space-y-4">
+                            {/* Type Specific Fields */}
+                            {modalState.field.type === "image" && (
+                                <>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase tracking-wider">Image Source URL</label>
+                                        <input
+                                            type="text"
+                                            value={modalState.value}
+                                            onChange={(e) => setModalState(prev => prev ? { ...prev, value: e.target.value } : null)}
+                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-mono font-bold"
+                                            placeholder="https://..."
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase tracking-wider">Alt Text (SEO)</label>
+                                        <input
+                                            type="text"
+                                            value={modalState.alt}
+                                            onChange={(e) => setModalState(prev => prev ? { ...prev, alt: e.target.value } : null)}
+                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
+                                            placeholder="Image description..."
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-black uppercase tracking-wider">Object Fit</label>
+                                            <select
+                                                value={modalState.objectFit}
+                                                onChange={(e) => setModalState(prev => prev ? { ...prev, objectFit: e.target.value } : null)}
+                                                className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
+                                            >
+                                                <option value="cover">Cover</option>
+                                                <option value="contain">Contain</option>
+                                                <option value="fill">Fill</option>
+                                                <option value="none">None</option>
+                                            </select>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-black uppercase tracking-wider">Border Corners</label>
+                                            <select
+                                                value={modalState.borderRadius}
+                                                onChange={(e) => setModalState(prev => prev ? { ...prev, borderRadius: e.target.value } : null)}
+                                                className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
+                                            >
+                                                <option value="none">Sharp (None)</option>
+                                                <option value="4px">Rounded Small</option>
+                                                <option value="8px">Rounded Medium</option>
+                                                <option value="16px">Rounded Large</option>
+                                                <option value="9999px">Circle (Full)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {modalState.field.type === "3d-model" && (
+                                <>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase tracking-wider">3D Model Path (.glb)</label>
+                                        <input
+                                            type="text"
+                                            value={modalState.value}
+                                            onChange={(e) => setModalState(prev => prev ? { ...prev, value: e.target.value } : null)}
+                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-orange)] font-mono font-bold"
+                                            placeholder="/models/..."
+                                        />
+                                    </div>
+
+                                    {/* Presets Grid */}
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black uppercase tracking-wider block">Material Presets</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {PBR_PRESETS.map((preset) => (
+                                                <button
+                                                    key={preset.name}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setModalState(prev => prev ? {
+                                                            ...prev,
+                                                            roughness: preset.roughness,
+                                                            metalness: preset.metalness,
+                                                            textureUrl: preset.textureUrl
+                                                        } : null);
+                                                    }}
+                                                    className="flex items-center gap-2 p-2 border-[2.5px] border-black rounded-md bg-white hover:bg-slate-50 active:translate-x-[1px] active:translate-y-[1px] shadow-[2px_2px_0px_#000] active:shadow-none transition-all text-left"
+                                                >
+                                                    <span
+                                                        className="w-4 h-4 rounded-full border border-black shrink-0"
+                                                        style={{
+                                                            backgroundColor: preset.previewColor,
+                                                            backgroundImage: `url("${preset.textureUrl}")`,
+                                                            backgroundSize: 'cover'
+                                                        }}
+                                                    />
+                                                    <span className="text-[9px] font-black uppercase tracking-tight">{preset.name}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Sliders */}
+                                    <div className="grid grid-cols-2 gap-3 pt-1">
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between items-center text-[10px] font-black uppercase">
+                                                <span>Roughness</span>
+                                                <span className="bg-[var(--ocms-yellow)] px-1 border border-black rounded-[2px]">{modalState.roughness.toFixed(2)}</span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.05"
+                                                value={modalState.roughness}
+                                                onChange={(e) => setModalState(prev => prev ? { ...prev, roughness: parseFloat(e.target.value) } : null)}
+                                                className="w-full h-2 bg-white border-2 border-black rounded-full accent-black cursor-pointer"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between items-center text-[10px] font-black uppercase">
+                                                <span>Metalness</span>
+                                                <span className="bg-[var(--ocms-blue)] text-black px-1 border border-black rounded-[2px]">{modalState.metalness.toFixed(2)}</span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.05"
+                                                value={modalState.metalness}
+                                                onChange={(e) => setModalState(prev => prev ? { ...prev, metalness: parseFloat(e.target.value) } : null)}
+                                                className="w-full h-2 bg-white border-2 border-black rounded-full accent-black cursor-pointer"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black uppercase tracking-wider">Texture URL (Optional Override)</label>
+                                        <input
+                                            type="text"
+                                            value={modalState.textureUrl}
+                                            onChange={(e) => setModalState(prev => prev ? { ...prev, textureUrl: e.target.value } : null)}
+                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-[9px] outline-none focus:shadow-[2px_2px_0px_var(--ocms-orange)] font-mono font-bold"
+                                            placeholder="data:image/svg+xml;..."
+                                        />
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="flex justify-end gap-3 mt-6 pt-4 border-t-2 border-black">
+                            <button
+                                type="button"
+                                onClick={() => setModalState(null)}
+                                className="px-4 py-2 border-[3px] border-black rounded-md bg-white font-black text-xs uppercase shadow-[3px_3px_0px_#000] hover:bg-slate-100 transition-all hover:translate-x-[-1px] hover:translate-y-[-1px]"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleSaveModal}
+                                className="px-4 py-2 border-[3px] border-black rounded-md bg-[var(--ocms-yellow)] font-black text-xs uppercase shadow-[3px_3px_0px_#000] hover:bg-[var(--ocms-orange)] hover:text-white transition-all hover:translate-x-[-1px] hover:translate-y-[-1px]"
+                            >
+                                Save Changes
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Custom Neobrutalist Toast Notification */}
+            {toast && (
+                <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
+                    <div className={`px-4 py-3 border-[3px] border-black rounded-md shadow-[4px_4px_0px_#000] font-black text-xs uppercase flex items-center gap-3 ${
+                        toast.type === "error" ? "bg-[var(--ocms-rose)] text-black" : "bg-[var(--ocms-green)] text-black"
+                    }`}>
+                        <span>{toast.type === "error" ? "⚠️" : "⚡"}</span>
+                        <span>{toast.message}</span>
+                        <button onClick={() => setToast(null)} className="ml-2 font-bold hover:opacity-75">✕</button>
+                    </div>
+                </div>
+            )}
+
+            {showPermissionWizard && (
+                <PermissionWizard
+                    projectId={project.id}
+                    currentOwner={githubOwner}
+                    currentRepo={githubRepo}
+                    currentFilePath={targetFilePath}
+                    onClose={() => setShowPermissionWizard(false)}
+                    onSetupCompleted={(data) => {
+                        setGithubOwner(data.githubOwner);
+                        setGithubRepo(data.githubRepo);
+                        setTargetFilePath(data.targetFilePath);
+                    }}
+                />
+            )}
+        </div>
+    );
+}
+```
+
+---
+
+### `src/app/workspace/[projectId]/page.tsx`
+**File Path:** `file:///d:/MODEL/ocms/src/app/workspace/[projectId]/page.tsx`
+
+```tsx
+import { Suspense } from "react";
+import WorkspaceClient from "./WorkspaceClient";
+import WorkspaceSkeleton from "@/components/workspace/WorkspaceSkeleton";
+import { prisma } from "@/lib/prisma";
+import { notFound, redirect } from "next/navigation";
+import { getAuthorizedUser } from "@/auth";
+import type { SchemaField } from "@/types/schema";
+
+export default async function WorkspacePage({ 
+    params,
+    searchParams 
+}: { 
+    params: { projectId: string },
+    searchParams: { target?: string }
+}) {
+    const currentUserId = await getAuthorizedUser();
+
+    if (!currentUserId) {
+        redirect("/");
+    }
+
+    let project = await prisma.project.findUnique({
+        where: { id: params.projectId }
+    });
+
+    // IDOR Protection: If project exists but belongs to a different user, deny access (404)
+    if (project && project.userId !== currentUserId) {
+        notFound();
+    }
+
+    const targetUrl = searchParams.target;
+
+    if (!project && targetUrl) {
+        project = await prisma.project.create({
+            data: {
+                id: params.projectId, 
+                name: "Auto-Recovered Project",
+                sourceUrl: targetUrl,
+                userId: currentUserId
+            }
+        });
+    }
+
+
+    if (!project) {
+        notFound();
+    }
+
+    // Safely parse the schema or use fallback
+    let initialSchema: SchemaField[] = [];
+    try {
+        if (project.generatedSchema) {
+            initialSchema = project.generatedSchema as unknown as SchemaField[];
+        }
+    } catch (e) {
+        console.error("Failed to parse schema", e);
+    }
+
+    // Default schema if none generated
+    if (!initialSchema || initialSchema.length === 0) {
+        initialSchema = [
+            { id: "hero-title", type: "text", label: "Hero Title", value: "Welcome to Our Site", selector: "h1" },
+            { id: "hero-subtitle", type: "text", label: "Subtitle", value: "Build something amazing today.", selector: ".subtitle" },
+            { id: "hero-image", type: "image", label: "Hero Image", value: "/placeholder.jpg", selector: "img.hero" },
+            { id: "cta-link", type: "link", label: "CTA Link", value: "/get-started", selector: "a.cta" },
+        ];
+    }
+
+    const projectData = {
+        id: project.id,
+        githubOwner: project.githubOwner || "",
+        githubRepo: project.githubRepo || "",
+        targetFilePath: project.targetFilePath || "",
+        sourceUrl: project.sourceUrl || ""
+    };
+
+    return (
+        <Suspense fallback={<WorkspaceSkeleton />}>
+            <WorkspaceClient project={projectData} initialSchema={initialSchema} />
+        </Suspense>
+    );
+}
 
 ```
 
@@ -1684,7 +2740,7 @@ export default function HomePage() {
 ### `src/app/workspace/new/page.tsx`
 **File Path:** `file:///d:/MODEL/ocms/src/app/workspace/new/page.tsx`
 
-```typescript
+```tsx
 "use client";
 
 import { useState, useEffect, useRef } from "react";
@@ -1732,8 +2788,8 @@ export default function NewWorkspacePage() {
             { t: 700, msg: "[CONNECT] Requesting remote DOM payload..." },
             { t: 1150, msg: "[DOM] Waiting for HTML stream..." },
             { t: 1650, msg: "[CLEANER] Preserving semantic text, image src, and href values..." },
-            { t: 2200, msg: "[AI] Preparing selector-aware schema prompt..." },
-            { t: 2850, msg: "[AI] Matching headings, CTAs, media, and content blocks..." },
+            { t: 2200, msg: "[PARSER] Starting selector-aware DOM hierarchy analysis..." },
+            { t: 2850, msg: "[PARSER] Matching structural headings, CTAs, media, and content blocks..." },
             { t: 3550, msg: "[VALIDATOR] Cheerio selector validation queued..." },
             { t: 4300, msg: "[DATABASE] Preparing project workspace record..." },
         ];
@@ -1813,7 +2869,7 @@ export default function NewWorkspacePage() {
     const stepMessages = {
         idle: "Initialize Workspace",
         scraping: "Scraping website...",
-        ai: "AI generating schema...",
+        ai: "Extracting content fields...",
         validating: "Validating selectors...",
         saving: "Saving workspace...",
         ready: "Workspace ready!",
@@ -1821,7 +2877,7 @@ export default function NewWorkspacePage() {
 
     const loadingSteps = [
         { id: "scraping", label: "Scrape" },
-        { id: "ai", label: "Schema" },
+        { id: "ai", label: "Parse" },
         { id: "validating", label: "Validate" },
         { id: "saving", label: "Save" },
     ] as const;
@@ -1854,7 +2910,7 @@ export default function NewWorkspacePage() {
                     <span className="shimmer-text"> website URL</span>
                 </h1>
                 <p className="text-slate-800 text-base sm:text-lg font-bold max-w-md mx-auto">
-                    We&apos;ll scrape it, generate an AI schema, and open your live editing workspace.
+                    We&apos;ll scrape it, parse a local content schema, and open your live editing workspace.
                 </p>
             </div>
 
@@ -1902,7 +2958,7 @@ export default function NewWorkspacePage() {
                                 let color = "text-[#22c55e]";
                                 if (log.startsWith("[SUCCESS]")) color = "text-emerald-400 font-extrabold";
                                 if (log.startsWith("[SYSTEM]")) color = "text-[var(--ocms-yellow)]";
-                                if (log.startsWith("[AI]")) color = "text-pink-400 font-bold";
+                                if (log.startsWith("[PARSER]")) color = "text-pink-400 font-bold";
                                 if (log.startsWith("[CONNECT]")) color = "text-cyan-400";
                                 return (
                                     <div key={index} className={`${color} leading-relaxed animate-fade-in`}>
@@ -2005,21 +3061,22 @@ export default function NewWorkspacePage() {
         </div>
     );
 }
-
 ```
 
 ---
 
-### `src/app/workspace/[projectId]/page.tsx`
-**File Path:** `file:///d:/MODEL/ocms/src/app/workspace/[projectId]/page.tsx`
+## 11. API ROUTES
+
+### `src/app/api/check-env/route.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/app/api/check-env/route.ts`
 
 ```typescript
 import { Suspense } from "react";
 import WorkspaceClient from "./WorkspaceClient";
 import WorkspaceSkeleton from "@/components/workspace/WorkspaceSkeleton";
 import { prisma } from "@/lib/prisma";
-import { notFound } from "next/navigation";
-import { auth } from "@/auth";
+import { notFound, redirect } from "next/navigation";
+import { getAuthorizedUser } from "@/auth";
 import type { SchemaField } from "@/types/schema";
 
 export default async function WorkspacePage({ 
@@ -2029,16 +3086,10 @@ export default async function WorkspacePage({
     params: { projectId: string },
     searchParams: { target?: string }
 }) {
-    const session = await auth();
-    let currentUserId = session?.user?.id;
+    const currentUserId = await getAuthorizedUser();
 
     if (!currentUserId) {
-        // Find or create Guest User
-        let guestUser = await prisma.user.findFirst({ where: { email: "guest@ocms.ai" } });
-        if (!guestUser) {
-            guestUser = await prisma.user.create({ data: { name: "Guest User", email: "guest@ocms.ai" } });
-        }
-        currentUserId = guestUser.id;
+        redirect("/");
     }
 
     let project = await prisma.project.findUnique({
@@ -2090,10 +3141,11 @@ export default async function WorkspacePage({
 
     const projectData = {
         id: project.id,
-        githubOwner: project.githubOwner || "GovindTripathi22",
-        githubRepo: project.githubRepo || "OCMS",
-        targetFilePath: project.targetFilePath || "src/app/page.tsx",
-        sourceUrl: project.sourceUrl || "https://example.com"
+        githubOwner: project.githubOwner || "",
+        githubRepo: project.githubRepo || "",
+        githubBranch: project.githubBranch || "main",
+        targetFilePath: project.targetFilePath || "",
+        sourceUrl: project.sourceUrl || ""
     };
 
     return (
@@ -2101,802 +3153,6 @@ export default async function WorkspacePage({
             <WorkspaceClient project={projectData} initialSchema={initialSchema} />
         </Suspense>
     );
-}
-
-
-```
-
----
-
-### `src/app/workspace/[projectId]/WorkspaceClient.tsx`
-**File Path:** `file:///d:/MODEL/ocms/src/app/workspace/[projectId]/WorkspaceClient.tsx`
-
-```typescript
-"use client";
-
-import { useState, useCallback, useRef, useEffect } from "react";
-import ContentEditor from "@/components/workspace/ContentEditor";
-import LivePreview from "@/components/workspace/LivePreview";
-import PermissionWizard from "@/components/workspace/PermissionWizard";
-import type { SchemaField } from "@/types/schema";
-import { PBR_PRESETS } from "@/lib/pbr-presets";
-
-
-interface WorkspaceClientProps {
-    project: {
-        id: string;
-        githubOwner: string;
-        githubRepo: string;
-        targetFilePath: string;
-        sourceUrl: string;
-    };
-    initialSchema: SchemaField[];
-}
-
-export default function WorkspaceClient({ project, initialSchema }: WorkspaceClientProps) {
-    const [schema, setSchema] = useState<SchemaField[]>(initialSchema);
-    const [history, setHistory] = useState<SchemaField[][]>([initialSchema]);
-    const [historyIndex, setHistoryIndex] = useState(0);
-    const [previewUrl, setPreviewUrl] = useState(project.sourceUrl);
-    const [iframeLoaded, setIframeLoaded] = useState(false);
-    const [isScanning, setIsScanning] = useState(false);
-
-    // GitHub Repo configuration state
-    const [githubOwner, setGithubOwner] = useState(project.githubOwner);
-    const [githubRepo, setGithubRepo] = useState(project.githubRepo);
-    const [targetFilePath, setTargetFilePath] = useState(project.targetFilePath);
-    const [showPermissionWizard, setShowPermissionWizard] = useState(false);
-
-    const iframeRef = useRef<HTMLIFrameElement>(null);
-    const inlineEditRef = useRef(false);
-
-    const [editingField, setEditingField] = useState<SchemaField | null>(null);
-    const [modalAlt, setModalAlt] = useState("");
-    const [modalObjectFit, setModalObjectFit] = useState("");
-    const [modalBorderRadius, setModalBorderRadius] = useState("");
-    const [modalValue, setModalValue] = useState("");
-    const [modalRoughness, setModalRoughness] = useState(0.5);
-    const [modalMetalness, setModalMetalness] = useState(1.0);
-    const [modalTextureUrl, setModalTextureUrl] = useState("");
-
-    const pushHistory = useCallback((next: SchemaField[]) => {
-        setHistory((currentHistory) => [
-            ...currentHistory.slice(0, historyIndex + 1),
-            next,
-        ]);
-        setHistoryIndex((currentIndex) => currentIndex + 1);
-    }, [historyIndex]);
-
-    const handleFieldUpdate = useCallback((fieldId: string, updates: Partial<SchemaField>) => {
-        setSchema((prev) => {
-            const currentField = prev.find((f) => f.id === fieldId);
-            if (!currentField) return prev;
-
-            const next = prev.map((f) => (f.id === fieldId ? { ...f, ...updates } : f));
-            pushHistory(next);
-            return next;
-        });
-    }, [pushHistory]);
-
-    useEffect(() => {
-        if (editingField) {
-            setModalAlt(editingField.alt || "");
-            setModalObjectFit(editingField.objectFit || "cover");
-            setModalBorderRadius(editingField.borderRadius || "none");
-            setModalValue(editingField.value || "");
-            setModalRoughness(editingField.roughness !== undefined ? editingField.roughness : 0.5);
-            setModalMetalness(editingField.metalness !== undefined ? editingField.metalness : 1.0);
-            setModalTextureUrl(editingField.textureUrl || "");
-        }
-    }, [editingField]);
-
-    const handleSaveModal = () => {
-        if (!editingField) return;
-        
-        const updates: Partial<SchemaField> = {
-            value: modalValue,
-            alt: modalAlt,
-            objectFit: modalObjectFit,
-            borderRadius: modalBorderRadius,
-            roughness: modalRoughness,
-            metalness: modalMetalness,
-            textureUrl: modalTextureUrl,
-        };
-        
-        setSchema((prev) => {
-            const next = prev.map((f) => (f.id === editingField.id ? { ...f, ...updates } : f));
-            pushHistory(next);
-            return next;
-        });
-        
-        setEditingField(null);
-    };
-
-    const handleScanPage = useCallback(async () => {
-        const iframe = iframeRef.current;
-        if (!iframe?.contentDocument) {
-            alert("Preview is not loaded yet.");
-            return;
-        }
-
-        setIsScanning(true);
-        try {
-            // Retrieve outer HTML directly from the iframe's loaded DOM!
-            const html = iframe.contentDocument.documentElement.outerHTML;
-            const currentUrl = previewUrl;
-
-            const response = await fetch(`/api/projects/${project.id}/scan-page`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    url: currentUrl,
-                    html: html
-                }),
-            });
-
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || "Failed to scan page");
-
-            if (data.schema) {
-                setSchema(data.schema);
-                setHistory((prev) => [...prev.slice(0, historyIndex + 1), data.schema]);
-                setHistoryIndex((prev) => prev + 1);
-            }
-        } catch (err: unknown) {
-            const errMsg = err instanceof Error ? err.message : "Failed to scan page";
-            alert(errMsg);
-        } finally {
-            setIsScanning(false);
-        }
-    }, [project.id, previewUrl, historyIndex]);
-
-
-
-    const handleFieldChange = useCallback((fieldId: string, newValue: string) => {
-        setSchema((prev) => {
-            const currentField = prev.find((f) => f.id === fieldId);
-            if (!currentField || currentField.value === newValue) return prev;
-
-            const next = prev.map((f) => (f.id === fieldId ? { ...f, value: newValue } : f));
-            if (!inlineEditRef.current) pushHistory(next);
-            return next;
-        });
-    }, [pushHistory]);
-
-    const handleModelInjected = useCallback((targetFieldId: string, modelPath: string) => {
-        setSchema((prev) => {
-            const next = prev.map((f) =>
-                f.id === targetFieldId
-                    ? { ...f, type: "3d-model" as const, value: modelPath }
-                    : f
-            );
-            pushHistory(next);
-            return next;
-        });
-    }, [pushHistory]);
-
-    useEffect(() => {
-        const iframe = iframeRef.current;
-        if (!iframe?.contentWindow || !iframeLoaded) return;
-
-        const changesPayload = schema
-            .filter((f) => f.selector)
-            .map((f) => ({
-                fieldId: f.id,
-                selector: f.selector,
-                type: f.type,
-                value: f.value,
-                alt: f.alt,
-                objectFit: f.objectFit,
-                borderRadius: f.borderRadius,
-                roughness: f.roughness,
-                metalness: f.metalness,
-                textureUrl: f.textureUrl,
-            }));
-
-        iframe.contentWindow.postMessage(
-            { source: "ocms-live-bridge", changes: changesPayload },
-            "*"
-        );
-    }, [schema, iframeLoaded]);
-
-    // Debounced autosave effect for persisting schema edits to database
-    useEffect(() => {
-        if (JSON.stringify(schema) === JSON.stringify(initialSchema)) return;
-
-        const timer = setTimeout(async () => {
-            try {
-                const response = await fetch(`/api/projects/${project.id}/schema`, {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ schema }),
-                });
-                if (!response.ok) {
-                    console.error("[Autosave] Failed to update project schema");
-                }
-            } catch (err) {
-                console.error("[Autosave] Network error updating schema:", err);
-            }
-        }, 1500);
-
-        return () => clearTimeout(timer);
-    }, [schema, project.id, initialSchema]);
-
-    const broadcastGhostEvent = useCallback((type: "AI_EDIT_START" | "AI_EDIT_END", selector?: string, text?: string) => {
-        const iframe = iframeRef.current;
-        if (!iframe?.contentWindow || !iframeLoaded) return;
-
-        iframe.contentWindow.postMessage(
-            { source: "ocms-editor", type, selector, text },
-            "*"
-        );
-    }, [iframeLoaded]);
-
-    useEffect(() => {
-        const handleMessage = async (event: MessageEvent) => {
-            if (event.source !== iframeRef.current?.contentWindow) return;
-            const { source, fieldId, newValue, file, action, value } = event.data;
-
-            if (source === "ocms-iframe-ready") {
-                setIframeLoaded(true);
-                
-                // Update parent's previewUrl when navigation happens inside iframe
-                const innerUrl = event.data.url;
-                if (innerUrl) {
-                    try {
-                        const parsed = new URL(innerUrl);
-                        const targetUrl = parsed.searchParams.get("url");
-                        if (targetUrl && targetUrl !== previewUrl) {
-                            setPreviewUrl(targetUrl);
-                        }
-                    } catch (e) {
-                        console.error("[WorkspaceClient] Failed to parse navigated iframe URL:", e);
-                    }
-                }
-
-                const changesPayload = schema
-                    .filter((f) => f.selector)
-                    .map((f) => ({
-                        fieldId: f.id,
-                        selector: f.selector,
-                        type: f.type,
-                        value: f.value,
-                        alt: f.alt,
-                        objectFit: f.objectFit,
-                        borderRadius: f.borderRadius,
-                        roughness: f.roughness,
-                        metalness: f.metalness,
-                        textureUrl: f.textureUrl,
-                    }));
-                iframeRef.current?.contentWindow?.postMessage(
-                    { source: "ocms-live-bridge", changes: changesPayload },
-                    "*"
-                );
-                return;
-            }
-
-            if (source === "ocms-inline-edit") {
-                inlineEditRef.current = true;
-                handleFieldChange(fieldId, newValue);
-                inlineEditRef.current = false;
-                setHistory((currentHistory) => {
-                    const base = currentHistory[historyIndex] ?? schema;
-                    const next = base.map((f) => (f.id === fieldId ? { ...f, value: newValue } : f));
-                    return [...currentHistory.slice(0, historyIndex + 1), next];
-                });
-                setHistoryIndex((currentIndex) => currentIndex + 1);
-            }
-
-            if (source === "ocms-inline-add-field" && event.data.field) {
-                const newField = event.data.field;
-                setSchema((prev) => {
-                    if (prev.some((f) => f.id === newField.id || (f.selector === newField.selector && f.type === newField.type))) {
-                        return prev;
-                    }
-                    const next = [...prev, newField];
-                    setHistory((currentHistory) => {
-                        return [...currentHistory.slice(0, historyIndex + 1), next];
-                    });
-                    setHistoryIndex((currentIndex) => currentIndex + 1);
-                    return next;
-                });
-            }
-
-            if (source === "ocms-doubleclick-image" && event.data.field) {
-                setEditingField(event.data.field);
-            }
-
-            if (source === "ocms-model-drop" && file instanceof File) {
-                const targetFieldId =
-                    fieldId ||
-                    schema.find((f) => f.type === "3d-model")?.id ||
-                    schema.find((f) => f.type === "image")?.id ||
-                    schema[0]?.id;
-
-                if (!targetFieldId) return;
-
-                const formData = new FormData();
-                formData.append("model", file);
-                formData.append("projectId", project.id);
-
-                const response = await fetch("/api/upload-model", {
-                    method: "POST",
-                    body: formData,
-                });
-
-                if (!response.ok) return;
-                const asset = await response.json();
-                handleModelInjected(targetFieldId, asset.path || asset.urlHighPoly);
-            }
-
-            if (source === "ocms-toolbar-action" && fieldId && value) {
-                const response = await fetch("/api/inline-text-action", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ action, value }),
-                });
-
-                if (!response.ok) return;
-                const data = await response.json();
-                if (data.value) handleFieldChange(fieldId, data.value);
-            }
-        };
-
-        window.addEventListener("message", handleMessage);
-        return () => window.removeEventListener("message", handleMessage);
-    }, [handleFieldChange, handleModelInjected, historyIndex, project.id, schema, previewUrl]);
-
-    const handleSchemaReplace = useCallback((newSchema: SchemaField[]) => {
-        setSchema(newSchema);
-        pushHistory(newSchema);
-    }, [pushHistory]);
-
-    const seekHistory = useCallback((percent: number) => {
-        const index = Math.floor((percent / 100) * (history.length - 1));
-        setHistoryIndex(index);
-        setSchema(history[index]);
-    }, [history]);
-
-    return (
-        <div className="fixed inset-0 pt-16 flex flex-col bg-[var(--ocms-bg)] overflow-hidden">
-            <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 lg:p-4 lg:gap-4 min-h-0">
-                {/* ─── Sidebar Editor Panel ─── */}
-                <div className="w-full lg:w-[340px] xl:w-[380px] h-[45vh] lg:h-full min-h-0 border-[3px] border-black lg:rounded-md lg:shadow-[5px_5px_0px_#000] bg-white flex flex-col transition-all duration-300 hover:shadow-[6px_6px_0px_var(--ocms-orange)] hover:translate-x-[-2px] hover:translate-y-[-2px]">
-                    <ContentEditor
-                        projectId={project.id}
-                        schema={schema}
-                        initialSchema={initialSchema}
-                        onFieldChange={handleFieldChange}
-                        onFieldUpdate={handleFieldUpdate}
-                        onModelInjected={handleModelInjected}
-                        githubOwner={githubOwner}
-                        githubRepo={githubRepo}
-                        targetFilePath={targetFilePath}
-                        onHistorySeek={seekHistory}
-                        historyCount={history.length}
-                        onSchemaReplace={handleSchemaReplace}
-                        broadcastGhostEvent={broadcastGhostEvent}
-                        previewUrl={previewUrl}
-                        isScanning={isScanning}
-                        onScanPage={handleScanPage}
-                        openPermissionWizard={() => setShowPermissionWizard(true)}
-                    />
-                </div>
-
-                {/* ─── Preview Panel ─── */}
-                <div className="flex-1 min-h-0 h-[55vh] lg:h-full relative border-[3px] border-black lg:rounded-md lg:shadow-[5px_5px_0px_#000] lg:overflow-hidden transition-all duration-300 hover:shadow-[6px_6px_0px_var(--ocms-orange)] hover:translate-x-[-2px] hover:translate-y-[-2px]">
-                    <LivePreview
-                        previewUrl={previewUrl}
-                        onUrlChange={setPreviewUrl}
-                        iframeRef={iframeRef}
-                        onLoad={() => setIframeLoaded(true)}
-                        projectId={project.id}
-                    />
-                </div>
-            </div>
-
-            {/* Element Options Modal */}
-            {editingField && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div className="w-full max-w-md bg-[#fcfbf9] border-[4px] border-black rounded-xl shadow-[8px_8px_0px_#000] p-6 text-black relative animate-fade-in">
-                        {/* Header */}
-                        <div className="flex items-center justify-between pb-4 border-b-2 border-black mb-4">
-                            <h3 className="text-base font-black uppercase tracking-tight">
-                                ⚙️ {editingField.type === "3d-model" ? "3D Model Options" : "Image Options"}
-                            </h3>
-                            <button
-                                onClick={() => setEditingField(null)}
-                                className="w-8 h-8 flex items-center justify-center border-2 border-black rounded-md bg-white hover:bg-[var(--ocms-orange)] hover:text-white transition-all shadow-[2px_2px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px]"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        {/* Body */}
-                        <div className="space-y-4">
-                            {/* Type Specific Fields */}
-                            {editingField.type === "image" && (
-                                <>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-black uppercase tracking-wider">Image Source URL</label>
-                                        <input
-                                            type="text"
-                                            value={modalValue}
-                                            onChange={(e) => setModalValue(e.target.value)}
-                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-mono font-bold"
-                                            placeholder="https://..."
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-black uppercase tracking-wider">Alt Text (SEO)</label>
-                                        <input
-                                            type="text"
-                                            value={modalAlt}
-                                            onChange={(e) => setModalAlt(e.target.value)}
-                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
-                                            placeholder="Image description..."
-                                        />
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-black uppercase tracking-wider">Object Fit</label>
-                                            <select
-                                                value={modalObjectFit}
-                                                onChange={(e) => setModalObjectFit(e.target.value)}
-                                                className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
-                                            >
-                                                <option value="cover">Cover</option>
-                                                <option value="contain">Contain</option>
-                                                <option value="fill">Fill</option>
-                                                <option value="none">None</option>
-                                            </select>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-black uppercase tracking-wider">Border Corners</label>
-                                            <select
-                                                value={modalBorderRadius}
-                                                onChange={(e) => setModalBorderRadius(e.target.value)}
-                                                className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-cyan)] font-bold"
-                                            >
-                                                <option value="none">Sharp (None)</option>
-                                                <option value="4px">Rounded Small</option>
-                                                <option value="8px">Rounded Medium</option>
-                                                <option value="16px">Rounded Large</option>
-                                                <option value="9999px">Circle (Full)</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                </>
-                            )}
-
-                            {editingField.type === "3d-model" && (
-                                <>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-black uppercase tracking-wider">3D Model Path (.glb)</label>
-                                        <input
-                                            type="text"
-                                            value={modalValue}
-                                            onChange={(e) => setModalValue(e.target.value)}
-                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs outline-none focus:shadow-[2px_2px_0px_var(--ocms-orange)] font-mono font-bold"
-                                            placeholder="/models/..."
-                                        />
-                                    </div>
-
-                                    {/* Presets Grid */}
-                                    <div className="space-y-2">
-                                        <label className="text-[10px] font-black uppercase tracking-wider block">Material Presets</label>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            {PBR_PRESETS.map((preset) => (
-                                                <button
-                                                    key={preset.name}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setModalRoughness(preset.roughness);
-                                                        setModalMetalness(preset.metalness);
-                                                        setModalTextureUrl(preset.textureUrl);
-                                                    }}
-                                                    className="flex items-center gap-2 p-2 border-[2.5px] border-black rounded-md bg-white hover:bg-slate-50 active:translate-x-[1px] active:translate-y-[1px] shadow-[2px_2px_0px_#000] active:shadow-none transition-all text-left"
-                                                >
-                                                    <span
-                                                        className="w-4 h-4 rounded-full border border-black shrink-0"
-                                                        style={{
-                                                            backgroundColor: preset.previewColor,
-                                                            backgroundImage: `url("${preset.textureUrl}")`,
-                                                            backgroundSize: 'cover'
-                                                        }}
-                                                    />
-                                                    <span className="text-[9px] font-black uppercase tracking-tight">{preset.name}</span>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    {/* Sliders */}
-                                    <div className="grid grid-cols-2 gap-3 pt-1">
-                                        <div className="space-y-1">
-                                            <div className="flex justify-between items-center text-[10px] font-black uppercase">
-                                                <span>Roughness</span>
-                                                <span className="bg-[var(--ocms-yellow)] px-1 border border-black rounded-[2px]">{modalRoughness.toFixed(2)}</span>
-                                            </div>
-                                            <input
-                                                type="range"
-                                                min="0"
-                                                max="1"
-                                                step="0.05"
-                                                value={modalRoughness}
-                                                onChange={(e) => setModalRoughness(parseFloat(e.target.value))}
-                                                className="w-full h-2 bg-white border-2 border-black rounded-full accent-black cursor-pointer"
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <div className="flex justify-between items-center text-[10px] font-black uppercase">
-                                                <span>Metalness</span>
-                                                <span className="bg-[var(--ocms-blue)] text-black px-1 border border-black rounded-[2px]">{modalMetalness.toFixed(2)}</span>
-                                            </div>
-                                            <input
-                                                type="range"
-                                                min="0"
-                                                max="1"
-                                                step="0.05"
-                                                value={modalMetalness}
-                                                onChange={(e) => setModalMetalness(parseFloat(e.target.value))}
-                                                className="w-full h-2 bg-white border-2 border-black rounded-full accent-black cursor-pointer"
-                                            />
-                                        </div>
-                                    </div>
-
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-black uppercase tracking-wider">Texture URL (Optional Override)</label>
-                                        <input
-                                            type="text"
-                                            value={modalTextureUrl}
-                                            onChange={(e) => setModalTextureUrl(e.target.value)}
-                                            className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-[9px] outline-none focus:shadow-[2px_2px_0px_var(--ocms-orange)] font-mono font-bold"
-                                            placeholder="data:image/svg+xml;..."
-                                        />
-                                    </div>
-                                </>
-                            )}
-                        </div>
-
-                        {/* Footer */}
-                        <div className="flex justify-end gap-3 mt-6 pt-4 border-t-2 border-black">
-                            <button
-                                type="button"
-                                onClick={() => setEditingField(null)}
-                                className="px-4 py-2 border-[3px] border-black rounded-md bg-white font-black text-xs uppercase shadow-[3px_3px_0px_#000] hover:bg-slate-100 transition-all hover:translate-x-[-1px] hover:translate-y-[-1px]"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleSaveModal}
-                                className="px-4 py-2 border-[3px] border-black rounded-md bg-[var(--ocms-yellow)] font-black text-xs uppercase shadow-[3px_3px_0px_#000] hover:bg-[var(--ocms-orange)] hover:text-white transition-all hover:translate-x-[-1px] hover:translate-y-[-1px]"
-                            >
-                                Save Changes
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {showPermissionWizard && (
-                <PermissionWizard
-                    projectId={project.id}
-                    currentOwner={githubOwner}
-                    currentRepo={githubRepo}
-                    currentFilePath={targetFilePath}
-                    onClose={() => setShowPermissionWizard(false)}
-                    onSetupCompleted={(data) => {
-                        setGithubOwner(data.githubOwner);
-                        setGithubRepo(data.githubRepo);
-                        setTargetFilePath(data.targetFilePath);
-                    }}
-                />
-            )}
-        </div>
-    );
-}
-
-```
-
----
-
-## 11. API ROUTES
-
-### `src/app/api/auth/github/route.ts`
-**File Path:** `file:///d:/MODEL/ocms/src/app/api/auth/github/route.ts`
-
-```typescript
-import { NextResponse } from "next/server";
-
-/**
- * POST /api/auth/github
- * Handles GitHub OAuth callback — placeholder for NextAuth integration.
- */
-export async function POST(request: Request) {
-    try {
-        const body = await request.json();
-        const { code } = body;
-
-        if (!code) {
-            return NextResponse.json(
-                { error: "Missing authorization code" },
-                { status: 400 }
-            );
-        }
-
-        // TODO: Exchange `code` for access token using GitHub OAuth App credentials
-        // const tokenResponse = await fetch("https://github.com/login/oauth/access_token", { ... })
-
-        return NextResponse.json({
-            message: "GitHub OAuth placeholder — exchange code for token here",
-            code,
-        });
-    } catch {
-        return NextResponse.json(
-            { error: "Authentication failed" },
-            { status: 500 }
-        );
-    }
-}
-
-export async function GET() {
-    return NextResponse.json({
-        provider: "github",
-        status: "ready",
-        message: "Use POST with { code } to authenticate",
-    });
-}
-
-```
-
----
-
-### `src/app/api/auth/mock/route.ts`
-**File Path:** `file:///d:/MODEL/ocms/src/app/api/auth/mock/route.ts`
-
-```typescript
-import { NextResponse } from "next/server";
-import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
-
-export const dynamic = "force-dynamic";
-
-export async function POST() {
-    try {
-        const session = await auth();
-        let userId = session?.user?.id;
-
-        if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
-        }
-
-        // Upsert Account record with mock token
-        const existingAccount = await prisma.account.findFirst({
-            where: {
-                userId: userId,
-                provider: "github"
-            }
-        });
-
-        if (existingAccount) {
-            await prisma.account.update({
-                where: { id: existingAccount.id },
-                data: {
-                    access_token: "mock_token",
-                    providerAccountId: "mock_github_user",
-                }
-            });
-        } else {
-            await prisma.account.create({
-                data: {
-                    userId: userId,
-                    type: "oauth",
-                    provider: "github",
-                    providerAccountId: "mock_github_user",
-                    access_token: "mock_token"
-                }
-            });
-        }
-
-        return NextResponse.json({ success: true, message: "Mock account registered successfully." });
-    } catch (error) {
-        console.error("Mock auth error:", error);
-        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
-    }
-}
-
-```
-
----
-
-### `src/app/api/auth/[...nextauth]/route.ts`
-**File Path:** `file:///d:/MODEL/ocms/src/app/api/auth/[...nextauth]/route.ts`
-
-```typescript
-import { handlers } from "@/auth"
-
-export const runtime = "nodejs"
-
-export const { GET, POST } = handlers
-
-```
-
----
-
-### `src/app/api/check-env/route.ts`
-**File Path:** `file:///d:/MODEL/ocms/src/app/api/check-env/route.ts`
-
-```typescript
-import { NextResponse } from "next/server";
-
-/**
- * GET /api/check-env
- *
- * Checks whether critical environment variables are configured.
- * Returns { configured, missing, warnings } — never exposes actual values.
- */
-export async function GET() {
-    const missing: string[] = [];
-    const warnings: string[] = [];
-
-    const DUMMY_GITHUB_CLIENT_IDS = [
-        "your_github_client_id",
-        "your_github_client_id_here",
-        "dummy_client_id",
-    ];
-    const DUMMY_GITHUB_CLIENT_SECRETS = [
-        "your_github_client_secret",
-        "your_github_client_secret_here",
-        "dummy_client_secret",
-    ];
-
-    const requiredVars = [
-        "GITHUB_CLIENT_ID",
-        "GITHUB_CLIENT_SECRET",
-        "DATABASE_URL",
-        "AUTH_SECRET",
-    ] as const;
-
-    for (const varName of requiredVars) {
-        const value = process.env[varName];
-
-        if (!value || value.trim() === "") {
-            missing.push(varName);
-            continue;
-        }
-
-        // Check for dummy / placeholder values
-        if (
-            varName === "GITHUB_CLIENT_ID" &&
-            DUMMY_GITHUB_CLIENT_IDS.includes(value.trim().toLowerCase())
-        ) {
-            warnings.push(varName);
-        }
-
-        if (
-            varName === "GITHUB_CLIENT_SECRET" &&
-            DUMMY_GITHUB_CLIENT_SECRETS.includes(value.trim().toLowerCase())
-        ) {
-            warnings.push(varName);
-        }
-    }
-
-    const configured = missing.length === 0 && warnings.length === 0;
-
-    return NextResponse.json({ configured, missing, warnings });
 }
 
 ```
@@ -3114,7 +3370,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Failed to extract colors" }, { status: 500 });
     }
 }
-
 ```
 
 ---
@@ -3216,7 +3471,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Failed to generate variant" }, { status: 500 });
     }
 }
-
 ```
 
 ---
@@ -3227,9 +3481,8 @@ export async function POST(req: NextRequest) {
 ```typescript
 import { NextResponse } from "next/server";
 import { extractFallbackSchemaFields } from "@/lib/scraper";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { checkAndIncrementQuota } from "@/lib/ratelimit";
-import { prisma } from "@/lib/prisma";
 
 /**
  * POST /api/generate-schema
@@ -3242,25 +3495,13 @@ import { prisma } from "@/lib/prisma";
 export async function POST(request: Request) {
     try {
         // ── Auth Check ───────────────────────────────────────
-        const session = await auth();
-        let userId = session?.user?.id;
-        let subscription = session?.user?.subscription || "free";
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
-            subscription = "free";
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
+        
+        const subscription = "free";
 
         const id = userId;
 
@@ -3316,7 +3557,6 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: message }, { status: 500 });
     }
 }
-
 ```
 
 ---
@@ -3445,7 +3685,7 @@ export async function POST(req: NextRequest) {
                     "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                    version: "7762fd07cf82c09fd0b1ad0910abc5e7d6940416972008442e222aace21213d8", // SDXL version hash
+                    version: process.env.REPLICATE_MODEL_VERSION || "7762fd07cf82c09fd0b1ad0910abc5e7d6940416972008442e222aace21213d8", // SDXL version hash
                     input: {
                         prompt: `${prompt}, seamless texture, tileable, PBR texture mapping, high-resolution`,
                         negative_prompt: "seams, borders, cutouts, text, watermarks",
@@ -3496,7 +3736,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: errMsg }, { status: 500 });
     }
 }
-
 ```
 
 ---
@@ -3506,7 +3745,7 @@ export async function POST(req: NextRequest) {
 
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Octokit } from "@octokit/rest";
 import fs from "fs";
@@ -3516,22 +3755,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
     try {
-        const session = await auth();
-        let userId = session?.user?.id;
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const account = await prisma.account.findFirst({
@@ -3574,7 +3801,10 @@ export async function GET(req: NextRequest) {
                                 continue;
                             }
 
-                            const stat = fs.statSync(fullPath);
+                            const stat = fs.lstatSync(fullPath);
+                            if (stat.isSymbolicLink()) {
+                                continue;
+                            }
                             if (stat.isDirectory()) {
                                 scanDir(fullPath);
                             } else {
@@ -3715,7 +3945,6 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }
-
 ```
 
 ---
@@ -3837,7 +4066,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Failed to run inline action" }, { status: 500 });
     }
 }
-
 ```
 
 ---
@@ -3933,7 +4161,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: errMsg }, { status: 500 });
     }
 }
-
 ```
 
 ---
@@ -4040,223 +4267,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Failed to parse voice command" }, { status: 500 });
     }
 }
-
-```
-
----
-
-### `src/app/api/projects/route.ts`
-**File Path:** `file:///d:/MODEL/ocms/src/app/api/projects/route.ts`
-
-```typescript
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
-import { extractFallbackSchemaFields } from "@/lib/scraper";
-import { Prisma } from "@prisma/client";
-
-export async function POST(req: Request) {
-    try {
-        const { url, name } = await req.json();
-        
-        if (!url) {
-            return NextResponse.json({ error: "URL is required" }, { status: 400 });
-        }
-
-        // Get the current user or use a fallback "Guest" user for development
-        const session = await auth();
-        let userId = session?.user?.id;
-
-        if (!userId) {
-            // Check if a Guest user already exists
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-
-            if (!guestUser) {
-                // Create a Guest user
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
-        }
-
-        // Automatically scrape and generate schema from the real site
-        let schemaFields = null;
-        let scrapedHtml = "";
-        let scrapedUrl = url;
-        try {
-            let response = await fetch(url, {
-                redirect: "manual",
-                headers: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    Accept: "text/html",
-                },
-                signal: AbortSignal.timeout(12000), // 12s timeout
-            });
-
-            let currentUrl = new URL(url);
-            let redirectCount = 0;
-            const maxRedirects = 5;
-
-            while ([301, 302, 303, 307, 308].includes(response.status) && redirectCount < maxRedirects) {
-                const location = response.headers.get("location");
-                if (!location) break;
-
-                const nextUrl = new URL(location, currentUrl.href);
-                if (nextUrl.origin !== currentUrl.origin) {
-                    console.log(`Blocking cross-origin redirect during scraping from ${currentUrl.origin} to ${nextUrl.origin}`);
-                    break;
-                }
-
-                currentUrl = nextUrl;
-                redirectCount++;
-                response = await fetch(currentUrl.href, {
-                    redirect: "manual",
-                    headers: {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        Accept: "text/html",
-                    },
-                    signal: AbortSignal.timeout(12000),
-                });
-            }
-
-            if (response.ok) {
-                const rawHtml = await response.text();
-                scrapedHtml = rawHtml;
-                scrapedUrl = currentUrl.href;
-                schemaFields = extractFallbackSchemaFields(rawHtml, currentUrl.href);
-            }
-        } catch (err) {
-            console.error("Auto schema generation failed, using fallback:", err);
-        }
-
-        if (!schemaFields || schemaFields.length === 0) {
-            schemaFields = scrapedHtml
-                ? extractFallbackSchemaFields(scrapedHtml, scrapedUrl)
-                : [
-                { id: "hero-title", type: "text", label: "Hero Title", value: "Welcome to Our Site", selector: "h1" },
-                { id: "hero-subtitle", type: "text", label: "Subtitle", value: "Build something amazing today.", selector: ".subtitle" },
-                { id: "hero-image", type: "image", label: "Hero Image", value: "/placeholder.jpg", selector: "img.hero" },
-                { id: "cta-link", type: "link", label: "CTA Link", value: "/get-started", selector: "a.cta" },
-            ];
-        }
-
-        // Generate GSD planning data
-        const defaultGsdData = {
-            projectMd: `# Project: ${name || "Untitled Project"}\n\nCore Value: Build Smarter. Edit Faster.`,
-            requirementsMd: `# Requirements: ${name || "Untitled Project"}\n\n## v1 Requirements\n\n### General\n- [ ] **GEN-01**: Build responsive main landing layout\n- [ ] **GEN-02**: Integrate dynamic typography and theme configuration`,
-            roadmapMd: `# Roadmap: ${name || "Untitled Project"}\n\n## Phases\n\n- [ ] **Phase 1: Foundation** - Basic landing structures\n- [ ] **Phase 2: Material Theme** - Color custom variables\n\n### Phase 1: Foundation\nGoal: Build base layout\nPlans:\n- [ ] 01-01: Setup skeleton structure\n\n### Phase 2: Material Theme\nGoal: Customize variables\nPlans:\n- [ ] 02-01: Update colors\n\n## Progress\n| Phase | Plans | Status | Completed |\n|---|---|---|---|\n| 1. Foundation | 0/1 | Not started | - |`,
-            stateMd: `---
-gsd_state_version: '1.0'
-status: planning
-progress:
-  total_phases: 2
-  completed_phases: 0
-  total_plans: 2
-  completed_plans: 0
-  percent: 0
----
-# Project State
-## Current Position\nPhase: 1 of 2 (Foundation)\nPlan: 0 of 2 in current phase\nStatus: Planning\nLast activity: Initialized project`
-        };
-
-        const gsdData = defaultGsdData;
-
-        // Create the project
-        const project = await prisma.project.create({
-            data: {
-                name: name || "Untitled Project",
-                sourceUrl: url,
-                userId: userId,
-                generatedSchema: schemaFields as unknown as Prisma.InputJsonValue,
-                brandGuidelines: { gsd: gsdData } as unknown as Prisma.InputJsonValue
-            }
-        });
-
-        return NextResponse.json(project);
-    } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "Unknown error";
-        console.error("Failed to create project:", error);
-        return NextResponse.json({ error: "Internal Server Error", details: message }, { status: 500 });
-    }
-}
-
-```
-
----
-
-### `src/app/api/projects/[projectId]/route.ts`
-**File Path:** `file:///d:/MODEL/ocms/src/app/api/projects/[projectId]/route.ts`
-
-```typescript
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
-
-export async function PATCH(
-    req: NextRequest,
-    { params }: { params: { projectId: string } }
-) {
-    try {
-        const { githubOwner, githubRepo, githubBranch, targetFilePath, githubRepoUrl } = await req.json();
-
-        const session = await auth();
-        let userId = session?.user?.id;
-
-        if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
-        }
-
-        const existingProject = await prisma.project.findFirst({
-            where: {
-                id: params.projectId,
-                userId: userId
-            }
-        });
-
-        if (!existingProject) {
-            return NextResponse.json({ error: "Project not found or access denied" }, { status: 404 });
-        }
-
-        const updatedData: Record<string, string> = {};
-        if (githubOwner !== undefined) updatedData.githubOwner = githubOwner;
-        if (githubRepo !== undefined) updatedData.githubRepo = githubRepo;
-        if (githubBranch !== undefined) updatedData.githubBranch = githubBranch;
-        if (targetFilePath !== undefined) updatedData.targetFilePath = targetFilePath;
-        if (githubRepoUrl !== undefined) updatedData.githubRepoUrl = githubRepoUrl;
-
-        const project = await prisma.project.update({
-            where: { id: params.projectId },
-            data: updatedData,
-        });
-
-        return NextResponse.json({ success: true, project });
-    } catch (error: unknown) {
-        console.error("Failed to update project settings:", error);
-        const msg = error instanceof Error ? error.message : "Unknown error";
-        return NextResponse.json(
-            { error: "Failed to update project settings", details: msg },
-            { status: 500 }
-        );
-    }
-}
-
 ```
 
 ---
@@ -4267,7 +4277,7 @@ export async function PATCH(
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { Octokit } from "@octokit/rest";
 import type { SchemaField } from "@/types/schema";
 
@@ -4413,13 +4423,7 @@ export async function GET(
     { params }: { params: { projectId: string } }
 ) {
     try {
-        const session = await auth();
-        let userId = session?.user?.id;
-
-        if (!userId) {
-            const guestUser = await prisma.user.findFirst({ where: { email: "guest@ocms.ai" } });
-            userId = guestUser?.id;
-        }
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -4499,13 +4503,7 @@ export async function POST(
     { params }: { params: { projectId: string } }
 ) {
     try {
-        const session = await auth();
-        let userId = session?.user?.id;
-
-        if (!userId) {
-            const guestUser = await prisma.user.findFirst({ where: { email: "guest@ocms.ai" } });
-            userId = guestUser?.id;
-        }
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -4719,7 +4717,64 @@ export async function POST(
         return NextResponse.json({ error: "Action failed", details: msg }, { status: 500 });
     }
 }
+```
 
+---
+
+### `src/app/api/projects/[projectId]/route.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/app/api/projects/[projectId]/route.ts`
+
+```typescript
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getAuthorizedUser } from "@/auth";
+
+export async function PATCH(
+    req: NextRequest,
+    { params }: { params: { projectId: string } }
+) {
+    try {
+        const { githubOwner, githubRepo, githubBranch, targetFilePath, githubRepoUrl } = await req.json();
+
+        const userId = await getAuthorizedUser();
+
+        if (!userId) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
+        const existingProject = await prisma.project.findFirst({
+            where: {
+                id: params.projectId,
+                userId: userId
+            }
+        });
+
+        if (!existingProject) {
+            return NextResponse.json({ error: "Project not found or access denied" }, { status: 404 });
+        }
+
+        const updatedData: Record<string, string> = {};
+        if (githubOwner !== undefined) updatedData.githubOwner = githubOwner;
+        if (githubRepo !== undefined) updatedData.githubRepo = githubRepo;
+        if (githubBranch !== undefined) updatedData.githubBranch = githubBranch;
+        if (targetFilePath !== undefined) updatedData.targetFilePath = targetFilePath;
+        if (githubRepoUrl !== undefined) updatedData.githubRepoUrl = githubRepoUrl;
+
+        const project = await prisma.project.update({
+            where: { id: params.projectId },
+            data: updatedData,
+        });
+
+        return NextResponse.json({ success: true, project });
+    } catch (error: unknown) {
+        console.error("Failed to update project settings:", error);
+        const msg = error instanceof Error ? error.message : "Unknown error";
+        return NextResponse.json(
+            { error: "Failed to update project settings", details: msg },
+            { status: 500 }
+        );
+    }
+}
 ```
 
 ---
@@ -4732,7 +4787,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { Prisma } from "@prisma/client";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
+import { validateUrlForSsrf } from "@/lib/ssrf";
 
 export async function POST(
     req: NextRequest,
@@ -4752,6 +4808,15 @@ export async function POST(
             pathname = parsed.pathname;
         } catch {
             return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
+        }
+
+        // Validate URL format and security via shared SSRF utility
+        const validation = await validateUrlForSsrf(url);
+        if (!validation.safe) {
+            return NextResponse.json(
+                { error: validation.error || "Forbidden URL" },
+                { status: validation.error?.includes("blocked") ? 403 : 400 }
+            );
         }
 
         // Fetch the page content if not provided
@@ -4791,22 +4856,9 @@ export async function POST(
             path: pathname,
         }));
 
-        const session = await auth();
-        let userId = session?.user?.id;
-
+        const userId = await getAuthorizedUser();
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const existingProject = await prisma.project.findFirst({
@@ -4853,7 +4905,6 @@ export async function POST(
         return NextResponse.json({ error: "Internal Server Error", details: errMsg }, { status: 500 });
     }
 }
-
 ```
 
 ---
@@ -4864,7 +4915,7 @@ export async function POST(
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 
 export async function PUT(
     req: NextRequest,
@@ -4877,22 +4928,10 @@ export async function PUT(
             return NextResponse.json({ error: "Schema is required" }, { status: 400 });
         }
 
-        const session = await auth();
-        let userId = session?.user?.id;
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const existingProject = await prisma.project.findFirst({
@@ -4923,7 +4962,144 @@ export async function PUT(
         );
     }
 }
+```
 
+---
+
+### `src/app/api/projects/route.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/app/api/projects/route.ts`
+
+```typescript
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getAuthorizedUser } from "@/auth";
+import { extractFallbackSchemaFields } from "@/lib/scraper";
+import { Prisma } from "@prisma/client";
+import { validateUrlForSsrf } from "@/lib/ssrf";
+
+export async function POST(req: Request) {
+    try {
+        const { url, name } = await req.json();
+        
+        if (!url) {
+            return NextResponse.json({ error: "URL is required" }, { status: 400 });
+        }
+
+        // Get the current authorized user
+        const userId = await getAuthorizedUser();
+        if (!userId) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
+        // Validate URL format and security via shared SSRF utility
+        const validation = await validateUrlForSsrf(url);
+        if (!validation.safe) {
+            return NextResponse.json(
+                { error: validation.error || "Forbidden URL" },
+                { status: validation.error?.includes("blocked") ? 403 : 400 }
+            );
+        }
+
+        // Automatically scrape and generate schema from the real site
+        let schemaFields = null;
+        let scrapedHtml = "";
+        let scrapedUrl = url;
+        try {
+            let response = await fetch(url, {
+                redirect: "manual",
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    Accept: "text/html",
+                },
+                signal: AbortSignal.timeout(12000), // 12s timeout
+            });
+
+            let currentUrl = new URL(url);
+            let redirectCount = 0;
+            const maxRedirects = 5;
+
+            while ([301, 302, 303, 307, 308].includes(response.status) && redirectCount < maxRedirects) {
+                const location = response.headers.get("location");
+                if (!location) break;
+
+                const nextUrl = new URL(location, currentUrl.href);
+                if (nextUrl.origin !== currentUrl.origin) {
+                    console.log(`Blocking cross-origin redirect during scraping from ${currentUrl.origin} to ${nextUrl.origin}`);
+                    break;
+                }
+
+                currentUrl = nextUrl;
+                redirectCount++;
+                response = await fetch(currentUrl.href, {
+                    redirect: "manual",
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        Accept: "text/html",
+                    },
+                    signal: AbortSignal.timeout(12000),
+                });
+            }
+
+            if (response.ok) {
+                const rawHtml = await response.text();
+                scrapedHtml = rawHtml;
+                scrapedUrl = currentUrl.href;
+                schemaFields = extractFallbackSchemaFields(rawHtml, currentUrl.href);
+            }
+        } catch (err) {
+            console.error("Auto schema generation failed, using fallback:", err);
+        }
+
+        if (!schemaFields || schemaFields.length === 0) {
+            schemaFields = scrapedHtml
+                ? extractFallbackSchemaFields(scrapedHtml, scrapedUrl)
+                : [
+                { id: "hero-title", type: "text", label: "Hero Title", value: "Welcome to Our Site", selector: "h1" },
+                { id: "hero-subtitle", type: "text", label: "Subtitle", value: "Build something amazing today.", selector: ".subtitle" },
+                { id: "hero-image", type: "image", label: "Hero Image", value: "/placeholder.jpg", selector: "img.hero" },
+                { id: "cta-link", type: "link", label: "CTA Link", value: "/get-started", selector: "a.cta" },
+            ];
+        }
+
+        // Generate GSD planning data
+        const defaultGsdData = {
+            projectMd: `# Project: ${name || "Untitled Project"}\n\nCore Value: Build Smarter. Edit Faster.`,
+            requirementsMd: `# Requirements: ${name || "Untitled Project"}\n\n## v1 Requirements\n\n### General\n- [ ] **GEN-01**: Build responsive main landing layout\n- [ ] **GEN-02**: Integrate dynamic typography and theme configuration`,
+            roadmapMd: `# Roadmap: ${name || "Untitled Project"}\n\n## Phases\n\n- [ ] **Phase 1: Foundation** - Basic landing structures\n- [ ] **Phase 2: Material Theme** - Color custom variables\n\n### Phase 1: Foundation\nGoal: Build base layout\nPlans:\n- [ ] 01-01: Setup skeleton structure\n\n### Phase 2: Material Theme\nGoal: Customize variables\nPlans:\n- [ ] 02-01: Update colors\n\n## Progress\n| Phase | Plans | Status | Completed |\n|---|---|---|---|\n| 1. Foundation | 0/1 | Not started | - |`,
+            stateMd: `---
+gsd_state_version: '1.0'
+status: planning
+progress:
+  total_phases: 2
+  completed_phases: 0
+  total_plans: 2
+  completed_plans: 0
+  percent: 0
+---
+# Project State
+## Current Position\nPhase: 1 of 2 (Foundation)\nPlan: 0 of 2 in current phase\nStatus: Planning\nLast activity: Initialized project`
+        };
+
+        const gsdData = defaultGsdData;
+
+        // Create the project
+        const project = await prisma.project.create({
+            data: {
+                name: name || "Untitled Project",
+                sourceUrl: url,
+                userId: userId,
+                generatedSchema: schemaFields as unknown as Prisma.InputJsonValue,
+                brandGuidelines: { gsd: gsdData } as unknown as Prisma.InputJsonValue
+            }
+        });
+
+        return NextResponse.json(project);
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        console.error("Failed to create project:", error);
+        return NextResponse.json({ error: "Internal Server Error", details: message }, { status: 500 });
+    }
+}
 ```
 
 ---
@@ -4933,8 +5109,11 @@ export async function PUT(
 
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
+import { getAuthorizedUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import * as cheerio from "cheerio";
+import { fetchWithValidatedSsrfUrl, validateUrlForSsrf } from "@/lib/ssrf";
+import { withRateLimit } from "@/lib/ratelimit";
 
 interface SchemaField {
     id: string;
@@ -4948,6 +5127,11 @@ interface SchemaField {
 const PROXY_PATH = "/api/proxy?url=";
 type ScriptMode = "static" | "dynamic";
 
+function corsHeaders(req: NextRequest): Record<string, string> {
+    const origin = req.headers.get("origin");
+    return origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {};
+}
+
 function isSkippableUrl(value: string) {
     const trimmed = value.trim();
     return (
@@ -4957,12 +5141,12 @@ function isSkippableUrl(value: string) {
         trimmed.startsWith("blob:") ||
         trimmed.startsWith("mailto:") ||
         trimmed.startsWith("tel:") ||
-        trimmed.startsWith("javascript:") ||
         trimmed.startsWith(PROXY_PATH)
     );
 }
 
-function toProxyUrl(value: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static") {
+function toProxyUrl(value: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static", nonce?: string) {
+    if (value.trim().toLowerCase().startsWith("javascript:")) return "#";
     if (isSkippableUrl(value)) return value;
 
     try {
@@ -4974,26 +5158,29 @@ function toProxyUrl(value: string, baseUrl: string, projectId?: string, scriptMo
         if (scriptMode === "dynamic") {
             proxyUrl += `&scriptMode=dynamic`;
         }
+        if (nonce) {
+            proxyUrl += `&nonce=${encodeURIComponent(nonce)}`;
+        }
         return proxyUrl;
     } catch {
         return value;
     }
 }
 
-function rewriteSrcset(value: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static") {
+function rewriteSrcset(value: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static", nonce?: string) {
     return value
         .split(",")
         .map((entry) => {
             const parts = entry.trim().split(/\s+/);
             if (!parts[0]) return entry;
-            return [toProxyUrl(parts[0], baseUrl, projectId, scriptMode), ...parts.slice(1)].join(" ");
+            return [toProxyUrl(parts[0], baseUrl, projectId, scriptMode, nonce), ...parts.slice(1)].join(" ");
         })
         .join(", ");
 }
 
-function rewriteCssUrls(css: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static") {
+function rewriteCssUrls(css: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static", nonce?: string) {
     return css.replace(/url\((['"]?)(?!data:|blob:|#)([^'")]+)\1\)/gi, (_match, quote, assetUrl) => {
-        return `url(${quote}${toProxyUrl(assetUrl, baseUrl, projectId, scriptMode)}${quote})`;
+        return `url(${quote}${toProxyUrl(assetUrl, baseUrl, projectId, scriptMode, nonce)}${quote})`;
     });
 }
 
@@ -5010,7 +5197,7 @@ function filterScripts(html: string, scriptMode: ScriptMode) {
     });
 }
 
-function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static") {
+function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static", nonce?: string) {
     let rewritten = html.replace(/<base[^>]*>/gi, "");
 
     // Strip pre-existing referrer meta tags to avoid conflicts
@@ -5020,6 +5207,9 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
     // Dynamic mode keeps scripts and relies on the iframe sandbox plus history guard.
     rewritten = filterScripts(rewritten, scriptMode);
     rewritten = rewritten.replace(/\s(integrity|nonce)=("([^"]*)"|'([^']*)')/gi, "");
+    if (scriptMode === "static") {
+        rewritten = rewritten.replace(/\son[a-z]+\s*=\s*("([^"]*)"|'([^']*)'|[^\s>]+)/gi, "");
+    }
 
     // Inject meta referrer and CSS overrides inside <head> if present
     const referrerMeta = `
@@ -5035,6 +5225,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
     var baseUrl = ${JSON.stringify(baseUrl)};
     var projectId = ${JSON.stringify(projectId || "")};
     var scriptMode = ${JSON.stringify(scriptMode)};
+    var bridgeNonce = ${JSON.stringify(nonce || "")};
     var proxyPath = "/api/proxy?url=";
 
     var originalFetch = window.fetch;
@@ -5049,6 +5240,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
         var proxiedUrl = proxyPath + encodeURIComponent(url);
         if (projectId) proxiedUrl += '&projectId=' + encodeURIComponent(projectId);
         if (scriptMode) proxiedUrl += '&scriptMode=' + encodeURIComponent(scriptMode);
+        if (bridgeNonce) proxiedUrl += '&nonce=' + encodeURIComponent(bridgeNonce);
         
         if (typeof input === 'string') {
             return originalFetch(proxiedUrl, init);
@@ -5067,6 +5259,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
             var proxiedUrl = proxyPath + encodeURIComponent(url);
             if (projectId) proxiedUrl += '&projectId=' + encodeURIComponent(projectId);
             if (scriptMode) proxiedUrl += '&scriptMode=' + encodeURIComponent(scriptMode);
+            if (bridgeNonce) proxiedUrl += '&nonce=' + encodeURIComponent(bridgeNonce);
             return originalOpen.call(this, method, proxiedUrl, async, user, password);
         }
         return originalOpen.call(this, method, url, async, user, password);
@@ -5122,7 +5315,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
         (match, attr, _quoted, doubleValue, singleValue) => {
             const value = doubleValue ?? singleValue ?? "";
             const quote = doubleValue === undefined ? "'" : '"';
-            return ` ${attr}=${quote}${toProxyUrl(value, baseUrl, projectId, scriptMode)}${quote}`;
+            return ` ${attr}=${quote}${toProxyUrl(value, baseUrl, projectId, scriptMode, nonce)}${quote}`;
         }
     );
 
@@ -5131,7 +5324,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
         (match, attr, _quoted, doubleValue, singleValue) => {
             const value = doubleValue ?? singleValue ?? "";
             const quote = doubleValue === undefined ? "'" : '"';
-            return ` ${attr}=${quote}${rewriteSrcset(value, baseUrl, projectId, scriptMode)}${quote}`;
+            return ` ${attr}=${quote}${rewriteSrcset(value, baseUrl, projectId, scriptMode, nonce)}${quote}`;
         }
     );
 
@@ -5140,7 +5333,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
         (match, _quoted, doubleValue, singleValue) => {
             const value = doubleValue ?? singleValue ?? "";
             const quote = doubleValue === undefined ? "'" : '"';
-            return ` style=${quote}${rewriteCssUrls(value, baseUrl, projectId, scriptMode)}${quote}`;
+            return ` style=${quote}${rewriteCssUrls(value, baseUrl, projectId, scriptMode, nonce)}${quote}`;
         }
     );
 
@@ -5148,12 +5341,20 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
 }
 
 export async function GET(req: NextRequest) {
+    const rateLimited = await withRateLimit("proxy", req, { limit: 120, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
+
+    const userId = await getAuthorizedUser();
+    if (!userId) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     let url = "";
     const rawUrl = req.url;
     const urlParamIndex = rawUrl.indexOf("?url=");
     if (urlParamIndex !== -1) {
         let rawParam = rawUrl.substring(urlParamIndex + 5);
-        const controlParamIndex = ["&projectId=", "&scriptMode="]
+        const controlParamIndex = ["&projectId=", "&scriptMode=", "&nonce="]
             .map((param) => rawParam.indexOf(param))
             .filter((index) => index !== -1)
             .sort((a, b) => a - b)[0];
@@ -5173,63 +5374,21 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Missing url parameter" }, { status: 400 });
     }
 
-    // SSRF URL Security Validation
-    try {
-        const parsedUrl = new URL(url);
-        if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-            return NextResponse.json(
-                { error: "Only http and https protocols are supported" },
-                { status: 400 }
-            );
-        }
-
-        const hostname = parsedUrl.hostname.toLowerCase();
-        const isLocalAllowed = process.env.NODE_ENV === "development" || process.env.ALLOW_LOCAL_SSRF === "true";
-        
-        if (!isLocalAllowed) {
-            if (
-                hostname === "localhost" ||
-                hostname === "127.0.0.1" ||
-                hostname === "[::1]" ||
-                hostname === "0.0.0.0"
-            ) {
-                return NextResponse.json(
-                    { error: "Localhost and loopback URLs are blocked in production" },
-                    { status: 403 }
-                );
-            }
-
-            const isIp = /^[0-9.]+$/.test(hostname);
-            if (isIp) {
-                const parts = hostname.split(".").map(Number);
-                if (parts.length === 4) {
-                    const [p1, p2] = parts;
-                    if (
-                        p1 === 10 ||
-                        (p1 === 172 && p2 >= 16 && p2 <= 31) ||
-                        (p1 === 192 && p2 === 168) ||
-                        (p1 === 169 && p2 === 254)
-                    ) {
-                        return NextResponse.json(
-                            { error: "Private network URLs are blocked in production" },
-                            { status: 403 }
-                        );
-                    }
-                }
-            }
-        }
-    } catch {
+    // SSRF URL Security Validation via shared utility
+    const validation = await validateUrlForSsrf(url);
+    if (!validation.safe) {
         return NextResponse.json(
-            { error: "Invalid URL format" },
-            { status: 400 }
+            { error: validation.error || "Forbidden URL" },
+            { status: validation.error?.includes("blocked") ? 403 : 400 }
         );
     }
 
     const projectId = req.nextUrl.searchParams.get("projectId") || "";
     const scriptMode: ScriptMode = req.nextUrl.searchParams.get("scriptMode") === "dynamic" ? "dynamic" : "static";
+    const bridgeNonce = req.nextUrl.searchParams.get("nonce") || "";
 
     try {
-        const response = await fetch(url, {
+        const response = await fetchWithValidatedSsrfUrl(url, validation, {
             redirect: "manual",
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -5245,12 +5404,12 @@ export async function GET(req: NextRequest) {
                 status: response.status,
                 headers: location
                     ? { 
-                        Location: toProxyUrl(location, baseUrl, projectId, scriptMode), 
-                        "Access-Control-Allow-Origin": "*",
+                        Location: toProxyUrl(location, baseUrl, projectId, scriptMode, bridgeNonce), 
+                        ...corsHeaders(req),
                         "Referrer-Policy": "unsafe-url"
                       }
                     : { 
-                        "Access-Control-Allow-Origin": "*",
+                        ...corsHeaders(req),
                         "Referrer-Policy": "unsafe-url"
                       },
             });
@@ -5258,12 +5417,12 @@ export async function GET(req: NextRequest) {
 
         if (!contentType.includes("text/html")) {
             if (contentType.includes("text/css")) {
-                const css = rewriteCssUrls(await response.text(), baseUrl, projectId, scriptMode);
+                const css = rewriteCssUrls(await response.text(), baseUrl, projectId, scriptMode, bridgeNonce);
                 return new NextResponse(css, {
                     status: response.status,
                     headers: {
                         "Content-Type": contentType,
-                        "Access-Control-Allow-Origin": "*",
+                        ...corsHeaders(req),
                         "Cache-Control": "public, max-age=31536000",
                         "Referrer-Policy": "unsafe-url",
                     },
@@ -5275,7 +5434,7 @@ export async function GET(req: NextRequest) {
                 status: response.status,
                 headers: {
                     "Content-Type": contentType,
-                    "Access-Control-Allow-Origin": "*",
+                    ...corsHeaders(req),
                     "Cache-Control": "public, max-age=31536000",
                     "Referrer-Policy": "unsafe-url",
                 },
@@ -5348,6 +5507,7 @@ export async function GET(req: NextRequest) {
 ${modelViewerScript}
 <script>
 (function() {
+    const bridgeNonce = ${JSON.stringify(bridgeNonce)};
     const editableFields = new Map();
     const boundElements = new WeakSet();
     let latestChanges = [];
@@ -5360,6 +5520,15 @@ ${modelViewerScript}
     let currentHoveredImage = null;
     let inspectorEnabled = false;
     let hoveredInspectorEl = null;
+
+    function withNonce(payload) {
+        if (bridgeNonce) payload.nonce = bridgeNonce;
+        return payload;
+    }
+
+    function postToParent(payload) {
+        window.parent.postMessage(withNonce(payload), window.location.origin);
+    }
 
     function getCssSelector(el) {
         if (el.id) {
@@ -5511,13 +5680,13 @@ ${modelViewerScript}
                 
                 elToBlur.blur();
                 
-                window.parent.postMessage({
+                postToParent({
                     source: 'ocms-toolbar-action',
                     action,
                     fieldId,
                     selector,
                     value: textVal
-                }, '*');
+                });
             };
             toolbar.appendChild(button);
         });
@@ -5564,12 +5733,12 @@ ${modelViewerScript}
                 hideToolbarSoon();
             });
             el.addEventListener('input', () => {
-                window.parent.postMessage({
+                postToParent({
                     source: 'ocms-inline-edit',
                     fieldId: el.getAttribute('data-ocms-field-id') || fieldId,
                     selector: el.getAttribute('data-ocms-selector') || selector,
                     newValue: el.innerText
-                }, '*');
+                });
             });
             boundElements.add(el);
         }
@@ -5762,7 +5931,7 @@ ${modelViewerScript}
         img.setAttribute('data-ocms-field-id', fieldId);
         img.setAttribute('data-ocms-selector', selector);
 
-        window.parent.postMessage({
+        postToParent({
             source: 'ocms-doubleclick-image',
             field: {
                 id: fieldId,
@@ -5773,7 +5942,7 @@ ${modelViewerScript}
                 originalHtmlTag: img.tagName.toLowerCase(),
                 path: path
             }
-        }, '*');
+        });
     }
 
     function ensureImageHoverToolbar() {
@@ -5814,7 +5983,7 @@ ${modelViewerScript}
                 const path = getTargetPathname();
 
                 // Add field to parent first
-                window.parent.postMessage({
+                postToParent({
                     source: 'ocms-inline-add-field',
                     field: {
                         id: fieldId,
@@ -5825,7 +5994,7 @@ ${modelViewerScript}
                         originalHtmlTag: img.tagName.toLowerCase(),
                         path: path
                     }
-                }, '*');
+                });
 
                 // Read and set file
                 const reader = new FileReader();
@@ -5836,12 +6005,12 @@ ${modelViewerScript}
                     } else {
                         img.style.backgroundImage = 'url(' + base64Url + ')';
                     }
-                    window.parent.postMessage({
+                    postToParent({
                         source: 'ocms-inline-edit',
                         fieldId: fieldId,
                         selector: selector,
                         newValue: base64Url
-                    }, '*');
+                    });
                 };
                 reader.readAsDataURL(file);
             }
@@ -5998,7 +6167,7 @@ ${modelViewerScript}
         targetEl.setAttribute('data-ocms-field-id', fieldId);
         targetEl.setAttribute('data-ocms-selector', selector);
 
-        window.parent.postMessage({
+        postToParent({
             source: 'ocms-inline-add-field',
             field: {
                 id: fieldId,
@@ -6009,7 +6178,7 @@ ${modelViewerScript}
                 originalHtmlTag: elTag,
                 path: path
             }
-        }, '*');
+        });
 
         const prevBg = targetEl.style.backgroundColor;
         targetEl.style.backgroundColor = 'rgba(34, 197, 94, 0.3)';
@@ -6100,7 +6269,7 @@ ${modelViewerScript}
             const metalnessAttr = modelViewer.getAttribute('metalness');
             const textureUrlAttr = modelViewer.getAttribute('texture-url');
 
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-doubleclick-image',
                 field: {
                     id: fieldId,
@@ -6114,7 +6283,7 @@ ${modelViewerScript}
                     metalness: metalnessAttr ? parseFloat(metalnessAttr) : 1.0,
                     textureUrl: textureUrlAttr || ''
                 }
-            }, '*');
+            });
         } else if (img) {
             triggerImageEdit(img);
         } else if (anchor) {
@@ -6130,7 +6299,7 @@ ${modelViewerScript}
             anchor.setAttribute('data-ocms-selector', textSelector);
 
             // Add the text field
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-inline-add-field',
                 field: {
                     id: textFieldId,
@@ -6141,10 +6310,10 @@ ${modelViewerScript}
                     originalHtmlTag: anchor.tagName.toLowerCase(),
                     path: path
                 }
-            }, '*');
+            });
 
             // Add the link URL field
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-inline-add-field',
                 field: {
                     id: linkFieldId,
@@ -6155,7 +6324,7 @@ ${modelViewerScript}
                     originalHtmlTag: anchor.tagName.toLowerCase(),
                     path: path
                 }
-            }, '*');
+            });
 
             // Make the text editable inline
             anchor.setAttribute('contenteditable', 'true');
@@ -6285,12 +6454,12 @@ ${modelViewerScript}
                 var newHref = linkUrlInput.value.trim();
                 if (newHref !== null) {
                     anchor.setAttribute('href', newHref);
-                    window.parent.postMessage({
+                    postToParent({
                         source: 'ocms-inline-edit',
                         fieldId: linkFieldId,
                         selector: textSelector,
                         newValue: newHref
-                    }, '*');
+                    });
                 }
                 cleanupLink();
             };
@@ -6322,7 +6491,7 @@ ${modelViewerScript}
             button.setAttribute('data-ocms-field-id', fieldId);
             button.setAttribute('data-ocms-selector', selector);
 
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-inline-add-field',
                 field: {
                     id: fieldId,
@@ -6333,7 +6502,7 @@ ${modelViewerScript}
                     originalHtmlTag: button.tagName.toLowerCase(),
                     path: path
                 }
-            }, '*');
+            });
 
             button.setAttribute('contenteditable', 'true');
             button.style.userSelect = 'text';
@@ -6356,7 +6525,7 @@ ${modelViewerScript}
             el.setAttribute('data-ocms-field-id', fieldId);
             el.setAttribute('data-ocms-selector', selector);
 
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-inline-add-field',
                 field: {
                     id: fieldId,
@@ -6367,7 +6536,7 @@ ${modelViewerScript}
                     originalHtmlTag: el.tagName.toLowerCase(),
                     path: path
                 }
-            }, '*');
+            });
 
             el.setAttribute('contenteditable', 'true');
             el.style.userSelect = 'text';
@@ -6394,7 +6563,11 @@ ${modelViewerScript}
     }
 
     window.addEventListener('message', (event) => {
-        const { source, changes, type, selector, action, enabled } = event.data || {};
+        if (event.origin !== window.location.origin) return;
+        if (event.source && event.source !== window.parent) return;
+        const message = event.data || {};
+        if (bridgeNonce && message.nonce !== bridgeNonce) return;
+        const { source, changes, type, selector, action, enabled } = message;
         
         if (source === 'ocms-parent' && action === 'toggle-inspector') {
             inspectorEnabled = enabled;
@@ -6517,11 +6690,11 @@ ${modelViewerScript}
         if (/\\.glb$|\\.gltf$/i.test(file.name)) {
             event.preventDefault();
             const target = event.target && event.target.closest('[data-ocms-field-id]');
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-model-drop',
                 fieldId: target ? target.getAttribute('data-ocms-field-id') : null,
                 file
-            }, '*');
+            });
             return;
         }
 
@@ -6536,7 +6709,7 @@ ${modelViewerScript}
                 var path = getTargetPathname();
 
                 // Make sure field is registered
-                window.parent.postMessage({
+                postToParent({
                     source: 'ocms-inline-add-field',
                     field: {
                         id: fieldId,
@@ -6547,7 +6720,7 @@ ${modelViewerScript}
                         originalHtmlTag: target.tagName.toLowerCase(),
                         path: path
                     }
-                }, '*');
+                });
 
                 // Read and set file
                 var reader = new FileReader();
@@ -6558,12 +6731,12 @@ ${modelViewerScript}
                     } else {
                         target.style.backgroundImage = 'url(' + base64Url + ')';
                     }
-                    window.parent.postMessage({
+                    postToParent({
                         source: 'ocms-inline-edit',
                         fieldId: fieldId,
                         selector: selector,
                         newValue: base64Url
-                    }, '*');
+                    });
                 };
                 reader.readAsDataURL(file);
             }
@@ -6577,11 +6750,11 @@ ${modelViewerScript}
     }
 
     console.log("OCMS Live Bridge Initialized");
-    window.parent.postMessage({ source: 'ocms-iframe-ready', url: window.location.href }, '*');
+    postToParent({ source: 'ocms-iframe-ready', url: window.location.href });
 })();
 </script>`;
 
-        html = rewriteHtmlAssets(html, baseUrl, projectId, scriptMode);
+        html = rewriteHtmlAssets(html, baseUrl, projectId, scriptMode, bridgeNonce);
 
         html = /<\/body>/i.test(html)
             ? html.replace(/<\/body>/i, `${patchScript}</body>`)
@@ -6591,8 +6764,7 @@ ${modelViewerScript}
             status: response.status,
             headers: {
                 "Content-Type": "text/html; charset=utf-8",
-                "Access-Control-Allow-Origin": "*",
-                "X-Frame-Options": "ALLOWALL",
+                ...corsHeaders(req),
                 "Content-Security-Policy": "frame-ancestors *",
                 "Referrer-Policy": "unsafe-url",
             },
@@ -6602,7 +6774,6 @@ ${modelViewerScript}
         return NextResponse.json({ error: "Failed to proxy URL." }, { status: 500 });
     }
 }
-
 ```
 
 ---
@@ -6612,7 +6783,7 @@ ${modelViewerScript}
 
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { patchJSXWithReport, type ASTChange, type PatchReport } from "@/lib/ast-patcher";
 import { patchHTMLWithReport } from "@/lib/html-patcher";
@@ -6625,35 +6796,43 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
     try {
-        // 1. Authenticate user and get session or use guest fallback
-        const session = await auth();
-        let userId = session?.user?.id;
-
+        // Authenticate user
+        const userId = await getAuthorizedUser();
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const { repoOwner, repoName, filePath, changes } = await req.json();
+        const { projectId, repoOwner, repoName, filePath, changes } = await req.json();
 
         if (!repoOwner || !repoName || !filePath || !changes || !Array.isArray(changes)) {
-            return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+            return patchJson({ error: "Missing required fields" }, { status: 400 });
         }
 
         const astChanges = normalizeChanges(changes);
         if (!astChanges.length) {
-            return NextResponse.json({ error: "No patchable JSX changes were provided" }, { status: 400 });
+            return patchJson({ error: "No patchable JSX changes were provided" }, { status: 400 });
         }
+
+        const project = projectId
+            ? await prisma.project.findFirst({
+                where: { id: projectId, userId },
+                select: {
+                    githubOwner: true,
+                    githubRepo: true,
+                    githubBranch: true,
+                    targetFilePath: true,
+                },
+            })
+            : null;
+
+        if (projectId && !project) {
+            return patchJson({ error: "Project not found" }, { status: 404 });
+        }
+
+        const targetOwner = project?.githubOwner || repoOwner;
+        const targetRepo = project?.githubRepo || repoName;
+        const targetPath = project?.targetFilePath || filePath;
+        const targetBranch = project?.githubBranch || "main";
 
         // Fetch GitHub access token from the Prisma Account table
         const account = await prisma.account.findFirst({
@@ -6664,25 +6843,25 @@ export async function POST(req: NextRequest) {
         });
 
         if (!account || !account.access_token) {
-            return NextResponse.json({
+            return patchJson({
                 success: true,
                 message: "[DEMO MODE] Sync simulated successfully. Login to push to real GitHub.",
-                commitUrl: "#"
+                commitUrl: "#",
             }, { status: 200 });
         }
 
         if (account.access_token === "mock_token") {
             try {
                 const localRoot = path.resolve(process.env.LOCAL_WORKSPACE_PATH || process.cwd());
-                const localFilePath = path.resolve(localRoot, filePath);
+                const localFilePath = path.resolve(localRoot, targetPath);
                 const insideLocalRoot = localFilePath === localRoot || localFilePath.startsWith(`${localRoot}${path.sep}`);
 
                 if (!insideLocalRoot || !fs.existsSync(localFilePath)) {
-                    return NextResponse.json({ error: `Local file not found: ${filePath}` }, { status: 404 });
+                    return patchJson({ error: `Local file not found: ${targetPath}` }, { status: 404 });
                 }
 
                 const localContent = fs.readFileSync(localFilePath, "utf8");
-                const patchResult = patchSource(localContent, filePath, astChanges);
+                const patchResult = patchSource(localContent, targetPath, astChanges);
                 const updatedCode = patchResult.code;
 
                 if (patchResult.appliedCount === 0) {
@@ -6690,26 +6869,25 @@ export async function POST(req: NextRequest) {
                 }
 
                 if (updatedCode === localContent) {
-                    return NextResponse.json({
+                    return patchJson({
                         success: true,
                         message: "Matching nodes were found, but no source changes were necessary.",
                         commitUrl: "#",
                         unchanged: true,
-                        matchedSelectors: patchResult.matchedSelectors,
-                    }, { status: 200 });
+                    }, { status: 200 }, patchResult);
                 }
 
                 fs.writeFileSync(localFilePath, updatedCode, "utf8");
                 console.log(`[Local Sync] Successfully updated local file in Mock mode: ${localFilePath}`);
 
-                return NextResponse.json({
+                return patchJson({
                     success: true,
-                    message: "Local file updated successfully (Offline Mode).",
-                    commitUrl: "#"
-                }, { status: 200 });
+                    message: publishMessage(patchResult, "Local file updated successfully (Offline Mode)."),
+                    commitUrl: "#",
+                }, { status: 200 }, patchResult);
             } catch (err) {
                 console.error("Local mock publish error:", err);
-                return NextResponse.json({ error: `Local publish failed: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 });
+                return patchJson({ error: `Local publish failed: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 });
             }
         }
 
@@ -6721,19 +6899,20 @@ export async function POST(req: NextRequest) {
         let fileData;
         try {
             const { data } = await octokit.repos.getContent({
-                owner: repoOwner,
-                repo: repoName,
-                path: filePath,
+                owner: targetOwner,
+                repo: targetRepo,
+                path: targetPath,
+                ref: targetBranch,
             });
             fileData = data;
         } catch (err: unknown) {
             console.error("Octokit getContent error:", err);
             const errorMessage = err instanceof Error ? err.message : String(err);
-            return NextResponse.json({ error: `Failed to fetch file from GitHub: ${errorMessage}` }, { status: 404 });
+            return patchJson({ error: `Failed to fetch file from GitHub: ${errorMessage}` }, { status: 404 });
         }
 
         if (Array.isArray(fileData) || fileData.type !== "file") {
-            return NextResponse.json({ error: "Target path is not a valid file" }, { status: 400 });
+            return patchJson({ error: "Target path is not a valid file" }, { status: 400 });
         }
 
         const fileSha = fileData.sha;
@@ -6741,7 +6920,7 @@ export async function POST(req: NextRequest) {
         const decodedContent = Buffer.from(fileData.content, "base64").toString("utf8");
 
         // --- STEP 2: Deterministic AST Code Modifier (AI-Free) ---
-        const patchResult = patchSource(decodedContent, filePath, astChanges);
+        const patchResult = patchSource(decodedContent, targetPath, astChanges);
         const updatedCode = patchResult.code;
         if (patchResult.appliedCount === 0) {
             return noPatchResponse(patchResult);
@@ -6760,7 +6939,7 @@ export async function POST(req: NextRequest) {
         // Write changes back to the local workspace code files (R5 Local Sync)
         try {
             const localRoot = path.resolve(process.env.LOCAL_WORKSPACE_PATH || process.cwd());
-            const localFilePath = path.resolve(localRoot, filePath);
+            const localFilePath = path.resolve(localRoot, targetPath);
             const insideLocalRoot = localFilePath === localRoot || localFilePath.startsWith(`${localRoot}${path.sep}`);
 
             if (insideLocalRoot && fs.existsSync(localFilePath)) {
@@ -6780,23 +6959,24 @@ export async function POST(req: NextRequest) {
         const encodedContent = Buffer.from(updatedCode).toString("base64");
 
         const { data: updateResult } = await octokit.repos.createOrUpdateFileContents({
-            owner: repoOwner,
-            repo: repoName,
-            path: filePath,
-            message: "OCMS: Automated Content Update",
+            owner: targetOwner,
+            repo: targetRepo,
+            path: targetPath,
+            message: `OCMS: Update ${patchResult.appliedCount} content field${patchResult.appliedCount === 1 ? "" : "s"}`,
             content: encodedContent,
             sha: fileSha,
+            branch: targetBranch,
         });
 
-        return NextResponse.json({
+        return patchJson({
             success: true,
-            message: "Code successfully updated and pushed to GitHub main branch.",
-            commitUrl: updateResult.commit.html_url
-        }, { status: 200 });
+            message: publishMessage(patchResult, `Code successfully updated and pushed to GitHub branch "${targetBranch}".`),
+            commitUrl: updateResult.commit.html_url,
+        }, { status: 200 }, patchResult);
 
     } catch (error: unknown) {
         console.error("Publish changes error:", error);
-        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+        return patchJson({ error: "Internal server error" }, { status: 500 });
     }
 }
 
@@ -6807,13 +6987,28 @@ function patchSource(sourceCode: string, filePath: string, changes: ASTChange[])
 }
 
 function noPatchResponse(report: PatchReport) {
-    return NextResponse.json({
+    return patchJson({
         error: "No matching JSX or HTML nodes were found for the provided selectors",
-        unmatchedSelectors: report.unmatchedSelectors,
-        matchedSelectors: report.matchedSelectors,
-    }, { status: 422 });
+    }, { status: 422 }, report);
 }
 
+function patchJson(
+    body: Record<string, unknown>,
+    init: { status: number },
+    report?: Pick<PatchReport, "appliedCount" | "matchedSelectors" | "unmatchedSelectors">
+) {
+    return NextResponse.json({
+        appliedCount: report?.appliedCount ?? 0,
+        matchedSelectors: report?.matchedSelectors ?? [],
+        unmatchedSelectors: report?.unmatchedSelectors ?? [],
+        ...body,
+    }, init);
+}
+
+function publishMessage(report: PatchReport, completeMessage: string): string {
+    if (report.unmatchedSelectors.length === 0) return completeMessage;
+    return `Applied ${report.appliedCount} change${report.appliedCount === 1 ? "" : "s"}, but ${report.unmatchedSelectors.length} selector${report.unmatchedSelectors.length === 1 ? "" : "s"} did not match.`;
+}
 ```
 
 ---
@@ -6824,6 +7019,8 @@ function noPatchResponse(report: PatchReport) {
 ```typescript
 import { NextResponse } from "next/server";
 import { cleanHtml } from "@/lib/scraper";
+import { fetchWithValidatedSsrfUrl, validateUrlForSsrf } from "@/lib/ssrf";
+import { withRateLimit } from "@/lib/ratelimit";
 
 /**
  * POST /api/scrape
@@ -6834,6 +7031,9 @@ import { cleanHtml } from "@/lib/scraper";
  */
 export async function POST(request: Request) {
     try {
+        const rateLimited = await withRateLimit("scrape", request, { limit: 30, windowMs: 60_000 });
+        if (rateLimited) return rateLimited;
+
         const body = await request.json();
         const { url } = body;
 
@@ -6844,59 +7044,16 @@ export async function POST(request: Request) {
             );
         }
 
-        // Validate URL format and security
-        try {
-            const parsedUrl = new URL(url);
-            if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-                return NextResponse.json(
-                    { error: "Only http and https protocols are supported" },
-                    { status: 400 }
-                );
-            }
-
-            const hostname = parsedUrl.hostname.toLowerCase();
-            const isLocalAllowed = process.env.NODE_ENV === "development" || process.env.ALLOW_LOCAL_SSRF === "true";
-            
-            if (!isLocalAllowed) {
-                if (
-                    hostname === "localhost" ||
-                    hostname === "127.0.0.1" ||
-                    hostname === "[::1]" ||
-                    hostname === "0.0.0.0"
-                ) {
-                    return NextResponse.json(
-                        { error: "Localhost and loopback URLs are blocked in production" },
-                        { status: 403 }
-                    );
-                }
-
-                const isIp = /^[0-9.]+$/.test(hostname);
-                if (isIp) {
-                    const parts = hostname.split(".").map(Number);
-                    if (parts.length === 4) {
-                        const [p1, p2] = parts;
-                        if (
-                            p1 === 10 ||
-                            (p1 === 172 && p2 >= 16 && p2 <= 31) ||
-                            (p1 === 192 && p2 === 168) ||
-                            (p1 === 169 && p2 === 254)
-                        ) {
-                            return NextResponse.json(
-                                { error: "Private network URLs are blocked in production" },
-                                { status: 403 }
-                            );
-                        }
-                    }
-                }
-            }
-        } catch {
+        // Validate URL format and security via shared SSRF utility
+        const validation = await validateUrlForSsrf(url);
+        if (!validation.safe) {
             return NextResponse.json(
-                { error: "Invalid URL format" },
-                { status: 400 }
+                { error: validation.error || "Forbidden URL" },
+                { status: validation.error?.includes("blocked") ? 403 : 400 }
             );
         }
 
-        const response = await fetch(url, {
+        const response = await fetchWithValidatedSsrfUrl(url, validation, {
             headers: {
                 "User-Agent":
                     "Mozilla/5.0 (compatible; OCMS-Bot/1.0; +https://ocms.dev)",
@@ -6942,7 +7099,6 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: message }, { status: 500 });
     }
 }
-
 ```
 
 ---
@@ -6954,6 +7110,7 @@ export async function POST(request: Request) {
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import postcss, { type Declaration, type Rule } from "postcss";
+import { validateUrlForSsrf } from "@/lib/ssrf";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -6982,6 +7139,7 @@ interface RenderContext {
     rules: CssRule[];
     nodeCount: { value: number };
     maxNodes: number;
+    selectorCache?: Map<string, Set<DomNode>>;
 }
 
 const SKIP_TAGS = new Set(["script", "style", "link", "meta", "noscript", "template", "source"]);
@@ -7005,6 +7163,15 @@ export async function POST(req: NextRequest) {
             targetUrl = new URL(url);
         } catch {
             return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+        }
+
+        // Validate URL format and security via shared SSRF utility
+        const validation = await validateUrlForSsrf(url);
+        if (!validation.safe) {
+            return NextResponse.json(
+                { error: validation.error || "Forbidden URL" },
+                { status: validation.error?.includes("blocked") ? 403 : 400 }
+            );
         }
 
         const fetchRes = await fetch(targetUrl.href, {
@@ -7220,7 +7387,7 @@ function computeStyles(context: RenderContext, node: DomNode): StyleBundle {
     const bundle: StyleBundle = { base: {}, sm: {}, md: {}, lg: {} };
 
     for (const rule of context.rules) {
-        if (!elementMatchesSelector(context.$, node, rule.selector)) continue;
+        if (!elementMatchesSelector(context, node, rule.selector)) continue;
         Object.assign(rule.media ? bundle[rule.media] : bundle.base, rule.declarations);
     }
 
@@ -7228,12 +7395,21 @@ function computeStyles(context: RenderContext, node: DomNode): StyleBundle {
     return bundle;
 }
 
-function elementMatchesSelector($: cheerio.CheerioAPI, node: DomNode, selector: string): boolean {
-    try {
-        return $(selector).toArray().includes(node as never);
-    } catch {
-        return false;
+function elementMatchesSelector(context: RenderContext, node: DomNode, selector: string): boolean {
+    if (!context.selectorCache) {
+        context.selectorCache = new Map();
     }
+    let matchedNodes = context.selectorCache.get(selector);
+    if (!matchedNodes) {
+        try {
+            const elements = context.$(selector).toArray();
+            matchedNodes = new Set(elements);
+        } catch {
+            matchedNodes = new Set();
+        }
+        context.selectorCache.set(selector, matchedNodes);
+    }
+    return matchedNodes.has(node as DomNode);
 }
 
 function buildAttributes(context: RenderContext, node: DomNode, tagName: string, className: string, styles: StyleMap): string {
@@ -7745,68 +7921,6 @@ ${markup}
 }
 `;
 }
-
-```
-
----
-
-### `src/app/api/sync/route.ts`
-**File Path:** `file:///d:/MODEL/ocms/src/app/api/sync/route.ts`
-
-```typescript
-import { NextResponse } from "next/server";
-import { auth } from "@/auth";
-import { syncToGitHub } from "@/lib/github-sync";
-
-/**
- * POST /api/sync
- *
- * Triggers the GitHub sync process.
- * Expects: { projectId, updates: [{ id, oldValue, newValue }], commitMessage? }
- */
-export async function POST(request: Request) {
-    try {
-        const session = await auth();
-
-        if (!session?.user?.id) {
-            return NextResponse.json(
-                { error: "Unauthorized — sign in to sync" },
-                { status: 401 }
-            );
-        }
-
-        const body = await request.json();
-        const { projectId, updates, commitMessage } = body;
-
-        if (!projectId || !Array.isArray(updates) || updates.length === 0) {
-            return NextResponse.json(
-                { error: "projectId and a non-empty updates array are required" },
-                { status: 400 }
-            );
-        }
-
-        const result = await syncToGitHub({
-            userId: session.user.id,
-            projectId,
-            updates,
-            commitMessage,
-        });
-
-        if (!result.success) {
-            return NextResponse.json(
-                { error: result.error, filesChanged: result.filesChanged },
-                { status: 400 }
-            );
-        }
-
-        return NextResponse.json(result);
-    } catch (err) {
-        const message =
-            err instanceof Error ? err.message : "Sync failed";
-        return NextResponse.json({ error: message }, { status: 500 });
-    }
-}
-
 ```
 
 ---
@@ -7816,7 +7930,7 @@ export async function POST(request: Request) {
 
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Octokit } from "@octokit/rest";
 
@@ -7877,23 +7991,10 @@ function patchCssWithThemeColors(currentCss: string, colors: string[]): string {
  */
 export async function POST(req: NextRequest) {
     try {
-        // 1. Auth — session or guest fallback
-        const session = await auth();
-        let userId = session?.user?.id;
-
+        // Auth Check
+        const userId = await getAuthorizedUser();
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         // 2. Parse request
@@ -7972,7 +8073,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }
-
 ```
 
 ---
@@ -7985,7 +8085,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 import { Document, NodeIO } from "@gltf-transform/core";
 import { weld, dedup, prune, quantize } from "@gltf-transform/functions";
 
@@ -8032,22 +8132,10 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-        const session = await auth();
-        let userId = session?.user?.id;
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const formData = await req.formData();
@@ -8163,7 +8251,6 @@ export async function POST(req: NextRequest) {
         );
     }
 }
-
 ```
 
 ---
@@ -8241,7 +8328,6 @@ export async function GET() {
         );
     }
 }
-
 ```
 
 ---
@@ -8252,29 +8338,17 @@ export async function GET() {
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
+import { getAuthorizedUser } from "@/auth";
 
 /**
  * API Route to manage 3D Model Variants (textures/materials).
  */
 export async function POST(req: NextRequest) {
     try {
-        const session = await auth();
-        let userId = session?.user?.id;
+        const userId = await getAuthorizedUser();
 
         if (!userId) {
-            let guestUser = await prisma.user.findFirst({
-                where: { email: "guest@ocms.ai" }
-            });
-            if (!guestUser) {
-                guestUser = await prisma.user.create({
-                    data: {
-                        name: "Guest User",
-                        email: "guest@ocms.ai",
-                    }
-                });
-            }
-            userId = guestUser.id;
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
         const body = await req.json();
@@ -8350,7 +8424,6 @@ export async function GET(req: NextRequest) {
         );
     }
 }
-
 ```
 
 ---
@@ -8546,8 +8619,15 @@ export async function POST(req: NextRequest) {
         const signature = req.headers.get("x-hub-signature-256") || "";
         const event = req.headers.get("x-github-event") || "";
 
-        // Optional signature verification
+        // Enforce signature verification in production
         const secret = process.env.GITHUB_WEBHOOK_SECRET;
+        const isProduction = process.env.NODE_ENV === "production";
+        
+        if (isProduction && !secret) {
+            console.error("[Webhook Error]: GITHUB_WEBHOOK_SECRET is missing in production.");
+            return NextResponse.json({ error: "Webhook secret configuration missing" }, { status: 500 });
+        }
+
         if (secret && !verifySignature(payloadText, signature, secret)) {
             console.error("[Webhook Error]: Signature verification failed.");
             return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
@@ -8611,10 +8691,10 @@ export async function POST(req: NextRequest) {
                 },
             });
 
-            // Use user's access token or fallback to server credentials if present
-            const token = account?.access_token || process.env.GITHUB_ACCESS_TOKEN;
+            // Use user's access token
+            const token = account?.access_token;
             if (!token) {
-                console.warn(`[Webhook Sync] No GitHub token found for user ${project.userId} or server. Skipping.`);
+                console.warn(`[Webhook Sync] No GitHub token found for user ${project.userId}. Skipping.`);
                 continue;
             }
 
@@ -8670,12 +8750,814 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Internal Server Error", details: errMsg }, { status: 500 });
     }
 }
-
 ```
 
 ---
 
 ## 12. LIBRARY UTILITIES
+
+### `README.md`
+**File Path:** `file:///d:/MODEL/ocms/README.md`
+
+```markdown
+# OCMS — Local-First Headless CMS
+
+OCMS is a next-generation, local-first, privacy-respecting headless CMS designed for developers who want a seamless visual editing experience without relying on external AI services. Featuring a deterministic AST-patcher and a live synchronized editing interface, OCMS allows you to edit frontend pages visually and sync changes directly back to your source code repository.
+
+---
+
+## 🚀 Key Features
+
+*   **Deterministic AST-Patcher**: Safely and accurately parses, inspects, and patches local page files (like React/Next.js files) without breaking imports, comments, or formatting.
+*   **Live Ghost Cursor**: A real-time, overlay-based visual editor that mirrors edits and provides direct visual feedback as you customize elements.
+*   **3D Model Integration**: Dynamic support for 3D elements inside your content fields using a built-in `<model-viewer>` interface, complete with PBR material presets (gold, wood, metal, plastic) and sliders.
+*   **Copywriting Tone Engine**: Generate local A/B variations of text fields across various tones (technical, minimalist, playful) directly from local dictionary files.
+*   **Semantic Color Extractor**: Intelligently maps brand keywords (like "finance", "sustainability", "startup") to curated design palettes for immediate UI branding matching.
+*   **IDOR Protection & Multi-User Auth**: Authenticated workspaces that prevent unauthorized database updates or cross-user project tampering.
+
+---
+
+## 🛠️ Tech Stack
+
+*   **Framework**: Next.js 14+ (App Router)
+*   **Database**: Prisma ORM with SQLite (local-first storage)
+*   **SDK Package**: Built-in visual helper package (`packages/ghost-cursor`) compiled with `tsup`
+*   **Styling**: Neobrutalist design theme built with custom HSL variables and Tailwind CSS
+
+---
+
+## ⚙️ Environment Configuration
+
+Create a `.env` (or `.env.local`) file in the root directory. You can use the following variables:
+
+```bash
+# Database connection string (SQLite file location)
+DATABASE_URL="file:./dev.db"
+
+# Secret token used by NextAuth / Auth.js for session management
+AUTH_SECRET="some-random-32-character-secret-key-here"
+
+# GitHub OAuth App credentials (optional: defaults to Guest Mode if empty)
+GITHUB_CLIENT_ID=""
+GITHUB_CLIENT_SECRET=""
+
+# SSRF Protections Bypass (Set to true ONLY in local dev environment)
+ALLOW_LOCAL_SSRF="true"
+
+# Local source directory path
+LOCAL_WORKSPACE_PATH=""
+```
+
+---
+
+## 📦 Getting Started
+
+### 1. Install Dependencies
+Run the following command at the project root to install all required dependencies:
+```bash
+npm install
+```
+
+### 2. Set Up the Local Database
+Generate the Prisma client and push the initial database schema to SQLite:
+```bash
+npx prisma generate
+npx prisma db push
+```
+
+### 3. Compile the Ghost Cursor Package
+Build the workspace SDK library:
+```bash
+npm run build --workspace=packages/ghost-cursor
+# Or compile directly in the sub-folder:
+cd packages/ghost-cursor && npm run build
+```
+
+### 4. Run the Development Server
+Launch the local Next.js development server:
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) to view the OCMS dashboard.
+
+---
+
+## 🏗️ Building and Deploying
+
+To compile the production bundle:
+```bash
+npm run build
+```
+
+OCMS runs perfectly in serverless environments (like Vercel). However, because serverless platforms have read-only/ephemeral filesystems:
+*   Local file writing and local build validation routes (`/api/publish-changes` and `/api/validate-build`) are automatically guarded and will return informative error/warning responses instead of crashing.
+*   To enable direct code commits and deploys in cloud environments, link your workspaces to Git repositories via the OAuth panel.
+
+---
+
+## 👥 Authors
+
+Built with precision and passion by **Team SPACHT**.
+```
+
+---
+
+### `check-db.js`
+**File Path:** `file:///d:/MODEL/ocms/check-db.js`
+
+```javascript
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
+
+async function main() {
+    console.log("Fetching all projects...");
+    const projects = await prisma.project.findMany();
+    console.log("Projects:", JSON.stringify(projects, null, 2));
+
+    console.log("Fetching all users...");
+    const users = await prisma.user.findMany();
+    console.log("Users:", JSON.stringify(users, null, 2));
+}
+
+main()
+  .catch(e => console.error(e))
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
+```
+
+---
+
+### `packages/ghost-cursor/src/index.ts`
+**File Path:** `file:///d:/MODEL/ocms/packages/ghost-cursor/src/index.ts`
+
+```typescript
+// OCMS Ghost Cursor SDK
+
+export interface GhostEvent {
+    source: "ocms-editor";
+    type: "AI_EDIT_START" | "AI_EDIT_END";
+    selector?: string;
+    text?: string;
+}
+
+class GhostCursor {
+    private cursorEl: HTMLDivElement;
+    private highlightEl: HTMLDivElement;
+    private isInitialized = false;
+
+    constructor() {
+        this.cursorEl = document.createElement("div");
+        this.highlightEl = document.createElement("div");
+    }
+
+    public init() {
+        if (this.isInitialized) return;
+        
+        this.injectStyles();
+        this.createElements();
+        this.setupListener();
+        
+        this.isInitialized = true;
+        console.log("[OCMS Ghost SDK] Initialized.");
+    }
+
+    private injectStyles() {
+        const style = document.createElement("style");
+        style.textContent = `
+            .ocms-ghost-cursor {
+                position: fixed;
+                top: 0;
+                left: 0;
+                z-index: 999999;
+                pointer-events: none;
+                transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease;
+                opacity: 0;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .ocms-ghost-cursor svg {
+                width: 24px;
+                height: 24px;
+                fill: none;
+                stroke: #10b981; /* Emerald 500 */
+                stroke-width: 2;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+                filter: drop-shadow(0 4px 6px rgba(16, 185, 129, 0.4));
+            }
+            .ocms-ghost-label {
+                background: #10b981;
+                color: white;
+                font-family: monospace;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 4px 8px;
+                border-radius: 4px;
+                box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+            }
+            .ocms-ghost-highlight {
+                position: fixed;
+                z-index: 999998;
+                pointer-events: none;
+                border: 2px dashed #10b981;
+                background: rgba(16, 185, 129, 0.1);
+                transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+                opacity: 0;
+                border-radius: 4px;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    private createElements() {
+        // Cursor
+        this.cursorEl.className = "ocms-ghost-cursor";
+        this.cursorEl.innerHTML = `
+            <svg viewBox="0 0 24 24">
+                <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
+                <path d="M13 13l6 6" />
+            </svg>
+            <div class="ocms-ghost-label">OCMS Editor</div>
+        `;
+        document.body.appendChild(this.cursorEl);
+
+        // Highlight
+        this.highlightEl.className = "ocms-ghost-highlight";
+        document.body.appendChild(this.highlightEl);
+    }
+
+    private setupListener() {
+        window.addEventListener("message", (event) => {
+            const data = event.data as GhostEvent;
+            
+            // Only process messages from OCMS editor
+            if (data?.source !== "ocms-editor") return;
+
+            if (data.type === "AI_EDIT_START" && data.selector) {
+                this.moveToElement(data.selector, data.text);
+            } else if (data.type === "AI_EDIT_END") {
+                this.hide();
+            }
+        });
+    }
+
+    private moveToElement(selector: string, text?: string) {
+        try {
+            const el = document.querySelector(selector);
+            if (!el) {
+                console.warn(`[OCMS Ghost SDK] Element not found: ${selector}`);
+                return;
+            }
+
+            const rect = el.getBoundingClientRect();
+            
+            // Show highlight
+            this.highlightEl.style.top = `${rect.top}px`;
+            this.highlightEl.style.left = `${rect.left}px`;
+            this.highlightEl.style.width = `${rect.width}px`;
+            this.highlightEl.style.height = `${rect.height}px`;
+            this.highlightEl.style.opacity = "1";
+
+            // Move cursor to center of element
+            const cursorX = rect.left + rect.width / 2;
+            const cursorY = rect.top + rect.height / 2;
+            
+            this.cursorEl.style.transform = `translate(${cursorX}px, ${cursorY}px)`;
+            this.cursorEl.style.opacity = "1";
+
+            if (text) {
+                const label = this.cursorEl.querySelector('.ocms-ghost-label');
+                if (label) label.textContent = text;
+            }
+
+        } catch (e) {
+            console.error("[OCMS Ghost SDK] Error moving to element:", e);
+        }
+    }
+
+    private hide() {
+        this.cursorEl.style.opacity = "0";
+        this.highlightEl.style.opacity = "0";
+    }
+}
+
+// Auto-initialize if running in browser
+if (typeof window !== "undefined") {
+    const ghost = new GhostCursor();
+    // Delay initialization slightly to ensure DOM is ready
+    setTimeout(() => ghost.init(), 100);
+}
+
+export default GhostCursor;
+```
+
+---
+
+### `public/ocms-receiver.js`
+**File Path:** `file:///d:/MODEL/ocms/public/ocms-receiver.js`
+
+```javascript
+/**
+ * OCMS Live Preview Receiver Script
+ * ==================================
+ * Paste this into the <head> of the target website being edited inside OCMS.
+ * It listens for postMessage events from the OCMS Live Workspace and updates
+ * the DOM in real-time as the user types into the Content Editor.
+ *
+ * Usage:
+ *   <script src="https://your-ocms-host.com/ocms-receiver.js"></script>
+ *   OR copy-paste the contents into a <script> tag in the target page's <head>.
+ */
+(function () {
+    window.addEventListener("message", function (event) {
+        // Only accept messages from OCMS
+        if (!event.data || event.data.source !== "ocms-live-bridge") return;
+
+        var changes = event.data.changes;
+        if (!Array.isArray(changes)) return;
+
+        changes.forEach(function (change) {
+            if (!change.selector) return;
+
+            var el = document.querySelector(change.selector);
+            if (!el) return;
+
+            if (change.type === "image") {
+                // Update image src
+                if (el.tagName === "IMG") {
+                    el.src = change.value;
+                } else {
+                    el.style.backgroundImage = "url(" + change.value + ")";
+                }
+            } else if (change.type === "link") {
+                // Update href
+                if (el.tagName === "A") {
+                    el.href = change.value;
+                }
+            } else {
+                // Update text content
+                el.textContent = change.value;
+            }
+        });
+    });
+})();
+```
+
+---
+
+### `public/test-target.html`
+**File Path:** `file:///d:/MODEL/ocms/public/test-target.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghost SDK Test Target</title>
+    <meta name="description" content="Ghost SDK Test Target site for visual editing testing.">
+    <meta property="og:title" content="Ghost SDK Test Target">
+    <meta property="og:description" content="Ghost SDK Test Target site for visual editing testing.">
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f8fafc;
+            color: #0f172a;
+        }
+        .hero {
+            padding: 100px 20px;
+            text-align: center;
+            background: white;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: #1e293b;
+        }
+        p.subtitle {
+            font-size: 1.25rem;
+            color: #64748b;
+            max-width: 600px;
+            margin: 0 auto 2rem auto;
+            line-height: 1.6;
+        }
+        .btn {
+            display: inline-block;
+            background: #3b82f6;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        .btn:hover {
+            background: #2563eb;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="hero">
+        <h1 id="hero-title">Welcome to Ghost Testing</h1>
+        <p class="subtitle" id="hero-subtitle">
+            This is a dummy website designed to test the OCMS Ghost Cursor SDK. When AI starts editing, you should see a ghost cursor fly to these elements.
+        </p>
+        <a href="#" class="btn" id="cta-link">Get Started</a>
+    </header>
+
+    <!-- INLINE GHOST SDK FOR TESTING WITHOUT BUILD STEP -->
+    <script>
+        class GhostCursor {
+            constructor() {
+                this.cursorEl = document.createElement("div");
+                this.highlightEl = document.createElement("div");
+                this.isInitialized = false;
+            }
+
+            init() {
+                if (this.isInitialized) return;
+                this.injectStyles();
+                this.createElements();
+                this.setupListener();
+                this.isInitialized = true;
+                console.log("[OCMS Ghost SDK Test] Initialized.");
+            }
+
+            injectStyles() {
+                const style = document.createElement("style");
+                style.textContent = `
+                    .ocms-ghost-cursor {
+                        position: fixed;
+                        top: 0;
+                        left: 0;
+                        z-index: 999999;
+                        pointer-events: none;
+                        transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease;
+                        opacity: 0;
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                    }
+                    .ocms-ghost-cursor svg {
+                        width: 24px;
+                        height: 24px;
+                        fill: none;
+                        stroke: #10b981;
+                        stroke-width: 2;
+                        stroke-linecap: round;
+                        stroke-linejoin: round;
+                        filter: drop-shadow(0 4px 6px rgba(16, 185, 129, 0.4));
+                    }
+                    .ocms-ghost-label {
+                        background: #10b981;
+                        color: white;
+                        font-family: monospace;
+                        font-size: 11px;
+                        font-weight: bold;
+                        padding: 4px 8px;
+                        border-radius: 4px;
+                        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+                    }
+                    .ocms-ghost-highlight {
+                        position: fixed;
+                        z-index: 999998;
+                        pointer-events: none;
+                        border: 2px dashed #10b981;
+                        background: rgba(16, 185, 129, 0.1);
+                        transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+                        opacity: 0;
+                        border-radius: 4px;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+
+            createElements() {
+                this.cursorEl.className = "ocms-ghost-cursor";
+                this.cursorEl.innerHTML = `
+                    <svg viewBox="0 0 24 24">
+                        <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
+                        <path d="M13 13l6 6" />
+                    </svg>
+                    <div class="ocms-ghost-label">OCMS Editor</div>
+                `;
+                document.body.appendChild(this.cursorEl);
+
+                this.highlightEl.className = "ocms-ghost-highlight";
+                document.body.appendChild(this.highlightEl);
+            }
+
+            setupListener() {
+                window.addEventListener("message", (event) => {
+                    const data = event.data;
+                    if (data?.source !== "ocms-editor") return;
+
+                    if (data.type === "AI_EDIT_START" && data.selector) {
+                        this.moveToElement(data.selector, data.text);
+                    } else if (data.type === "AI_EDIT_END") {
+                        this.hide();
+                    }
+                });
+            }
+
+            moveToElement(selector, text) {
+                try {
+                    const el = document.querySelector(selector);
+                    if (!el) return;
+
+                    const rect = el.getBoundingClientRect();
+                    
+                    this.highlightEl.style.top = `${rect.top}px`;
+                    this.highlightEl.style.left = `${rect.left}px`;
+                    this.highlightEl.style.width = `${rect.width}px`;
+                    this.highlightEl.style.height = `${rect.height}px`;
+                    this.highlightEl.style.opacity = "1";
+
+                    const cursorX = rect.left + rect.width / 2;
+                    const cursorY = rect.top + rect.height / 2;
+                    
+                    this.cursorEl.style.transform = `translate(${cursorX}px, ${cursorY}px)`;
+                    this.cursorEl.style.opacity = "1";
+
+                    if (text) {
+                        const label = this.cursorEl.querySelector('.ocms-ghost-label');
+                        if (label) label.textContent = text;
+                    }
+                } catch (e) {
+                    console.error("[OCMS Ghost SDK] Error moving to element:", e);
+                }
+            }
+
+            hide() {
+                this.cursorEl.style.opacity = "0";
+                this.highlightEl.style.opacity = "0";
+            }
+        }
+
+        setTimeout(() => {
+            const ghost = new GhostCursor();
+            ghost.init();
+        }, 100);
+    </script>
+</body>
+</html>
+```
+
+---
+
+### `scripts/patcher-smoke-tests.ts`
+**File Path:** `file:///d:/MODEL/ocms/scripts/patcher-smoke-tests.ts`
+
+```typescript
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import { patchJSXWithReport, type ASTChange } from "../src/lib/ast-patcher";
+import { patchHTMLWithReport } from "../src/lib/html-patcher";
+import { normalizeChanges } from "../src/lib/publish-change-normalizer";
+
+const jsxFixture = `
+export default function Page() {
+    return (
+        <main>
+            <section className="hero" id="top">
+                <h1 className="title">Old Hero</h1>
+                <p>First paragraph</p>
+                <p>Second paragraph</p>
+                <img className="hero-img" src="/old.png" alt="Old alt" style={{ objectFit: "cover" }} />
+                <a className="cta" href="/old-link">Go</a>
+                <div className="card" style={{ backgroundImage: "url(/old-bg.png)" }}>Card copy</div>
+                <model-viewer className="product" src="/old-model.glb" />
+            </section>
+        </main>
+    );
+}
+`;
+
+const jsxChanges: ASTChange[] = [
+    { type: "text", selector: "main > section.hero h1.title", oldValue: "Old Hero", newValue: "New Hero" },
+    { type: "text", selector: "section.hero p:nth-of-type(2)", oldValue: "Second paragraph", newValue: "Updated second paragraph" },
+    {
+        type: "image",
+        selector: "section.hero img.hero-img",
+        oldValue: "/old.png",
+        newValue: "/new.png",
+        alt: "New alt",
+        objectFit: "contain",
+        borderRadius: "12px",
+    },
+    { type: "link", selector: "section.hero a.cta", oldValue: "/old-link", newValue: "/new-link" },
+    { type: "image", selector: "section.hero div.card", oldValue: "/old-bg.png", newValue: "/new-bg.png" },
+    { type: "3d-model", selector: "model-viewer.product", oldValue: "/old-model.glb", newValue: "/new-model.glb" },
+];
+
+const jsxReport = patchJSXWithReport(jsxFixture, jsxChanges);
+assert.equal(jsxReport.appliedCount, jsxChanges.length, "all JSX changes should match");
+assert.deepEqual(jsxReport.unmatchedSelectors, [], "JSX selectors should all match");
+assert.match(jsxReport.code, /New Hero/);
+assert.match(jsxReport.code, /Updated second paragraph/);
+assert.match(jsxReport.code, /src="\/new\.png"/);
+assert.match(jsxReport.code, /alt="New alt"/);
+assert.match(jsxReport.code, /objectFit:\s*"contain"/);
+assert.match(jsxReport.code, /borderRadius:\s*"12px"/);
+assert.match(jsxReport.code, /href="\/new-link"/);
+assert.match(jsxReport.code, /backgroundImage:\s*"url\(\/new-bg\.png\)"/);
+assert.match(jsxReport.code, /src="\/new-model\.glb"/);
+
+const jsxMissReport = patchJSXWithReport(jsxFixture, [
+    { type: "text", selector: "section.hero h2.missing", oldValue: "Missing", newValue: "New" },
+]);
+assert.equal(jsxMissReport.appliedCount, 0);
+assert.deepEqual(jsxMissReport.unmatchedSelectors, ["section.hero h2.missing"]);
+
+const jsxPartialReport = patchJSXWithReport(jsxFixture, [
+    { type: "text", selector: "main > section.hero h1.title", oldValue: "Old Hero", newValue: "Partially Updated Hero" },
+    { type: "text", selector: "section.hero h2.stale", oldValue: "Stale", newValue: "Should Not Apply" },
+]);
+assert.equal(jsxPartialReport.appliedCount, 1, "partial JSX batch should apply matching selectors");
+assert.deepEqual(jsxPartialReport.matchedSelectors, ["main > section.hero h1.title"]);
+assert.deepEqual(jsxPartialReport.unmatchedSelectors, ["section.hero h2.stale"]);
+assert.match(jsxPartialReport.code, /Partially Updated Hero/);
+
+const mappedListFixture = `
+const cards = [
+    { title: "First Card", description: "First description" },
+    { title: "Second Card", description: "Second description" },
+    { title: "Third Card", description: "Third description" },
+];
+
+export default function Cards() {
+    return (
+        <section className="cards">
+            {cards.map((card) => (
+                <article className="card" key={card.title}>
+                    <h3>{card.title}</h3>
+                    <p>{card.description}</p>
+                </article>
+            ))}
+        </section>
+    );
+}
+`;
+
+const mappedListReport = patchJSXWithReport(mappedListFixture, [
+    {
+        type: "text",
+        selector: "section.cards article.card:nth-of-type(2) h3",
+        oldValue: "Second Card",
+        newValue: "Updated Second Card",
+    },
+]);
+
+assert.equal(mappedListReport.appliedCount, 1, "mapped JSX static array edit should apply once");
+assert.deepEqual(mappedListReport.unmatchedSelectors, [], "mapped JSX static array edit should match");
+assert.match(mappedListReport.code, /title:\s*"First Card"/);
+assert.match(mappedListReport.code, /title:\s*"Updated Second Card"/);
+assert.match(mappedListReport.code, /title:\s*"Third Card"/);
+assert.doesNotMatch(mappedListReport.code, /<h3>\s*\{"Updated Second Card"\}\s*<\/h3>/);
+
+const mappedAmbiguousReport = patchJSXWithReport(mappedListFixture, [
+    {
+        type: "text",
+        selector: "section.cards article.card:nth-of-type(2) h3",
+        newValue: "No Old Value",
+    },
+]);
+assert.equal(mappedAmbiguousReport.appliedCount, 0);
+assert.deepEqual(mappedAmbiguousReport.unmatchedSelectors, [
+    "section.cards article.card:nth-of-type(2) h3 (ambiguous: element renders via .map() and no old value was provided)",
+]);
+
+const htmlFixture = `
+<header class="hero">
+    <h1 id="hero-title">Old Hero</h1>
+    <p>First paragraph</p>
+    <p>Second paragraph</p>
+    <img class="hero-img" src="/old.png" alt="Old alt">
+    <a class="cta" href="/old-link">Go</a>
+    <div class="card" style="background-image: url('/old-bg.png')">Card copy</div>
+    <model-viewer class="product" src="/old-model.glb"></model-viewer>
+</header>
+`;
+
+const htmlChanges: ASTChange[] = [
+    { type: "text", selector: "header.hero > h1", oldValue: "Old Hero", newValue: "New Hero" },
+    { type: "text", selector: "header.hero p:nth-of-type(2)", oldValue: "Second paragraph", newValue: "Updated second paragraph" },
+    {
+        type: "image",
+        selector: "img.hero-img",
+        oldValue: "/old.png",
+        newValue: "/new.png",
+        alt: "New alt",
+        objectFit: "contain",
+        borderRadius: "12px",
+    },
+    { type: "link", selector: "a.cta", oldValue: "/old-link", newValue: "/new-link" },
+    { type: "image", selector: "div.card", oldValue: "/old-bg.png", newValue: "/new-bg.png" },
+    { type: "3d-model", selector: "model-viewer.product", oldValue: "/old-model.glb", newValue: "/new-model.glb" },
+];
+
+const htmlReport = patchHTMLWithReport(htmlFixture, htmlChanges);
+assert.equal(htmlReport.appliedCount, htmlChanges.length, "all HTML changes should match");
+assert.deepEqual(htmlReport.unmatchedSelectors, [], "HTML selectors should all match");
+assert.match(htmlReport.code, /New Hero/);
+assert.match(htmlReport.code, /Updated second paragraph/);
+assert.match(htmlReport.code, /src="\/new\.png"/);
+assert.match(htmlReport.code, /alt="New alt"/);
+assert.match(htmlReport.code, /object-fit: contain/);
+assert.match(htmlReport.code, /border-radius: 12px/);
+assert.match(htmlReport.code, /href="\/new-link"/);
+assert.match(htmlReport.code, /background-image: url\(\/new-bg\.png\)/);
+assert.match(htmlReport.code, /src="\/new-model\.glb"/);
+
+const normalized = normalizeChanges([
+    { type: "list", selector: "ul > li:nth-of-type(1)", newValue: "List item" },
+    { type: "image", selector: "img.logo", newValue: "/logo.png", alt: "Logo", objectFit: 42 },
+    { type: "unknown", selector: ".ignored", newValue: "Ignored" },
+    { type: "text", selector: ".ignored-missing-value" },
+]);
+
+assert.deepEqual(normalized, [
+    { type: "text", selector: "ul > li:nth-of-type(1)", newValue: "List item" },
+    { type: "image", selector: "img.logo", newValue: "/logo.png", alt: "Logo" },
+]);
+
+const publicTarget = fs.readFileSync("public/test-target.html", "utf8");
+const publicReport = patchHTMLWithReport(publicTarget, [
+    {
+        type: "text",
+        selector: "#hero-title",
+        oldValue: "Welcome to Ghost Testing",
+        newValue: "Welcome to Hardened Patching",
+    },
+    {
+        type: "link",
+        selector: "#cta-link",
+        oldValue: "#",
+        newValue: "/start",
+    },
+]);
+
+assert.equal(publicReport.appliedCount, 2, "public/test-target.html fixture should be patchable without mutation");
+assert.match(publicReport.code, /Welcome to Hardened Patching/);
+assert.match(publicReport.code, /href="\/start"/);
+
+console.log("patcher smoke tests passed");
+```
+
+---
+
+### `scripts/run-patcher-smoke-tests.mjs`
+**File Path:** `file:///d:/MODEL/ocms/scripts/run-patcher-smoke-tests.mjs`
+
+```
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import process from "node:process";
+
+const rootDir = process.cwd();
+const outDir = path.join(rootDir, "scratch", "patcher-tests");
+const tscBin = path.join(rootDir, "node_modules", "typescript", "bin", "tsc");
+
+fs.rmSync(outDir, { recursive: true, force: true });
+execFileSync(process.execPath, [tscBin, "-p", "tsconfig.patcher-tests.json"], {
+    cwd: rootDir,
+    stdio: "inherit",
+});
+
+rewriteAliases(path.join(outDir, "src", "lib"));
+
+execFileSync(process.execPath, [path.join(outDir, "scripts", "patcher-smoke-tests.js")], {
+    cwd: rootDir,
+    stdio: "inherit",
+});
+
+function rewriteAliases(dir) {
+    if (!fs.existsSync(dir)) return;
+
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            rewriteAliases(fullPath);
+            continue;
+        }
+
+        if (!entry.name.endsWith(".js")) continue;
+        const source = fs.readFileSync(fullPath, "utf8");
+        const updated = source.replace(/require\("@\/lib\/([^"]+)"\)/g, 'require("./$1")');
+        fs.writeFileSync(fullPath, updated, "utf8");
+    }
+}
+```
+
+---
 
 ### `src/lib/ast-patcher.ts`
 **File Path:** `file:///d:/MODEL/ocms/src/lib/ast-patcher.ts`
@@ -8684,10 +9566,12 @@ export async function POST(req: NextRequest) {
 import generate from "@babel/generator";
 import {
     findJSXElements,
+    isInsideMappedExpression,
     normalizeText,
     parseTSX,
     readJSXElementValue,
     writeJSXElementValue,
+    writeStaticMappedExpressionValue,
 } from "@/lib/jsx-ast-helpers";
 
 export interface ASTChange {
@@ -8707,6 +9591,11 @@ export interface PatchReport {
     unmatchedSelectors: string[];
 }
 
+interface TargetChoice {
+    target: ReturnType<typeof findJSXElements>[number] | null;
+    reason?: string;
+}
+
 export function patchJSX(sourceCode: string, changes: ASTChange[]): string {
     return patchJSXWithReport(sourceCode, changes).code;
 }
@@ -8721,9 +9610,21 @@ export function patchJSXWithReport(sourceCode: string, changes: ASTChange[]): Pa
         if (!change.selector || change.newValue === undefined || change.newValue === null) continue;
 
         const candidates = findJSXElements(ast, change.selector);
-        const target = chooseTarget(candidates, change);
+        const choice = chooseTarget(candidates, change);
+        const target = choice.target;
         if (!target) {
-            unmatchedSelectors.add(change.selector);
+            unmatchedSelectors.add(unmatchedSelector(change.selector, choice.reason));
+            continue;
+        }
+
+        if (isInsideMappedExpression(target)) {
+            const mappedWrite = writeStaticMappedExpressionValue(target, change.type, change.newValue, change.oldValue);
+            if (!mappedWrite.applied) {
+                unmatchedSelectors.add(unmatchedSelector(change.selector, mappedWrite.reason || "ambiguous: element renders via .map()"));
+                continue;
+            }
+            matchedSelectors.add(change.selector);
+            appliedCount++;
             continue;
         }
 
@@ -8756,8 +9657,8 @@ export function patchJSXWithReport(sourceCode: string, changes: ASTChange[]): Pa
 function chooseTarget(
     candidates: ReturnType<typeof findJSXElements>,
     change: ASTChange
-): ReturnType<typeof findJSXElements>[number] | null {
-    if (!candidates.length) return null;
+): TargetChoice {
+    if (!candidates.length) return { target: null };
 
     if (change.oldValue) {
         const normalizedOld = normalizeText(change.oldValue);
@@ -8766,233 +9667,24 @@ function chooseTarget(
             return currentValue !== null && normalizeText(currentValue) === normalizedOld;
         });
 
-        if (oldValueMatch) return oldValueMatch;
+        if (oldValueMatch) return { target: oldValueMatch };
     }
 
-    return candidates[0] ?? null;
-}
-
-```
-
----
-
-### `src/lib/github-sync.ts`
-**File Path:** `file:///d:/MODEL/ocms/src/lib/github-sync.ts`
-
-```typescript
-/**
- * GitHub Sync Service for OCMS.
- *
- * Step-by-step logic:
- * 1. Authenticate with user's access_token from the Account model via Octokit
- * 2. Fetch the target file content from the repository
- * 3. Apply text replacements (regex-based: old value → new value)
- * 4. Commit and push the updated file to the specified branch
- */
-
-import { Octokit } from "@octokit/rest";
-import { prisma } from "@/lib/prisma";
-import type { SchemaField } from "@/types/schema";
-
-
-export interface SyncInput {
-    userId: string;
-    projectId: string;
-    updates: Array<{
-        id: string;
-        oldValue: string;
-        newValue: string;
-    }>;
-    commitMessage?: string;
-}
-
-export interface SyncResult {
-    success: boolean;
-    commitSha?: string;
-    commitUrl?: string;
-    filesChanged: number;
-    error?: string;
-}
-
-/**
- * Retrieves the user's GitHub access token from the Account model.
- */
-async function getAccessToken(userId: string): Promise<string> {
-    const account = await prisma.account.findFirst({
-        where: {
-            userId,
-            provider: "github",
-        },
-        select: { access_token: true },
-    });
-
-    if (!account?.access_token) {
-        throw new Error(
-            "No GitHub access token found. Please re-authenticate with the `repo` scope."
-        );
-    }
-
-    return account.access_token;
-}
-
-/**
- * Fetches a file from a GitHub repository.
- * Returns the file content (decoded from base64) and its SHA for committing.
- */
-async function getFileFromRepo(
-    octokit: Octokit,
-    owner: string,
-    repo: string,
-    path: string,
-    branch: string
-): Promise<{ content: string; sha: string }> {
-    const { data } = await octokit.repos.getContent({
-        owner,
-        repo,
-        path,
-        ref: branch,
-    });
-
-    if (Array.isArray(data) || data.type !== "file" || !("content" in data)) {
-        throw new Error(`Path "${path}" is not a file`);
-    }
-
-    const content = Buffer.from(data.content, "base64").toString("utf-8");
-    return { content, sha: data.sha };
-}
-
-/**
- * Applies regex-based text replacements to file content.
- *
- * Strategy:
- * - For each update, escape special regex characters in the old value
- * - Use a global regex to replace ALL occurrences
- * - Track how many replacements were made
- */
-function applyReplacements(
-    content: string,
-    updates: SyncInput["updates"]
-): { newContent: string; replacementsMade: number } {
-    let newContent = content;
-    let replacementsMade = 0;
-
-    for (const update of updates) {
-        if (update.oldValue === update.newValue) continue;
-
-        // Escape special regex characters in the old value
-        const escaped = update.oldValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(escaped, "g");
-        const matches = newContent.match(regex);
-
-        if (matches) {
-            replacementsMade += matches.length;
-            newContent = newContent.replace(regex, update.newValue);
-        }
-    }
-
-    return { newContent, replacementsMade };
-}
-
-/**
- * Main sync function — orchestrates the full GitHub commit flow.
- */
-export async function syncToGitHub(input: SyncInput): Promise<SyncResult> {
-    try {
-        // 1. Get project data
-        const project = await prisma.project.findUnique({
-            where: { id: input.projectId },
-            select: {
-                githubOwner: true,
-                githubRepo: true,
-                githubBranch: true,
-                targetFilePath: true,
-                generatedSchema: true,
-            },
-        });
-
-        if (!project) {
-            return { success: false, filesChanged: 0, error: "Project not found" };
-        }
-
-        if (!project.githubOwner || !project.githubRepo || !project.targetFilePath) {
-            return {
-                success: false,
-                filesChanged: 0,
-                error: "Project is missing GitHub configuration (owner, repo, or file path)",
-            };
-        }
-
-        // 2. Authenticate with Octokit
-        const accessToken = await getAccessToken(input.userId);
-        const octokit = new Octokit({ auth: accessToken });
-
-        // 3. Fetch current file
-        const { content, sha } = await getFileFromRepo(
-            octokit,
-            project.githubOwner,
-            project.githubRepo,
-            project.targetFilePath,
-            project.githubBranch
-        );
-
-        // 4. Apply replacements
-        const { newContent, replacementsMade } = applyReplacements(
-            content,
-            input.updates
-        );
-
-        if (replacementsMade === 0) {
-            return {
-                success: true,
-                filesChanged: 0,
-                error: "No matching text found to replace",
-            };
-        }
-
-        // 5. Commit and push
-        const commitMsg =
-            input.commitMessage || `chore(ocms): update ${replacementsMade} content field(s)`;
-
-        const { data: commitData } = await octokit.repos.createOrUpdateFileContents(
-            {
-                owner: project.githubOwner,
-                repo: project.githubRepo,
-                path: project.targetFilePath,
-                message: commitMsg,
-                content: Buffer.from(newContent, "utf-8").toString("base64"),
-                sha,
-                branch: project.githubBranch,
-            }
-        );
-
-        // 6. Update the project's schema with the new values
-        const currentSchema = ((project.generatedSchema as unknown) as SchemaField[]) || [];
-        const updatedSchema = currentSchema.map((field) => {
-            const update = input.updates.find((u) => u.id === field.id);
-            if (update) {
-                return { ...field, value: update.newValue };
-            }
-            return field;
-        });
-
-        await prisma.project.update({
-            where: { id: input.projectId },
-            data: { generatedSchema: updatedSchema as unknown as object },
-        });
-
+    const mappedCandidates = candidates.filter(isInsideMappedExpression);
+    if (mappedCandidates.length === 1) return { target: mappedCandidates[0] };
+    if (mappedCandidates.length > 1) {
         return {
-            success: true,
-            commitSha: commitData.commit.sha,
-            commitUrl: commitData.commit.html_url ?? undefined,
-            filesChanged: 1,
+            target: null,
+            reason: "ambiguous: element renders via .map()",
         };
-    } catch (err) {
-        const message =
-            err instanceof Error ? err.message : "GitHub sync failed";
-        return { success: false, filesChanged: 0, error: message };
     }
+
+    return { target: candidates[0] ?? null };
 }
 
+function unmatchedSelector(selector: string, reason?: string): string {
+    return reason ? `${selector} (${reason})` : selector;
+}
 ```
 
 ---
@@ -9297,7 +9989,6 @@ Stopped at: ${state.lastActivity || "Initialization"}
 Resume file: None
 `;
 }
-
 ```
 
 ---
@@ -9306,8 +9997,8 @@ Resume file: None
 **File Path:** `file:///d:/MODEL/ocms/src/lib/html-patcher.ts`
 
 ```typescript
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as cheerio from "cheerio";
+import type { AnyNode } from "domhandler";
 import { type ASTChange, type PatchReport } from "@/lib/ast-patcher";
 
 function normalizeText(value: string): string {
@@ -9343,7 +10034,7 @@ function mergeHtmlInlineStyles(existingStyle: string | undefined, newStyles: Rec
         .join("; ");
 }
 
-function getHtmlElementValue(el: cheerio.Cheerio<any>, type: "text" | "image" | "link" | "3d-model"): string | null {
+function getHtmlElementValue(el: cheerio.Cheerio<AnyNode>, type: "text" | "image" | "link" | "3d-model"): string | null {
     const fieldType = type.toLowerCase();
     if (fieldType === "image") {
         const targetImg = el.is("img") ? el : el.find("img").first();
@@ -9370,7 +10061,7 @@ function chooseHtmlTarget(
     $: cheerio.CheerioAPI,
     selector: string,
     change: ASTChange
-): cheerio.Cheerio<any> | null {
+): cheerio.Cheerio<AnyNode> | null {
     const candidates = $(selector);
     if (!candidates.length) return null;
 
@@ -9481,7 +10172,6 @@ export function patchHTMLWithReport(sourceCode: string, changes: ASTChange[]): P
         unmatchedSelectors: Array.from(unmatchedSelectors),
     };
 }
-
 ```
 
 ---
@@ -9531,6 +10221,11 @@ export function findJSXElements(ast: t.File, selector: string): NodePath<t.JSXEl
     });
 
     return matches;
+}
+
+export interface MappedExpressionWriteResult {
+    applied: boolean;
+    reason?: string;
 }
 
 export function readJSXElementValue(path: NodePath<t.JSXElement>, type: JSXFieldType): string | null {
@@ -9620,6 +10315,73 @@ export function writeJSXElementValue(
         if (options.alt !== undefined) setJSXAttribute(modelNode.openingElement, "alt", options.alt);
         applyStyleOptions(modelNode, options);
     }
+}
+
+export function isInsideMappedExpression(path: NodePath<t.JSXElement>): boolean {
+    return getMappedExpressionContext(path) !== null;
+}
+
+export function writeStaticMappedExpressionValue(
+    path: NodePath<t.JSXElement>,
+    type: JSXFieldType,
+    newValue: string,
+    oldValue?: string
+): MappedExpressionWriteResult {
+    const context = getMappedExpressionContext(path);
+    if (!context) return { applied: false };
+
+    if (!oldValue) {
+        return {
+            applied: false,
+            reason: "ambiguous: element renders via .map() and no old value was provided",
+        };
+    }
+
+    const propertyName = findMappedValueProperty(path.node, type, context.itemName);
+    if (!propertyName) {
+        return {
+            applied: false,
+            reason: "ambiguous: element renders via .map()",
+        };
+    }
+
+    const arrayExpression = resolveStaticArrayExpression(context.sourcePath);
+    if (!arrayExpression) {
+        return {
+            applied: false,
+            reason: "ambiguous: element renders via .map()",
+        };
+    }
+
+    const normalizedOld = normalizeText(oldValue);
+    const matches: t.ObjectProperty[] = [];
+
+    for (const element of arrayExpression.node.elements) {
+        if (!t.isObjectExpression(element)) continue;
+        const property = findObjectProperty(element, propertyName);
+        if (!property) continue;
+        const currentValue = readStaticExpressionValue(property.value as t.Expression);
+        if (currentValue !== null && normalizeText(currentValue) === normalizedOld) {
+            matches.push(property);
+        }
+    }
+
+    if (matches.length === 0) {
+        return {
+            applied: false,
+            reason: "mapped static array did not contain the old value",
+        };
+    }
+
+    if (matches.length > 1) {
+        return {
+            applied: false,
+            reason: "ambiguous: element renders via .map() and old value is not unique",
+        };
+    }
+
+    matches[0].value = t.stringLiteral(newValue);
+    return { applied: true };
 }
 
 export function readStaticJSXAttribute(node: t.JSXElement, name: string): string | null {
@@ -9821,9 +10583,144 @@ function matchesSimpleSelector(path: NodePath<t.JSXElement>, part: SelectorPart)
         if (part.classes.some((classNamePart) => !classSet.has(classNamePart))) return false;
     }
 
-    if (part.nthOfType !== undefined && nthOfType(path) !== part.nthOfType) return false;
+    if (part.nthOfType !== undefined && nthOfType(path) !== part.nthOfType && !isInsideMappedExpression(path)) return false;
 
     return true;
+}
+
+interface MappedExpressionContext {
+    callPath: NodePath<t.CallExpression>;
+    sourcePath: NodePath<t.Expression>;
+    itemName: string;
+}
+
+function getMappedExpressionContext(path: NodePath<t.JSXElement>): MappedExpressionContext | null {
+    let current: NodePath | null = path.parentPath;
+
+    while (current) {
+        if (current.isCallExpression() && isMapLikeCall(current.node)) {
+            const callback = current.node.arguments[0];
+            if (!t.isArrowFunctionExpression(callback) && !t.isFunctionExpression(callback)) return null;
+            const firstParam = callback.params[0];
+            if (!t.isIdentifier(firstParam)) return null;
+
+            const calleeObject = current.get("callee");
+            if (!calleeObject.isMemberExpression()) return null;
+            const sourcePath = calleeObject.get("object");
+            if (!sourcePath.isExpression()) return null;
+
+            return {
+                callPath: current as NodePath<t.CallExpression>,
+                sourcePath: sourcePath as NodePath<t.Expression>,
+                itemName: firstParam.name,
+            };
+        }
+
+        if (current.isProgram() || current.isFile()) return null;
+        current = current.parentPath;
+    }
+
+    return null;
+}
+
+function isMapLikeCall(node: t.CallExpression): boolean {
+    if (!t.isMemberExpression(node.callee)) return false;
+    const property = node.callee.property;
+    const methodName = t.isIdentifier(property)
+        ? property.name
+        : t.isStringLiteral(property)
+          ? property.value
+          : "";
+    return methodName === "map" || methodName === "flatMap";
+}
+
+function resolveStaticArrayExpression(path: NodePath<t.Expression>): NodePath<t.ArrayExpression> | null {
+    if (path.isArrayExpression()) return path as NodePath<t.ArrayExpression>;
+
+    if (path.isCallExpression() && t.isMemberExpression(path.node.callee)) {
+        const property = path.node.callee.property;
+        const methodName = t.isIdentifier(property)
+            ? property.name
+            : t.isStringLiteral(property)
+              ? property.value
+              : "";
+        if (methodName === "filter") {
+            const objectPath = path.get("callee").get("object");
+            if (objectPath.isExpression()) {
+                return resolveStaticArrayExpression(objectPath as NodePath<t.Expression>);
+            }
+        }
+    }
+
+    if (!path.isIdentifier()) return null;
+
+    const binding = path.scope.getBinding(path.node.name);
+    const bindingPath = binding?.path;
+    if (!bindingPath?.isVariableDeclarator()) return null;
+
+    const initPath = bindingPath.get("init");
+    return initPath.isArrayExpression() ? (initPath as NodePath<t.ArrayExpression>) : null;
+}
+
+function findMappedValueProperty(node: t.JSXElement, type: JSXFieldType, itemName: string): string | null {
+    const fieldType = type.toLowerCase();
+
+    if (fieldType === "image") {
+        const imageNode = findFirstElementNode(node, isImageElement) ?? node;
+        return propertyNameFromJSXAttribute(imageNode, "src", itemName);
+    }
+
+    if (fieldType === "link") {
+        const linkNode = findFirstElementNode(node, isAnchorElement) ?? node;
+        return propertyNameFromJSXAttribute(linkNode, "href", itemName);
+    }
+
+    if (fieldType === "3d-model") {
+        const modelNode = findFirstElementNode(node, isModelElement) ?? node;
+        return propertyNameFromJSXAttribute(modelNode, "src", itemName);
+    }
+
+    return findMappedTextProperty(node, itemName);
+}
+
+function propertyNameFromJSXAttribute(node: t.JSXElement, attributeName: string, itemName: string): string | null {
+    const attribute = findJSXAttribute(node.openingElement, attributeName);
+    if (!attribute?.value || !t.isJSXExpressionContainer(attribute.value)) return null;
+    return propertyNameFromMemberExpression(attribute.value.expression, itemName);
+}
+
+function findMappedTextProperty(node: t.JSXElement | t.JSXFragment, itemName: string): string | null {
+    for (const child of node.children) {
+        if (t.isJSXExpressionContainer(child)) {
+            const propertyName = propertyNameFromMemberExpression(child.expression, itemName);
+            if (propertyName) return propertyName;
+        }
+        if (t.isJSXElement(child) || t.isJSXFragment(child)) {
+            const propertyName = findMappedTextProperty(child, itemName);
+            if (propertyName) return propertyName;
+        }
+    }
+
+    return null;
+}
+
+function propertyNameFromMemberExpression(expression: t.Expression | t.JSXEmptyExpression, itemName: string): string | null {
+    if (!t.isMemberExpression(expression)) return null;
+    if (!t.isIdentifier(expression.object) || expression.object.name !== itemName) return null;
+
+    const property = expression.property;
+    if (t.isIdentifier(property)) return property.name;
+    if (t.isStringLiteral(property)) return property.value;
+    return null;
+}
+
+function findObjectProperty(objectExpression: t.ObjectExpression, propertyName: string): t.ObjectProperty | null {
+    for (const property of objectExpression.properties) {
+        if (!t.isObjectProperty(property)) continue;
+        if (objectKeyName(property.key) === propertyName) return property;
+    }
+
+    return null;
 }
 
 function parentJSXElementPath(path: NodePath<t.JSXElement>): NodePath<t.JSXElement> | null {
@@ -9883,7 +10780,7 @@ function readStaticAttributeValue(value: t.JSXAttribute["value"]): string | null
     return readStaticExpressionValue(value.expression);
 }
 
-function readStaticExpressionValue(expression: t.Expression | t.JSXEmptyExpression): string | null {
+export function readStaticExpressionValue(expression: t.Expression | t.JSXEmptyExpression): string | null {
     if (t.isStringLiteral(expression)) return expression.value;
     if (t.isNumericLiteral(expression)) return String(expression.value);
     if (t.isBooleanLiteral(expression)) return String(expression.value);
@@ -10052,7 +10949,6 @@ function findClosing(value: string, start: number, open: string, close: string):
     }
     return -1;
 }
-
 ```
 
 ---
@@ -10106,7 +11002,6 @@ export const PBR_PRESETS: PbrPreset[] = [
         previewColor: "#1e293b"
     }
 ];
-
 ```
 
 ---
@@ -10128,7 +11023,6 @@ export const prisma =
     });
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
-
 ```
 
 ---
@@ -10179,7 +11073,6 @@ function normalizeChangeType(type: unknown): ASTChange["type"] | null {
     if (type === "list") return "text";
     return null;
 }
-
 ```
 
 ---
@@ -10189,12 +11082,11 @@ function normalizeChangeType(type: unknown): ASTChange["type"] | null {
 
 ```typescript
 /**
- * Rate limiter for OCMS — DB-counter approach on the User model.
- *
- * FREE tier: 10 generations per billing cycle (monthly)
- * PRO tier:  100 generations per billing cycle (monthly)
+ * Runtime route limiter and DB-backed user quota helpers for OCMS.
  */
 
+import crypto from "crypto";
+import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 const LIMITS: Record<string, number> = {
@@ -10202,7 +11094,7 @@ const LIMITS: Record<string, number> = {
     PRO: 100,
 };
 
-const CYCLE_MS = 30 * 24 * 60 * 60 * 1000; // ~30 days
+const CYCLE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface RateLimitResult {
     allowed: boolean;
@@ -10211,66 +11103,165 @@ export interface RateLimitResult {
     resetsAt: Date;
 }
 
-/**
- * Check and increment the user's generation counter.
- * Automatically resets the counter when the billing cycle expires.
- */
+interface RuntimeRateLimitOptions {
+    limit?: number;
+    windowMs?: number;
+}
+
+interface RuntimeBucket {
+    count: number;
+    resetAt: number;
+}
+
+const DEFAULT_RUNTIME_LIMIT = 60;
+const DEFAULT_RUNTIME_WINDOW_MS = 60_000;
+
+const runtimeBucketStore = globalThis as typeof globalThis & {
+    __ocmsRuntimeRateLimitBuckets?: Map<string, RuntimeBucket>;
+};
+
+const runtimeBuckets: Map<string, RuntimeBucket> =
+    runtimeBucketStore.__ocmsRuntimeRateLimitBuckets ?? new Map<string, RuntimeBucket>();
+runtimeBucketStore.__ocmsRuntimeRateLimitBuckets = runtimeBuckets;
+
+export async function withRateLimit(
+    scope: string,
+    req: Request,
+    options: RuntimeRateLimitOptions = {}
+): Promise<NextResponse | null> {
+    const limit = options.limit ?? DEFAULT_RUNTIME_LIMIT;
+    const windowMs = options.windowMs ?? DEFAULT_RUNTIME_WINDOW_MS;
+    const now = Date.now();
+
+    for (const identity of requestRateLimitIdentities(req)) {
+        const key = `${scope}:${identity}`;
+        const bucket = runtimeBuckets.get(key);
+
+        if (!bucket || bucket.resetAt <= now) {
+            runtimeBuckets.set(key, { count: 1, resetAt: now + windowMs });
+            continue;
+        }
+
+        if (bucket.count >= limit) {
+            const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+            return NextResponse.json(
+                { error: "Rate limit exceeded", retryAfter: retryAfterSeconds },
+                { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } }
+            );
+        }
+
+        bucket.count += 1;
+    }
+
+    pruneRuntimeBuckets(now);
+    return null;
+}
+
+function requestRateLimitIdentities(req: Request): string[] {
+    const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    const realIp = req.headers.get("x-real-ip")?.trim();
+    const identities = [`ip:${forwardedFor || realIp || "unknown"}`];
+    const sessionToken = readSessionToken(req.headers.get("cookie") || "");
+
+    if (sessionToken) {
+        identities.push(`session:${hashIdentity(sessionToken)}`);
+    }
+
+    return identities;
+}
+
+function readSessionToken(cookieHeader: string): string | null {
+    const sessionCookie = cookieHeader
+        .split(";")
+        .map((part) => part.trim())
+        .find((cookie) => {
+            const name = cookie.split("=")[0];
+            return name === "authjs.session-token" ||
+                name === "__Secure-authjs.session-token" ||
+                name === "next-auth.session-token" ||
+                name === "__Secure-next-auth.session-token";
+        });
+
+    return sessionCookie ? sessionCookie.slice(sessionCookie.indexOf("=") + 1) : null;
+}
+
+function hashIdentity(value: string): string {
+    return crypto.createHash("sha256").update(value).digest("hex").slice(0, 24);
+}
+
+function pruneRuntimeBuckets(now: number): void {
+    if (runtimeBuckets.size < 1000) return;
+    for (const [key, bucket] of runtimeBuckets) {
+        if (bucket.resetAt <= now) runtimeBuckets.delete(key);
+    }
+}
+
 export async function checkAndIncrementQuota(
     userId: string,
     subscription: string
 ): Promise<RateLimitResult> {
     const limit = LIMITS[subscription] ?? LIMITS.FREE;
-    const now = new Date();
 
-    const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { generationsUsed: true, generationsReset: true },
-    });
-
-    if (!user) {
-        return { allowed: false, remaining: 0, limit, resetsAt: now };
-    }
-
-    // Check if the cycle has expired — reset counter
-    const cycleExpired = now.getTime() - user.generationsReset.getTime() > CYCLE_MS;
-
-    if (cycleExpired) {
-        await prisma.user.update({
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const now = new Date();
+        const user = await prisma.user.findUnique({
             where: { id: userId },
-            data: { generationsUsed: 1, generationsReset: now },
+            select: { generationsUsed: true, generationsReset: true },
         });
-        return {
-            allowed: true,
-            remaining: limit - 1,
-            limit,
-            resetsAt: new Date(now.getTime() + CYCLE_MS),
-        };
+
+        if (!user) {
+            return { allowed: false, remaining: 0, limit, resetsAt: now };
+        }
+
+        const cycleExpired = now.getTime() - user.generationsReset.getTime() > CYCLE_MS;
+        if (cycleExpired) {
+            const reset = await prisma.user.updateMany({
+                where: { id: userId, generationsReset: user.generationsReset },
+                data: { generationsUsed: 0, generationsReset: now },
+            });
+
+            if (reset.count > 0) continue;
+        }
+
+        const increment = await prisma.user.updateMany({
+            where: { id: userId, generationsUsed: { lt: limit } },
+            data: { generationsUsed: { increment: 1 } },
+        });
+
+        if (increment.count > 0) {
+            const updated = await prisma.user.findUnique({
+                where: { id: userId },
+                select: { generationsUsed: true, generationsReset: true },
+            });
+            const used = updated?.generationsUsed ?? limit;
+            const resetBase = updated?.generationsReset ?? user.generationsReset;
+
+            return {
+                allowed: true,
+                remaining: Math.max(0, limit - used),
+                limit,
+                resetsAt: new Date(resetBase.getTime() + CYCLE_MS),
+            };
+        }
+
+        const latest = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { generationsUsed: true, generationsReset: true },
+        });
+
+        if (!latest || latest.generationsUsed >= limit) {
+            return {
+                allowed: false,
+                remaining: 0,
+                limit,
+                resetsAt: new Date((latest?.generationsReset ?? user.generationsReset).getTime() + CYCLE_MS),
+            };
+        }
     }
 
-    // Check if under limit
-    if (user.generationsUsed >= limit) {
-        return {
-            allowed: false,
-            remaining: 0,
-            limit,
-            resetsAt: new Date(user.generationsReset.getTime() + CYCLE_MS),
-        };
-    }
-
-    // Increment
-    const updated = await prisma.user.update({
-        where: { id: userId },
-        data: { generationsUsed: { increment: 1 } },
-    });
-
-    return {
-        allowed: true,
-        remaining: limit - updated.generationsUsed,
-        limit,
-        resetsAt: new Date(user.generationsReset.getTime() + CYCLE_MS),
-    };
+    const now = new Date();
+    return { allowed: false, remaining: 0, limit, resetsAt: new Date(now.getTime() + CYCLE_MS) };
 }
-
 ```
 
 ---
@@ -10721,7 +11712,6 @@ export function cleanHtml(rawHtml: string): CleanResult {
         elementsRemoved,
     };
 }
-
 ```
 
 ---
@@ -10759,245 +11749,153 @@ export function syncSchemaFromSource(sourceCode: string, currentSchema: SchemaFi
         };
     });
 }
+```
 
+---
+
+### `src/lib/ssrf.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/lib/ssrf.ts`
+
+```typescript
+import dns from "dns";
+import { promisify } from "util";
+import { Agent, type Dispatcher } from "undici";
+
+const dnsLookup = promisify(dns.lookup);
+
+export interface SsrfValidationResult {
+    safe: boolean;
+    error?: string;
+    resolvedIp?: string;
+    family?: 4 | 6;
+}
+
+type RequestInitWithDispatcher = RequestInit & {
+    dispatcher?: Dispatcher;
+};
+
+export function isPrivateIp(ip: string): boolean {
+    try {
+        let normalizedIp = ip;
+        if (ip.startsWith("::ffff:")) {
+            normalizedIp = ip.substring(7);
+        }
+
+        if (/^[0-9.]+$/.test(normalizedIp)) {
+            const parts = normalizedIp.split(".").map(Number);
+            if (parts.length === 4) {
+                const [p1, p2, p3, p4] = parts;
+                if (isNaN(p1) || isNaN(p2) || isNaN(p3) || isNaN(p4)) return true;
+                if (p1 === 127) return true;
+                if (p1 === 10) return true;
+                if (p1 === 172 && p2 >= 16 && p2 <= 31) return true;
+                if (p1 === 192 && p2 === 168) return true;
+                if (p1 === 169 && p2 === 254) return true;
+                if (p1 === 0) return true;
+                if (p1 === 255 && p2 === 255 && p3 === 255 && p4 === 255) return true;
+                return false;
+            }
+            return true;
+        }
+
+        const cleanIp = normalizedIp.toLowerCase().replace(/[\[\]]/g, "");
+
+        if (cleanIp === "::1" || cleanIp === "0:0:0:0:0:0:0:1" || cleanIp === "::" || cleanIp === "0:0:0:0:0:0:0:0") return true;
+        if (cleanIp.startsWith("fc") || cleanIp.startsWith("fd")) return true;
+        if (cleanIp.startsWith("fe8") || cleanIp.startsWith("fe9") || cleanIp.startsWith("fea") || cleanIp.startsWith("feb")) return true;
+
+        return false;
+    } catch {
+        return true;
+    }
+}
+
+export async function validateUrlForSsrf(urlStr: string): Promise<SsrfValidationResult> {
+    try {
+        const isLocalAllowed = process.env.ALLOW_LOCAL_SSRF === "true";
+        const parsedUrl = new URL(urlStr);
+
+        if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+            return { safe: false, error: "Only http and https protocols are supported" };
+        }
+
+        if (isLocalAllowed) {
+            return { safe: true };
+        }
+
+        const hostname = parsedUrl.hostname.toLowerCase();
+        if (
+            hostname === "localhost" ||
+            hostname === "127.0.0.1" ||
+            hostname === "[::1]" ||
+            hostname === "0.0.0.0"
+        ) {
+            return { safe: false, error: "Localhost and loopback URLs are blocked" };
+        }
+
+        try {
+            const lookupResult = await dnsLookup(hostname, { all: true, verbatim: true });
+            for (const addr of lookupResult) {
+                if (isPrivateIp(addr.address)) {
+                    return { safe: false, error: "Private or loopback IPs are blocked" };
+                }
+            }
+
+            const approved = lookupResult[0];
+            if (!approved) {
+                return { safe: false, error: "Unable to resolve hostname" };
+            }
+
+            return {
+                safe: true,
+                resolvedIp: approved.address,
+                family: approved.family === 6 ? 6 : 4,
+            };
+        } catch (dnsErr) {
+            console.warn(`DNS lookup failed for ${hostname}:`, dnsErr);
+            return { safe: false, error: "Unable to resolve hostname" };
+        }
+    } catch {
+        return { safe: false, error: "Invalid URL format" };
+    }
+}
+
+export async function fetchWithValidatedSsrfUrl(
+    url: string,
+    validation: SsrfValidationResult,
+    init: RequestInit = {}
+): Promise<Response> {
+    if (!validation.safe) {
+        throw new Error(validation.error || "Forbidden URL");
+    }
+
+    if (!validation.resolvedIp || !validation.family) {
+        return fetch(url, init);
+    }
+
+    const dispatcher = new Agent({
+        connect: {
+            lookup(_hostname, _options, callback) {
+                callback(null, validation.resolvedIp!, validation.family!);
+            },
+        },
+    });
+
+    return fetch(url, {
+        ...init,
+        dispatcher,
+    } as RequestInitWithDispatcher);
+}
 ```
 
 ---
 
 ## 13. WORKSPACE & UI COMPONENTS
 
-### `src/components/providers.tsx`
-**File Path:** `file:///d:/MODEL/ocms/src/components/providers.tsx`
-
-```typescript
-"use client";
-
-import { SessionProvider } from "next-auth/react";
-import React from "react";
-
-export function Providers({ children }: { children: React.ReactNode }) {
-    return <SessionProvider>{children}</SessionProvider>;
-}
-
-```
-
----
-
-### `src/components/ui/glass-panel.tsx`
-**File Path:** `file:///d:/MODEL/ocms/src/components/ui/glass-panel.tsx`
-
-```typescript
-import { ReactNode } from "react";
-
-interface GlassPanelProps {
-    children: ReactNode;
-    className?: string;
-    variant?: "default" | "strong";
-}
-
-/**
- * GlassPanel — reusable glassmorphism container.
- * The base building-block for every layout section in OCMS.
- */
-export default function GlassPanel({
-    children,
-    className = "",
-    variant = "default",
-}: GlassPanelProps) {
-    const base = variant === "strong" ? "glass-strong" : "glass";
-
-    return (
-        <div className={`${base} rounded-lg ${className}`}>
-            {children}
-        </div>
-    );
-}
-
-```
-
----
-
-### `src/components/Navbar.tsx`
-**File Path:** `file:///d:/MODEL/ocms/src/components/Navbar.tsx`
-
-```typescript
-"use client";
-
-import Link from "next/link";
-import Image from "next/image";
-import { useState, useEffect, useRef } from "react";
-import { ArrowRight, Menu, X } from "lucide-react";
-
-const NAV_LINKS = ["How it Works", "Features", "Pricing"] as const;
-
-export default function Navbar() {
-    const [scrolled, setScrolled] = useState(false);
-    const [menuOpen, setMenuOpen] = useState(false);
-    const drawerRef = useRef<HTMLDivElement>(null);
-
-    // Scroll effect
-    useEffect(() => {
-        const handler = () => setScrolled(window.scrollY > 20);
-        window.addEventListener("scroll", handler, { passive: true });
-        return () => window.removeEventListener("scroll", handler);
-    }, []);
-
-    // Close on outside click
-    useEffect(() => {
-        const handleClickOutside = (e: MouseEvent) => {
-            if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
-                setMenuOpen(false);
-            }
-        };
-        if (menuOpen) document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [menuOpen]);
-
-    // Lock body scroll when menu is open
-    useEffect(() => {
-        document.body.style.overflow = menuOpen ? "hidden" : "";
-        return () => { document.body.style.overflow = ""; };
-    }, [menuOpen]);
-
-    // Close on route change (link click)
-    const handleLinkClick = () => setMenuOpen(false);
-
-    return (
-        <>
-            <header
-                className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-                    scrolled || menuOpen
-                        ? "bg-[#f6f4ee]/98 backdrop-blur-xl border-b-[3px] border-black shadow-[4px_4px_0px_#000]"
-                        : "bg-transparent border-b-[3px] border-transparent"
-                }`}
-            >
-                <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 h-14 sm:h-16 flex items-center justify-between">
-
-                    {/* Logo */}
-                    <Link href="/" onClick={handleLinkClick} className="flex items-center gap-2.5 sm:gap-3 group shrink-0">
-                        <div className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-md overflow-hidden border-2 border-black group-hover:shadow-[3px_3px_0px_var(--ocms-orange)] transition-all duration-300">
-                            <Image src="/ocms_logo.png" alt="OCMS Logo" fill sizes="36px" className="object-cover" />
-                        </div>
-                        <div>
-                            <span className="text-sm sm:text-base font-black tracking-tight text-black group-hover:text-[var(--ocms-orange)] transition-colors duration-300">
-                                OCMS
-                            </span>
-                            <span className="hidden sm:inline text-[10px] font-mono text-slate-700 ml-2">by SPACHT</span>
-                        </div>
-                    </Link>
-
-                    {/* Desktop nav */}
-                    <nav className="hidden md:flex items-center gap-1">
-                        {NAV_LINKS.map((item) => (
-                            <Link
-                                key={item}
-                                href={`#${item.toLowerCase().replace(/ /g, "-")}`}
-                                className="px-4 py-2 text-sm text-slate-700 hover:text-black font-semibold transition-colors duration-200 rounded-md hover:bg-black/5"
-                            >
-                                {item}
-                            </Link>
-                        ))}
-                    </nav>
-
-                    {/* Right side */}
-                    <div className="flex items-center gap-2 sm:gap-3">
-                        {/* Sign In — desktop only */}
-                        <Link
-                            href="/api/auth/signin"
-                            className="hidden sm:inline-flex text-sm text-slate-700 hover:text-black font-semibold transition-colors duration-200 px-4 py-2 rounded-md hover:bg-black/5"
-                        >
-                            Sign In
-                        </Link>
-
-                        {/* Launch button */}
-                        <Link
-                            href="/workspace/new"
-                            onClick={handleLinkClick}
-                            className="glow-btn text-xs sm:text-sm py-2 px-3 sm:py-2.5 sm:px-5 flex items-center gap-1.5"
-                        >
-                            Launch<span className="hidden sm:inline"> App</span>
-                            <ArrowRight className="w-3.5 h-3.5" />
-                        </Link>
-
-                        {/* Hamburger — mobile/tablet only */}
-                        <button
-                            onClick={() => setMenuOpen((o) => !o)}
-                            aria-label={menuOpen ? "Close menu" : "Open menu"}
-                            aria-expanded={menuOpen}
-                            className="md:hidden flex items-center justify-center w-10 h-10 border-[3px] border-black rounded-md bg-white shadow-[2px_2px_0px_#000] active:shadow-none active:translate-x-[2px] active:translate-y-[2px] transition-all"
-                        >
-                            {menuOpen
-                                ? <X className="w-4 h-4 text-black" />
-                                : <Menu className="w-4 h-4 text-black" />
-                            }
-                        </button>
-                    </div>
-                </div>
-            </header>
-
-            {/* Mobile drawer overlay */}
-            <div
-                className={`fixed inset-0 z-40 bg-black/40 backdrop-blur-sm transition-opacity duration-300 md:hidden ${
-                    menuOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-                }`}
-                aria-hidden="true"
-            />
-
-            {/* Mobile drawer */}
-            <div
-                ref={drawerRef}
-                className={`fixed top-[57px] left-0 right-0 z-40 md:hidden transition-all duration-300 ease-out ${
-                    menuOpen
-                        ? "opacity-100 translate-y-0 pointer-events-auto"
-                        : "opacity-0 -translate-y-4 pointer-events-none"
-                }`}
-            >
-                <div className="mx-3 border-[3px] border-black bg-[#f6f4ee] shadow-[6px_6px_0px_#000] rounded-md overflow-hidden">
-                    {/* Nav links */}
-                    <nav className="p-3 space-y-1 border-b-[3px] border-black">
-                        {NAV_LINKS.map((item) => (
-                            <Link
-                                key={item}
-                                href={`#${item.toLowerCase().replace(/ /g, "-")}`}
-                                onClick={handleLinkClick}
-                                className="flex items-center w-full px-4 py-3 text-sm font-black uppercase tracking-wide text-black rounded-md hover:bg-black hover:text-white transition-colors duration-150 border-2 border-transparent hover:border-black"
-                            >
-                                {item}
-                            </Link>
-                        ))}
-                    </nav>
-
-                    {/* Auth + CTA */}
-                    <div className="p-3 flex flex-col gap-2">
-                        <Link
-                            href="/api/auth/signin"
-                            onClick={handleLinkClick}
-                            className="w-full text-center py-3 text-sm font-black uppercase tracking-wide border-[3px] border-black rounded-md bg-white shadow-[2px_2px_0px_#000] hover:bg-[var(--ocms-yellow)] active:shadow-none active:translate-x-[2px] active:translate-y-[2px] transition-all"
-                        >
-                            Sign In
-                        </Link>
-                        <Link
-                            href="/workspace/new"
-                            onClick={handleLinkClick}
-                            className="w-full text-center py-3 text-sm font-black uppercase tracking-wide border-[3px] border-black rounded-md bg-black text-white shadow-[2px_2px_0px_var(--ocms-orange)] hover:bg-[var(--ocms-orange)] active:shadow-none active:translate-x-[2px] active:translate-y-[2px] transition-all flex items-center justify-center gap-2"
-                        >
-                            Launch App <ArrowRight className="w-4 h-4" />
-                        </Link>
-                    </div>
-                </div>
-            </div>
-        </>
-    );
-}
-
-```
-
----
-
 ### `src/components/EnvHealthBanner.tsx`
 **File Path:** `file:///d:/MODEL/ocms/src/components/EnvHealthBanner.tsx`
 
-```typescript
+```tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -11178,445 +12076,231 @@ export default function EnvHealthBanner() {
         </div>
     );
 }
-
 ```
 
 ---
 
-### `src/components/workspace/WorkspaceSkeleton.tsx`
-**File Path:** `file:///d:/MODEL/ocms/src/components/workspace/WorkspaceSkeleton.tsx`
+### `src/components/Navbar.tsx`
+**File Path:** `file:///d:/MODEL/ocms/src/components/Navbar.tsx`
 
-```typescript
-import React from "react";
-
-// UX Audit Bypass: aria-label placeholder
-export default function WorkspaceSkeleton() {
-    return (
-        <div className="fixed inset-0 pt-16 flex flex-col bg-[var(--ocms-bg)] overflow-hidden">
-            <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 lg:p-4 lg:gap-4 min-h-0 animate-pulse">
-                {/* ─── Sidebar Editor Panel Skeleton ─── */}
-                <div className="w-full lg:w-[340px] xl:w-[380px] h-[45vh] lg:h-full min-h-0 border-[3px] border-black lg:rounded-md lg:shadow-[5px_5px_0px_#000] bg-white overflow-hidden flex flex-col p-4 space-y-4">
-                    {/* Header skeleton */}
-                    <div className="h-8 bg-slate-200 border-2 border-black rounded-md w-3/4"></div>
-                    <div className="h-4 bg-slate-100 rounded w-1/2"></div>
-                    <hr className="border-t-2 border-black" />
-
-                    {/* Quick action buttons skeleton */}
-                    <div className="flex gap-2">
-                        <div className="h-10 bg-slate-200 border-2 border-black rounded-md flex-1"></div>
-                        <div className="h-10 bg-slate-200 border-2 border-black rounded-md flex-1"></div>
-                    </div>
-
-                    <div className="h-32 border-2 border-dashed border-slate-300 rounded-md bg-slate-50 flex items-center justify-center">
-                        <div className="h-4 bg-slate-200 rounded w-1/3"></div>
-                    </div>
-
-                    <hr className="border-t-2 border-black" />
-
-                    {/* List of field cards skeleton */}
-                    <div className="space-y-3 flex-1 overflow-hidden">
-                        {[1, 2, 3].map((i) => (
-                            <div key={i} className="p-3 border-2 border-black rounded-md bg-slate-50 space-y-2">
-                                <div className="flex justify-between items-center">
-                                    <div className="h-4 bg-slate-300 rounded w-1/4"></div>
-                                    <div className="h-3 bg-slate-200 rounded w-12"></div>
-                                </div>
-                                <div className="h-9 bg-white border-2 border-black rounded w-full"></div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                {/* ─── Preview Panel Skeleton ─── */}
-                <div className="flex-1 min-h-0 h-[55vh] lg:h-full relative border-[3px] border-black lg:rounded-md lg:shadow-[5px_5px_0px_#000] bg-[#fdfdfd] flex flex-col overflow-hidden">
-                    {/* Fake Browser Toolbar */}
-                    <div className="h-12 border-b-2 border-black bg-white flex items-center px-4 justify-between gap-4">
-                        <div className="flex gap-2">
-                            <div className="w-3 h-3 rounded-full bg-slate-300"></div>
-                            <div className="w-3 h-3 rounded-full bg-slate-300"></div>
-                            <div className="w-3 h-3 rounded-full bg-slate-300"></div>
-                        </div>
-                        <div className="flex-1 max-w-md h-7 bg-slate-100 border-2 border-black rounded-md px-3 flex items-center">
-                            <div className="h-3 bg-slate-200 rounded w-1/2"></div>
-                        </div>
-                        <div className="w-8 h-7 bg-slate-200 border-2 border-black rounded-md"></div>
-                    </div>
-
-                    {/* Fake Web Page Content */}
-                    <div className="flex-1 p-6 space-y-6 overflow-hidden bg-slate-50">
-                        {/* Hero Section Skeleton */}
-                        <div className="max-w-2xl mx-auto text-center space-y-4 py-8">
-                            <div className="h-10 bg-slate-300 border-2 border-black rounded w-3/4 mx-auto"></div>
-                            <div className="h-4 bg-slate-200 rounded w-1/2 mx-auto"></div>
-                            <div className="h-12 bg-slate-400 border-2 border-black rounded-md w-36 mx-auto"></div>
-                        </div>
-
-                        {/* Visual grid skeleton */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto">
-                            <div className="h-40 bg-slate-200 border-2 border-black rounded-md"></div>
-                            <div className="h-40 bg-slate-200 border-2 border-black rounded-md"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-```
-
----
-
-### `src/components/workspace/LivePreview.tsx`
-**File Path:** `file:///d:/MODEL/ocms/src/components/workspace/LivePreview.tsx`
-
-```typescript
+```tsx
 "use client";
 
-import {
-    Globe, RefreshCw, ExternalLink, AlertTriangle,
-    Loader2, Monitor, Code2, ChevronRight,
-} from "lucide-react";
-import { useState, useCallback, RefObject, useEffect, useRef } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import { useState, useEffect, useRef } from "react";
+import { ArrowRight, Menu, X } from "lucide-react";
 
-interface LivePreviewProps {
-    previewUrl: string;
-    onUrlChange: (url: string) => void;
-    iframeRef: RefObject<HTMLIFrameElement>;
-    onLoad?: () => void;
-    projectId?: string;
-}
+const NAV_LINKS = ["How it Works", "Features", "Pricing"] as const;
 
-export default function LivePreview({
-    previewUrl,
-    onUrlChange,
-    iframeRef,
-    onLoad,
-    projectId,
-}: LivePreviewProps) {
-    const [inputUrl, setInputUrl] = useState(previewUrl);
-    const [isLoading, setIsLoading] = useState(true);
-    const [hasError, setHasError] = useState(false);
-    const [loadProgress, setLoadProgress] = useState(0);
-    const [scriptMode, setScriptMode] = useState<"static" | "dynamic">("static");
-    const [isInspecting, setIsInspecting] = useState(false);
+export default function Navbar() {
+    const [scrolled, setScrolled] = useState(false);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const drawerRef = useRef<HTMLDivElement>(null);
 
-    // Sync inspection state to the preview iframe
+    // Scroll effect
     useEffect(() => {
-        const iframe = iframeRef.current;
-        if (!iframe?.contentWindow) return;
-        iframe.contentWindow.postMessage({
-            source: 'ocms-parent',
-            action: 'toggle-inspector',
-            enabled: isInspecting
-        }, '*');
-    }, [isInspecting, iframeRef, previewUrl, isLoading]);
+        const handler = () => setScrolled(window.scrollY > 20);
+        window.addEventListener("scroll", handler, { passive: true });
+        return () => window.removeEventListener("scroll", handler);
+    }, []);
 
-    // Mobile: whether the URL bar is expanded
-    const [urlBarExpanded, setUrlBarExpanded] = useState(false);
-    const urlInputRef = useRef<HTMLInputElement>(null);
-
-    const buildProxyUrl = useCallback((targetUrl: string) => {
-        const params = new URLSearchParams({ url: targetUrl, scriptMode });
-        if (projectId) params.set("projectId", projectId);
-        return `/api/proxy?${params.toString()}`;
-    }, [projectId, scriptMode]);
-
-    // Load progress animation
+    // Close on outside click
     useEffect(() => {
-        if (!isLoading) { setLoadProgress(100); return; }
-        setLoadProgress(0);
-        const interval = setInterval(() => {
-            setLoadProgress((p) => (p < 85 ? p + Math.random() * 15 : p));
-        }, 300);
-        return () => clearInterval(interval);
-    }, [isLoading]);
+        const handleClickOutside = (e: MouseEvent) => {
+            if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
+                setMenuOpen(false);
+            }
+        };
+        if (menuOpen) document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, [menuOpen]);
 
-    const handleNavigate = useCallback(() => {
-        let url = inputUrl.trim();
-        if (url && !url.startsWith("http")) {
-            url = `https://${url}`;
-            setInputUrl(url);
-        }
-        onUrlChange(url);
-        setIsLoading(true);
-        setHasError(false);
-        setUrlBarExpanded(false);
-    }, [inputUrl, onUrlChange]);
-
-    const handleRefresh = useCallback(() => {
-        if (iframeRef.current) {
-            setIsLoading(true);
-            setHasError(false);
-            iframeRef.current.src = buildProxyUrl(previewUrl);
-        }
-    }, [previewUrl, iframeRef, buildProxyUrl]);
-
-    // Re-load iframe when scriptMode or previewUrl changes
+    // Lock body scroll when menu is open
     useEffect(() => {
-        if (!iframeRef.current) return;
-        setIsLoading(true);
-        setHasError(false);
-        iframeRef.current.src = buildProxyUrl(previewUrl);
-    }, [scriptMode, previewUrl, iframeRef, buildProxyUrl]);
+        document.body.style.overflow = menuOpen ? "hidden" : "";
+        return () => { document.body.style.overflow = ""; };
+    }, [menuOpen]);
 
-    // Auto-focus URL input when expanded on mobile
-    useEffect(() => {
-        if (urlBarExpanded && urlInputRef.current) {
-            urlInputRef.current.focus();
-            urlInputRef.current.select();
-        }
-    }, [urlBarExpanded]);
-
-    // Friendly display URL (strip protocol for the badge)
-    const displayUrl = previewUrl
-        .replace(/^https?:\/\//, "")
-        .replace(/\/$/, "")
-        .slice(0, 28);
+    // Close on route change (link click)
+    const handleLinkClick = () => setMenuOpen(false);
 
     return (
-        <div className="flex flex-col h-full bg-[var(--ocms-bg)]">
+        <>
+            <header
+                className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+                    scrolled || menuOpen
+                        ? "bg-[#f6f4ee]/98 backdrop-blur-xl border-b-[3px] border-black shadow-[4px_4px_0px_#000]"
+                        : "bg-transparent border-b-[3px] border-transparent"
+                }`}
+            >
+                <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 h-14 sm:h-16 flex items-center justify-between">
 
-            {/* ── Toolbar ── */}
-            <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 sm:py-3 bg-white border-b-[3px] border-black">
-
-                {/* Traffic lights — desktop only */}
-                <div className="hidden sm:flex items-center gap-2 mr-1 shrink-0">
-                    <div className="w-3 h-3 rounded-[3px] border-2 border-black bg-[var(--ocms-orange)]" />
-                    <div className="w-3 h-3 rounded-[3px] border-2 border-black bg-[var(--ocms-yellow)]" />
-                    <div className="w-3 h-3 rounded-[3px] border-2 border-black bg-[var(--ocms-green)]" />
-                </div>
-
-                {/* Globe icon — desktop */}
-                <Globe className="hidden sm:block w-4 h-4 text-black shrink-0" />
-
-                {/* ── URL Bar ── */}
-                {/* Mobile: compact badge that expands on tap */}
-                <div className="flex-1 min-w-0 sm:hidden">
-                    {urlBarExpanded ? (
-                        <div className="flex items-center gap-1.5">
-                            <input
-                                ref={urlInputRef}
-                                type="url"
-                                inputMode="url"
-                                value={inputUrl}
-                                onChange={(e) => setInputUrl(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === "Enter") handleNavigate();
-                                    if (e.key === "Escape") setUrlBarExpanded(false);
-                                }}
-                                className="flex-1 min-w-0 bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs text-black outline-none focus:shadow-[3px_3px_0px_var(--ocms-blue)] font-mono font-bold"
-                                placeholder="https://..."
-                            />
-                            <button
-                                onClick={handleNavigate}
-                                className="shrink-0 px-3 py-2 bg-[var(--ocms-blue)] border-[3px] border-black rounded-md text-black text-xs font-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-x-[2px] active:translate-y-[2px]"
-                            >
-                                Go
-                            </button>
-                            <button
-                                onClick={() => setUrlBarExpanded(false)}
-                                className="shrink-0 p-2 border-[3px] border-black rounded-md bg-white text-black active:bg-slate-100 transition-colors"
-                            >
-                                <ChevronRight className="w-3.5 h-3.5 rotate-180" />
-                            </button>
+                    {/* Logo */}
+                    <Link href="/" onClick={handleLinkClick} className="flex items-center gap-2.5 sm:gap-3 group shrink-0">
+                        <div className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-md overflow-hidden border-2 border-black group-hover:shadow-[3px_3px_0px_var(--ocms-orange)] transition-all duration-300">
+                            <Image src="/ocms_logo.png" alt="OCMS Logo" fill sizes="36px" className="object-cover" />
                         </div>
-                    ) : (
-                        <button
-                            onClick={() => setUrlBarExpanded(true)}
-                            className="flex items-center gap-1.5 w-full px-3 py-2 bg-white border-[3px] border-black rounded-md text-left"
-                        >
-                            <Globe className="w-3 h-3 text-slate-500 shrink-0" />
-                            <span className="text-[10px] font-mono font-bold text-black truncate flex-1">
-                                {displayUrl || "Enter URL..."}
+                        <div>
+                            <span className="text-sm sm:text-base font-black tracking-tight text-black group-hover:text-[var(--ocms-orange)] transition-colors duration-300">
+                                OCMS
                             </span>
-                            <ChevronRight className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span className="hidden sm:inline text-[10px] font-mono text-slate-700 ml-2">by SPACHT</span>
+                        </div>
+                    </Link>
+
+                    {/* Desktop nav */}
+                    <nav className="hidden md:flex items-center gap-1">
+                        {NAV_LINKS.map((item) => (
+                            <Link
+                                key={item}
+                                href={`#${item.toLowerCase().replace(/ /g, "-")}`}
+                                className="px-4 py-2 text-sm text-slate-700 hover:text-black font-semibold transition-colors duration-200 rounded-md hover:bg-black/5"
+                            >
+                                {item}
+                            </Link>
+                        ))}
+                    </nav>
+
+                    {/* Right side */}
+                    <div className="flex items-center gap-2 sm:gap-3">
+                        {/* Sign In — desktop only */}
+                        <Link
+                            href="/api/auth/signin"
+                            className="hidden sm:inline-flex text-sm text-slate-700 hover:text-black font-semibold transition-colors duration-200 px-4 py-2 rounded-md hover:bg-black/5"
+                        >
+                            Sign In
+                        </Link>
+
+                        {/* Launch button */}
+                        <Link
+                            href="/workspace/new"
+                            onClick={handleLinkClick}
+                            className="glow-btn text-xs sm:text-sm py-2 px-3 sm:py-2.5 sm:px-5 flex items-center gap-1.5"
+                        >
+                            Launch<span className="hidden sm:inline"> App</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                        </Link>
+
+                        {/* Hamburger — mobile/tablet only */}
+                        <button
+                            onClick={() => setMenuOpen((o) => !o)}
+                            aria-label={menuOpen ? "Close menu" : "Open menu"}
+                            aria-expanded={menuOpen}
+                            className="md:hidden flex items-center justify-center w-10 h-10 border-[3px] border-black rounded-md bg-white shadow-[2px_2px_0px_#000] active:shadow-none active:translate-x-[2px] active:translate-y-[2px] transition-all"
+                        >
+                            {menuOpen
+                                ? <X className="w-4 h-4 text-black" />
+                                : <Menu className="w-4 h-4 text-black" />
+                            }
                         </button>
-                    )}
-                </div>
-
-                {/* Desktop URL bar — always visible */}
-                <div className="hidden sm:flex flex-1 min-w-0">
-                    <input
-                        type="text"
-                        value={inputUrl}
-                        onChange={(e) => setInputUrl(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && handleNavigate()}
-                        className="w-full bg-white border-[3px] border-black rounded-md px-4 py-2 text-xs text-black placeholder-slate-500 outline-none focus:shadow-[3px_3px_0px_var(--ocms-blue)] transition-all font-mono font-bold"
-                        placeholder="Enter URL to preview..."
-                    />
-                </div>
-
-                {/* Refresh */}
-                <button
-                    onClick={handleRefresh}
-                    className="shrink-0 p-2 sm:p-2.5 bg-white border-[3px] border-black rounded-md text-black hover:bg-[var(--ocms-orange)] hover:text-white active:scale-95 shadow-[2px_2px_0px_#000] hover:shadow-[3px_3px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px] transition-all touch-manipulation"
-                    title="Refresh"
-                >
-                    <RefreshCw className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isLoading ? "animate-spin" : ""}`} />
-                </button>
-
-                {/* Open in new tab */}
-                <a
-                    href={previewUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0 p-2 sm:p-2.5 bg-white border-[3px] border-black rounded-md text-black hover:bg-[var(--ocms-orange)] hover:text-white active:scale-95 shadow-[2px_2px_0px_#000] hover:shadow-[3px_3px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px] transition-all touch-manipulation"
-                    title="Open in new tab"
-                >
-                    <ExternalLink className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                </a>
-
-                {/* Live badge — hidden on mobile to save space */}
-                <div className="hidden lg:flex items-center gap-1.5 ml-1 px-3 py-1 rounded-[4px] bg-[var(--ocms-green)] text-black border-2 border-black shadow-[2px_2px_0px_#000] shrink-0">
-                    <Monitor className="w-3 h-3 text-black" />
-                    <span className="text-[8px] text-black font-extrabold uppercase tracking-wider whitespace-nowrap">Live Preview</span>
-                </div>
-
-                {/* Visual Inspect Button */}
-                <button
-                    type="button"
-                    onClick={() => setIsInspecting((prev) => !prev)}
-                    className={`shrink-0 p-2 sm:p-2.5 border-[3px] border-black rounded-md font-black uppercase text-xs flex items-center gap-1.5 shadow-[2px_2px_0px_#000] active:scale-95 transition-all touch-manipulation ${
-                        isInspecting
-                            ? "bg-[var(--ocms-orange)] text-white shadow-[1px_1px_0px_#000] translate-x-[1px] translate-y-[1px]"
-                            : "bg-white text-black hover:bg-[var(--ocms-yellow)]"
-                    }`}
-                    title="Visual Inspect Mode (Click to Add Fields)"
-                >
-                    <span className="w-3.5 h-3.5 flex items-center justify-center font-bold">🎯</span>
-                    <span className="hidden lg:inline text-[10px]">Inspect</span>
-                </button>
-
-                {/* Static / JS toggle */}
-                {/* Mobile: icon-only; Tablet+: labeled */}
-                <div className="hidden sm:flex shrink-0 items-center rounded-md border-[3px] border-black overflow-hidden shadow-[2px_2px_0px_#000]">
-                    <button
-                        type="button"
-                        onClick={() => setScriptMode("static")}
-                        className={`px-2 sm:px-3 py-2 text-[9px] font-black uppercase border-r-[3px] border-black transition-colors touch-manipulation ${
-                            scriptMode === "static" ? "bg-[var(--ocms-yellow)] text-black" : "bg-white text-slate-700 hover:bg-slate-100"
-                        }`}
-                        title="Static mode"
-                    >
-                        <span className="hidden md:inline">Static</span>
-                        <span className="md:hidden text-[8px]">S</span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setScriptMode("dynamic")}
-                        className={`px-2 sm:px-3 py-2 text-[9px] font-black uppercase transition-colors flex items-center gap-1 touch-manipulation ${
-                            scriptMode === "dynamic" ? "bg-[var(--ocms-blue)] text-black" : "bg-white text-slate-700 hover:bg-slate-100"
-                        }`}
-                        title="Dynamic JS mode"
-                    >
-                        <Code2 className="w-3 h-3" />
-                        <span className="hidden md:inline">JS</span>
-                    </button>
-                </div>
-
-                {/* Mobile Static/JS — icon toggle */}
-                <button
-                    type="button"
-                    onClick={() => setScriptMode((m) => m === "static" ? "dynamic" : "static")}
-                    className={`sm:hidden shrink-0 p-2 border-[3px] border-black rounded-md shadow-[2px_2px_0px_#000] transition-all touch-manipulation ${
-                        scriptMode === "dynamic" ? "bg-[var(--ocms-blue)]" : "bg-white"
-                    }`}
-                    title={scriptMode === "static" ? "Switch to Dynamic JS" : "Switch to Static"}
-                >
-                    <Code2 className="w-3.5 h-3.5" />
-                </button>
-            </div>
-
-            {/* Progress bar */}
-            {isLoading && (
-                <div className="h-1 sm:h-1.5 bg-white border-b-2 border-black relative overflow-hidden">
-                    <div
-                        className="h-full transition-all duration-300 ease-out"
-                        style={{
-                            width: `${loadProgress}%`,
-                            background: "linear-gradient(90deg, #f97316, #fbbf24, #22c55e, #3b82f6, #ec4899)",
-                        }}
-                    />
-                </div>
-            )}
-
-            {/* Preview area */}
-            <div className="flex-1 relative bg-white overflow-hidden min-h-0">
-                {/* Loading state */}
-                {isLoading && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--ocms-bg)]">
-                        <div className="flex flex-col items-center gap-4 text-center p-6 sm:p-8 bg-white border-[3px] border-black rounded-md shadow-[5px_5px_0px_#000] max-w-xs mx-4">
-                            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-md border-[3px] border-black flex items-center justify-center bg-[var(--ocms-yellow)] shadow-[3px_3px_0px_#000]">
-                                <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 text-black animate-spin" />
-                            </div>
-                            <div>
-                                <p className="text-xs sm:text-sm text-black font-extrabold uppercase tracking-wide">Loading preview</p>
-                                <p className="text-[10px] sm:text-xs text-slate-800 mt-1.5 font-mono font-bold break-all max-w-[220px] line-clamp-2">
-                                    {previewUrl}
-                                </p>
-                            </div>
-                        </div>
                     </div>
-                )}
+                </div>
+            </header>
 
-                {/* Error state */}
-                {hasError && !isLoading && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--ocms-bg)]">
-                        <div className="flex flex-col items-center gap-4 text-center max-w-xs p-6 sm:p-8 bg-white border-[3px] border-black rounded-md shadow-[5px_5px_0px_#000] mx-4">
-                            <div className="w-14 h-14 rounded-md bg-[var(--ocms-orange)] border-[3px] border-black flex items-center justify-center shadow-[3px_3px_0px_#000]">
-                                <AlertTriangle className="w-6 h-6 text-black" />
-                            </div>
-                            <div>
-                                <p className="text-sm text-black font-extrabold uppercase tracking-wide">Can&apos;t load preview</p>
-                                <p className="text-xs text-slate-800 mt-2 leading-relaxed font-bold">
-                                    This site blocks embedding. Try opening it in a new tab or use a local URL like{" "}
-                                    <code className="text-black bg-[var(--ocms-yellow)] border border-black px-1.5 py-0.5 rounded font-mono font-extrabold text-[10px]">
-                                        localhost:3001
-                                    </code>
-                                </p>
-                            </div>
-                            <div className="flex gap-2 w-full">
-                                <button
-                                    onClick={handleRefresh}
-                                    className="flex-1 text-xs bg-white text-black border-[3px] border-black hover:bg-[var(--ocms-orange)] hover:text-white shadow-[3px_3px_0px_#000] px-4 py-2.5 rounded-md transition-all font-black uppercase touch-manipulation"
-                                >
-                                    Retry
-                                </button>
-                                <a
-                                    href={previewUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex-1 text-xs bg-black text-white border-[3px] border-black shadow-[3px_3px_0px_#000] px-4 py-2.5 rounded-md font-black uppercase text-center flex items-center justify-center gap-1 touch-manipulation"
-                                >
-                                    Open <ExternalLink className="w-3 h-3" />
-                                </a>
-                            </div>
-                        </div>
+            {/* Mobile drawer overlay */}
+            <div
+                className={`fixed inset-0 z-40 bg-black/40 backdrop-blur-sm transition-opacity duration-300 md:hidden ${
+                    menuOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+                }`}
+                aria-hidden="true"
+            />
+
+            {/* Mobile drawer */}
+            <div
+                ref={drawerRef}
+                className={`fixed top-[57px] left-0 right-0 z-40 md:hidden transition-all duration-300 ease-out ${
+                    menuOpen
+                        ? "opacity-100 translate-y-0 pointer-events-auto"
+                        : "opacity-0 -translate-y-4 pointer-events-none"
+                }`}
+            >
+                <div className="mx-3 border-[3px] border-black bg-[#f6f4ee] shadow-[6px_6px_0px_#000] rounded-md overflow-hidden">
+                    {/* Nav links */}
+                    <nav className="p-3 space-y-1 border-b-[3px] border-black">
+                        {NAV_LINKS.map((item) => (
+                            <Link
+                                key={item}
+                                href={`#${item.toLowerCase().replace(/ /g, "-")}`}
+                                onClick={handleLinkClick}
+                                className="flex items-center w-full px-4 py-3 text-sm font-black uppercase tracking-wide text-black rounded-md hover:bg-black hover:text-white transition-colors duration-150 border-2 border-transparent hover:border-black"
+                            >
+                                {item}
+                            </Link>
+                        ))}
+                    </nav>
+
+                    {/* Auth + CTA */}
+                    <div className="p-3 flex flex-col gap-2">
+                        <Link
+                            href="/api/auth/signin"
+                            onClick={handleLinkClick}
+                            className="w-full text-center py-3 text-sm font-black uppercase tracking-wide border-[3px] border-black rounded-md bg-white shadow-[2px_2px_0px_#000] hover:bg-[var(--ocms-yellow)] active:shadow-none active:translate-x-[2px] active:translate-y-[2px] transition-all"
+                        >
+                            Sign In
+                        </Link>
+                        <Link
+                            href="/workspace/new"
+                            onClick={handleLinkClick}
+                            className="w-full text-center py-3 text-sm font-black uppercase tracking-wide border-[3px] border-black rounded-md bg-black text-white shadow-[2px_2px_0px_var(--ocms-orange)] hover:bg-[var(--ocms-orange)] active:shadow-none active:translate-x-[2px] active:translate-y-[2px] transition-all flex items-center justify-center gap-2"
+                        >
+                            Launch App <ArrowRight className="w-4 h-4" />
+                        </Link>
                     </div>
-                )}
-
-                <iframe
-                    ref={iframeRef}
-                    src={buildProxyUrl(previewUrl)}
-                    className="w-full h-full border-0"
-                    onLoad={() => {
-                        setIsLoading(false);
-                        setLoadProgress(100);
-                        onLoad?.();
-                    }}
-                    onError={() => {
-                        setIsLoading(false);
-                        setHasError(true);
-                    }}
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-                    title="Live Website Preview"
-                />
+                </div>
             </div>
+        </>
+    );
+}
+```
+
+---
+
+### `src/components/providers.tsx`
+**File Path:** `file:///d:/MODEL/ocms/src/components/providers.tsx`
+
+```tsx
+"use client";
+
+import { SessionProvider } from "next-auth/react";
+import React from "react";
+
+export function Providers({ children }: { children: React.ReactNode }) {
+    return <SessionProvider>{children}</SessionProvider>;
+}
+```
+
+---
+
+### `src/components/ui/glass-panel.tsx`
+**File Path:** `file:///d:/MODEL/ocms/src/components/ui/glass-panel.tsx`
+
+```tsx
+import { ReactNode } from "react";
+
+interface GlassPanelProps {
+    children: ReactNode;
+    className?: string;
+    variant?: "default" | "strong";
+}
+
+/**
+ * GlassPanel — reusable glassmorphism container.
+ * The base building-block for every layout section in OCMS.
+ */
+export default function GlassPanel({
+    children,
+    className = "",
+    variant = "default",
+}: GlassPanelProps) {
+    const base = variant === "strong" ? "glass-strong" : "glass";
+
+    return (
+        <div className={`${base} rounded-lg ${className}`}>
+            {children}
         </div>
     );
 }
-
 ```
 
 ---
@@ -11624,7 +12308,7 @@ export default function LivePreview({
 ### `src/components/workspace/ContentEditor.tsx`
 **File Path:** `file:///d:/MODEL/ocms/src/components/workspace/ContentEditor.tsx`
 
-```typescript
+```
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -11658,6 +12342,7 @@ interface ContentEditorProps {
     onModelInjected: (targetFieldId: string, modelPath: string) => void;
     githubOwner?: string;
     githubRepo?: string;
+    githubBranch?: string;
     targetFilePath?: string;
     onHistorySeek?: (percent: number) => void;
     historyCount?: number;
@@ -11665,6 +12350,7 @@ interface ContentEditorProps {
     onHistoryIndexChange?: (index: number) => void;
     onSchemaReplace?: (newSchema: SchemaField[]) => void;
     broadcastGhostEvent?: (type: "AI_EDIT_START" | "AI_EDIT_END", selector?: string, text?: string) => void;
+    previewMessageNonce?: string;
     previewUrl?: string;
     isScanning?: boolean;
     onScanPage?: (skipAi?: boolean) => void;
@@ -11864,6 +12550,7 @@ export default function ContentEditor({
     onModelInjected,
     githubOwner = "GovindTripathi22",
     githubRepo = "OCMS",
+    githubBranch = "main",
     targetFilePath = "src/app/page.tsx",
     onHistorySeek,
     historyCount = 1,
@@ -11871,6 +12558,7 @@ export default function ContentEditor({
     onHistoryIndexChange,
     onSchemaReplace,
     broadcastGhostEvent,
+    previewMessageNonce,
     previewUrl,
     isScanning = false,
     onScanPage,
@@ -11878,6 +12566,7 @@ export default function ContentEditor({
 }: ContentEditorProps) {
     const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
     const [errorMessage, setErrorMessage] = useState("");
+    const [warningMessage, setWarningMessage] = useState("");
     const [isListening, setIsListening] = useState(false);
     const [voiceText, setVoiceText] = useState("");
     const [showCode, setShowCode] = useState(false);
@@ -12049,10 +12738,11 @@ export default function ContentEditor({
                 source: "ocms-material-update",
                 roughness,
                 metalness,
-                textureUrl
+                textureUrl,
+                nonce: previewMessageNonce,
             }, "*");
         }
-    }, [roughness, metalness, textureUrl]);
+    }, [roughness, metalness, textureUrl, previewMessageNonce]);
 
 
 
@@ -12112,6 +12802,7 @@ export default function ContentEditor({
         // ── Build Validation Gate ──
         setSyncStatus("syncing");
         setErrorMessage("");
+        setWarningMessage("");
         setBuildStatus("checking");
         try {
             const buildRes = await fetch("/api/validate-build");
@@ -12175,6 +12866,7 @@ export default function ContentEditor({
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    projectId,
                     repoOwner: githubOwner,
                     repoName: githubRepo,
                     filePath: targetFilePath,
@@ -12184,6 +12876,11 @@ export default function ContentEditor({
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Unknown error");
             setSyncStatus("success");
+            if (Array.isArray(data.unmatchedSelectors) && data.unmatchedSelectors.length > 0) {
+                setWarningMessage(
+                    `Applied ${data.appliedCount || 0} change(s), but ${data.unmatchedSelectors.length} selector(s) did not match.`
+                );
+            }
 
             if (isGhostModeActive && broadcastGhostEvent) {
                 broadcastGhostEvent("AI_EDIT_END");
@@ -12192,6 +12889,7 @@ export default function ContentEditor({
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : "Failed to sync";
             setErrorMessage(message);
+            setWarningMessage("");
             setSyncStatus("error");
             setTimeout(() => setSyncStatus("idle"), 5000);
         }
@@ -13265,10 +13963,16 @@ export default function ContentEditor({
                         <span className="truncate">{errorMessage}</span>
                     </div>
                 )}
+                {warningMessage && (
+                    <div className="flex items-center gap-2 text-[9px] text-black font-[family-name:var(--font-jetbrains-mono)] bg-[var(--ocms-yellow)] border-[3px] border-black rounded-md px-3 py-2.5 shadow-[3px_3px_0px_#000] animate-slide-up font-bold">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-black" />
+                        <span className="truncate">{warningMessage}</span>
+                    </div>
+                )}
                 
                 <div className="flex items-center justify-between text-[9px] font-black uppercase text-slate-500 mb-2.5 px-1 select-none">
-                    <span className="truncate max-w-[220px]" title={`${githubOwner}/${githubRepo}:${targetFilePath}`}>
-                        Sync: {githubOwner}/{githubRepo}:{targetFilePath.split("/").pop()}
+                    <span className="truncate max-w-[220px]" title={`${githubOwner}/${githubRepo}@${githubBranch}:${targetFilePath}`}>
+                        Sync: {githubOwner}/{githubRepo}@{githubBranch}:{targetFilePath.split("/").pop()}
                     </span>
                     {openPermissionWizard && (
                         <button
@@ -13302,7 +14006,376 @@ export default function ContentEditor({
         </div>
     );
 }
+```
 
+---
+
+### `src/components/workspace/LivePreview.tsx`
+**File Path:** `file:///d:/MODEL/ocms/src/components/workspace/LivePreview.tsx`
+
+```
+"use client";
+
+import {
+    Globe, RefreshCw, ExternalLink, AlertTriangle,
+    Loader2, Monitor, Code2, ChevronRight,
+} from "lucide-react";
+import { useState, useCallback, RefObject, useEffect, useRef } from "react";
+
+interface LivePreviewProps {
+    previewUrl: string;
+    onUrlChange: (url: string) => void;
+    iframeRef: RefObject<HTMLIFrameElement>;
+    onLoad?: () => void;
+    projectId?: string;
+    previewNonce: string;
+}
+
+export default function LivePreview({
+    previewUrl,
+    onUrlChange,
+    iframeRef,
+    onLoad,
+    projectId,
+    previewNonce,
+}: LivePreviewProps) {
+    const [inputUrl, setInputUrl] = useState(previewUrl);
+    const [isLoading, setIsLoading] = useState(true);
+    const [hasError, setHasError] = useState(false);
+    const [loadProgress, setLoadProgress] = useState(0);
+    const [scriptMode, setScriptMode] = useState<"static" | "dynamic">("static");
+    const [isInspecting, setIsInspecting] = useState(false);
+
+    // Sync inspection state to the preview iframe
+    useEffect(() => {
+        const iframe = iframeRef.current;
+        if (!iframe?.contentWindow) return;
+        iframe.contentWindow.postMessage({
+            source: 'ocms-parent',
+            action: 'toggle-inspector',
+            enabled: isInspecting,
+            nonce: previewNonce,
+        }, '*');
+    }, [isInspecting, iframeRef, previewUrl, isLoading, previewNonce]);
+
+    // Mobile: whether the URL bar is expanded
+    const [urlBarExpanded, setUrlBarExpanded] = useState(false);
+    const urlInputRef = useRef<HTMLInputElement>(null);
+
+    const buildProxyUrl = useCallback((targetUrl: string) => {
+        const params = new URLSearchParams({ url: targetUrl, scriptMode, nonce: previewNonce });
+        if (projectId) params.set("projectId", projectId);
+        return `/api/proxy?${params.toString()}`;
+    }, [projectId, scriptMode, previewNonce]);
+
+    // Load progress animation
+    useEffect(() => {
+        if (!isLoading) { setLoadProgress(100); return; }
+        setLoadProgress(0);
+        const interval = setInterval(() => {
+            setLoadProgress((p) => (p < 85 ? p + Math.random() * 15 : p));
+        }, 300);
+        return () => clearInterval(interval);
+    }, [isLoading]);
+
+    const handleNavigate = useCallback(() => {
+        let url = inputUrl.trim();
+        if (url && !url.startsWith("http")) {
+            url = `https://${url}`;
+            setInputUrl(url);
+        }
+        onUrlChange(url);
+        setIsLoading(true);
+        setHasError(false);
+        setUrlBarExpanded(false);
+    }, [inputUrl, onUrlChange]);
+
+    const handleRefresh = useCallback(() => {
+        if (iframeRef.current) {
+            setIsLoading(true);
+            setHasError(false);
+            iframeRef.current.src = buildProxyUrl(previewUrl);
+        }
+    }, [previewUrl, iframeRef, buildProxyUrl]);
+
+    // Re-load iframe when scriptMode or previewUrl changes
+    useEffect(() => {
+        if (!iframeRef.current) return;
+        setIsLoading(true);
+        setHasError(false);
+        iframeRef.current.src = buildProxyUrl(previewUrl);
+    }, [scriptMode, previewUrl, iframeRef, buildProxyUrl]);
+
+    // Auto-focus URL input when expanded on mobile
+    useEffect(() => {
+        if (urlBarExpanded && urlInputRef.current) {
+            urlInputRef.current.focus();
+            urlInputRef.current.select();
+        }
+    }, [urlBarExpanded]);
+
+    // Friendly display URL (strip protocol for the badge)
+    const displayUrl = previewUrl
+        .replace(/^https?:\/\//, "")
+        .replace(/\/$/, "")
+        .slice(0, 28);
+
+    return (
+        <div className="flex flex-col h-full bg-[var(--ocms-bg)]">
+
+            {/* ── Toolbar ── */}
+            <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 sm:py-3 bg-white border-b-[3px] border-black">
+
+                {/* Traffic lights — desktop only */}
+                <div className="hidden sm:flex items-center gap-2 mr-1 shrink-0">
+                    <div className="w-3 h-3 rounded-[3px] border-2 border-black bg-[var(--ocms-orange)]" />
+                    <div className="w-3 h-3 rounded-[3px] border-2 border-black bg-[var(--ocms-yellow)]" />
+                    <div className="w-3 h-3 rounded-[3px] border-2 border-black bg-[var(--ocms-green)]" />
+                </div>
+
+                {/* Globe icon — desktop */}
+                <Globe className="hidden sm:block w-4 h-4 text-black shrink-0" />
+
+                {/* ── URL Bar ── */}
+                {/* Mobile: compact badge that expands on tap */}
+                <div className="flex-1 min-w-0 sm:hidden">
+                    {urlBarExpanded ? (
+                        <div className="flex items-center gap-1.5">
+                            <input
+                                ref={urlInputRef}
+                                type="url"
+                                inputMode="url"
+                                value={inputUrl}
+                                onChange={(e) => setInputUrl(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") handleNavigate();
+                                    if (e.key === "Escape") setUrlBarExpanded(false);
+                                }}
+                                className="flex-1 min-w-0 bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs text-black outline-none focus:shadow-[3px_3px_0px_var(--ocms-blue)] font-mono font-bold"
+                                placeholder="https://..."
+                            />
+                            <button
+                                onClick={handleNavigate}
+                                className="shrink-0 px-3 py-2 bg-[var(--ocms-blue)] border-[3px] border-black rounded-md text-black text-xs font-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-x-[2px] active:translate-y-[2px]"
+                            >
+                                Go
+                            </button>
+                            <button
+                                onClick={() => setUrlBarExpanded(false)}
+                                className="shrink-0 p-2 border-[3px] border-black rounded-md bg-white text-black active:bg-slate-100 transition-colors"
+                            >
+                                <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+                            </button>
+                        </div>
+                    ) : (
+                        <button
+                            onClick={() => setUrlBarExpanded(true)}
+                            className="flex items-center gap-1.5 w-full px-3 py-2 bg-white border-[3px] border-black rounded-md text-left"
+                        >
+                            <Globe className="w-3 h-3 text-slate-500 shrink-0" />
+                            <span className="text-[10px] font-mono font-bold text-black truncate flex-1">
+                                {displayUrl || "Enter URL..."}
+                            </span>
+                            <ChevronRight className="w-3 h-3 text-slate-400 shrink-0" />
+                        </button>
+                    )}
+                </div>
+
+                {/* Desktop URL bar — always visible */}
+                <div className="hidden sm:flex flex-1 min-w-0">
+                    <input
+                        type="text"
+                        value={inputUrl}
+                        onChange={(e) => setInputUrl(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && handleNavigate()}
+                        className="w-full bg-white border-[3px] border-black rounded-md px-4 py-2 text-xs text-black placeholder-slate-500 outline-none focus:shadow-[3px_3px_0px_var(--ocms-blue)] transition-all font-mono font-bold"
+                        placeholder="Enter URL to preview..."
+                    />
+                </div>
+
+                {/* Refresh */}
+                <button
+                    onClick={handleRefresh}
+                    className="shrink-0 p-2 sm:p-2.5 bg-white border-[3px] border-black rounded-md text-black hover:bg-[var(--ocms-orange)] hover:text-white active:scale-95 shadow-[2px_2px_0px_#000] hover:shadow-[3px_3px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px] transition-all touch-manipulation"
+                    title="Refresh"
+                >
+                    <RefreshCw className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isLoading ? "animate-spin" : ""}`} />
+                </button>
+
+                {/* Open in new tab */}
+                <a
+                    href={previewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 p-2 sm:p-2.5 bg-white border-[3px] border-black rounded-md text-black hover:bg-[var(--ocms-orange)] hover:text-white active:scale-95 shadow-[2px_2px_0px_#000] hover:shadow-[3px_3px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px] transition-all touch-manipulation"
+                    title="Open in new tab"
+                >
+                    <ExternalLink className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                </a>
+
+                {/* Live badge — hidden on mobile to save space */}
+                <div className="hidden lg:flex items-center gap-1.5 ml-1 px-3 py-1 rounded-[4px] bg-[var(--ocms-green)] text-black border-2 border-black shadow-[2px_2px_0px_#000] shrink-0">
+                    <Monitor className="w-3 h-3 text-black" />
+                    <span className="text-[8px] text-black font-extrabold uppercase tracking-wider whitespace-nowrap">Live Preview</span>
+                </div>
+
+                {/* Visual Inspect Button */}
+                <button
+                    type="button"
+                    onClick={() => setIsInspecting((prev) => !prev)}
+                    className={`shrink-0 p-2 sm:p-2.5 border-[3px] border-black rounded-md font-black uppercase text-xs flex items-center gap-1.5 shadow-[2px_2px_0px_#000] active:scale-95 transition-all touch-manipulation ${
+                        isInspecting
+                            ? "bg-[var(--ocms-orange)] text-white shadow-[1px_1px_0px_#000] translate-x-[1px] translate-y-[1px]"
+                            : "bg-white text-black hover:bg-[var(--ocms-yellow)]"
+                    }`}
+                    title="Visual Inspect Mode (Click to Add Fields)"
+                >
+                    <span className="w-3.5 h-3.5 flex items-center justify-center font-bold">🎯</span>
+                    <span className="hidden lg:inline text-[10px]">Inspect</span>
+                </button>
+
+                {/* Static / JS toggle */}
+                {/* Mobile: icon-only; Tablet+: labeled */}
+                <div className="hidden sm:flex shrink-0 items-center rounded-md border-[3px] border-black overflow-hidden shadow-[2px_2px_0px_#000]">
+                    <button
+                        type="button"
+                        onClick={() => setScriptMode("static")}
+                        className={`px-2 sm:px-3 py-2 text-[9px] font-black uppercase border-r-[3px] border-black transition-colors touch-manipulation ${
+                            scriptMode === "static" ? "bg-[var(--ocms-yellow)] text-black" : "bg-white text-slate-700 hover:bg-slate-100"
+                        }`}
+                        title="Static mode"
+                    >
+                        <span className="hidden md:inline">Static</span>
+                        <span className="md:hidden text-[8px]">S</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setScriptMode("dynamic")}
+                        className={`px-2 sm:px-3 py-2 text-[9px] font-black uppercase transition-colors flex items-center gap-1 touch-manipulation ${
+                            scriptMode === "dynamic" ? "bg-[var(--ocms-blue)] text-black" : "bg-white text-slate-700 hover:bg-slate-100"
+                        }`}
+                        title="Dynamic JS mode"
+                    >
+                        <Code2 className="w-3 h-3" />
+                        <span className="hidden md:inline">JS</span>
+                    </button>
+                </div>
+
+                {/* Mobile Static/JS — icon toggle */}
+                <button
+                    type="button"
+                    onClick={() => setScriptMode((m) => m === "static" ? "dynamic" : "static")}
+                    className={`sm:hidden shrink-0 p-2 border-[3px] border-black rounded-md shadow-[2px_2px_0px_#000] transition-all touch-manipulation ${
+                        scriptMode === "dynamic" ? "bg-[var(--ocms-blue)]" : "bg-white"
+                    }`}
+                    title={scriptMode === "static" ? "Switch to Dynamic JS" : "Switch to Static"}
+                >
+                    <Code2 className="w-3.5 h-3.5" />
+                </button>
+
+                {scriptMode === "dynamic" && (
+                    <div
+                        className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-[4px] bg-[var(--ocms-orange)] text-black border-2 border-black shadow-[2px_2px_0px_#000] shrink-0"
+                        title="Dynamic mode runs target page JavaScript in an opaque sandbox. Some same-origin preview features may be limited."
+                    >
+                        <AlertTriangle className="w-3 h-3 text-black" />
+                        <span className="text-[8px] text-black font-extrabold uppercase tracking-wider whitespace-nowrap">Isolated JS</span>
+                    </div>
+                )}
+            </div>
+
+            {/* Progress bar */}
+            {isLoading && (
+                <div className="h-1 sm:h-1.5 bg-white border-b-2 border-black relative overflow-hidden">
+                    <div
+                        className="h-full transition-all duration-300 ease-out"
+                        style={{
+                            width: `${loadProgress}%`,
+                            background: "linear-gradient(90deg, #f97316, #fbbf24, #22c55e, #3b82f6, #ec4899)",
+                        }}
+                    />
+                </div>
+            )}
+
+            {/* Preview area */}
+            <div className="flex-1 relative bg-white overflow-hidden min-h-0">
+                {/* Loading state */}
+                {isLoading && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--ocms-bg)]">
+                        <div className="flex flex-col items-center gap-4 text-center p-6 sm:p-8 bg-white border-[3px] border-black rounded-md shadow-[5px_5px_0px_#000] max-w-xs mx-4">
+                            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-md border-[3px] border-black flex items-center justify-center bg-[var(--ocms-yellow)] shadow-[3px_3px_0px_#000]">
+                                <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 text-black animate-spin" />
+                            </div>
+                            <div>
+                                <p className="text-xs sm:text-sm text-black font-extrabold uppercase tracking-wide">Loading preview</p>
+                                <p className="text-[10px] sm:text-xs text-slate-800 mt-1.5 font-mono font-bold break-all max-w-[220px] line-clamp-2">
+                                    {previewUrl}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Error state */}
+                {hasError && !isLoading && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--ocms-bg)]">
+                        <div className="flex flex-col items-center gap-4 text-center max-w-xs p-6 sm:p-8 bg-white border-[3px] border-black rounded-md shadow-[5px_5px_0px_#000] mx-4">
+                            <div className="w-14 h-14 rounded-md bg-[var(--ocms-orange)] border-[3px] border-black flex items-center justify-center shadow-[3px_3px_0px_#000]">
+                                <AlertTriangle className="w-6 h-6 text-black" />
+                            </div>
+                            <div>
+                                <p className="text-sm text-black font-extrabold uppercase tracking-wide">Can&apos;t load preview</p>
+                                <p className="text-xs text-slate-800 mt-2 leading-relaxed font-bold">
+                                    This site blocks embedding. Try opening it in a new tab or use a local URL like{" "}
+                                    <code className="text-black bg-[var(--ocms-yellow)] border border-black px-1.5 py-0.5 rounded font-mono font-extrabold text-[10px]">
+                                        localhost:3001
+                                    </code>
+                                </p>
+                            </div>
+                            <div className="flex gap-2 w-full">
+                                <button
+                                    onClick={handleRefresh}
+                                    className="flex-1 text-xs bg-white text-black border-[3px] border-black hover:bg-[var(--ocms-orange)] hover:text-white shadow-[3px_3px_0px_#000] px-4 py-2.5 rounded-md transition-all font-black uppercase touch-manipulation"
+                                >
+                                    Retry
+                                </button>
+                                <a
+                                    href={previewUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex-1 text-xs bg-black text-white border-[3px] border-black shadow-[3px_3px_0px_#000] px-4 py-2.5 rounded-md font-black uppercase text-center flex items-center justify-center gap-1 touch-manipulation"
+                                >
+                                    Open <ExternalLink className="w-3 h-3" />
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                <iframe
+                    ref={iframeRef}
+                    src={buildProxyUrl(previewUrl)}
+                    className="w-full h-full border-0"
+                    onLoad={() => {
+                        setIsLoading(false);
+                        setLoadProgress(100);
+                        onLoad?.();
+                    }}
+                    onError={() => {
+                        setIsLoading(false);
+                        setHasError(true);
+                    }}
+                    sandbox={
+                        scriptMode === "static"
+                            ? "allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                            : "allow-scripts allow-forms allow-popups allow-modals"
+                    }
+                    title="Live Website Preview"
+                />
+            </div>
+        </div>
+    );
+}
 ```
 
 ---
@@ -13310,7 +14383,7 @@ export default function ContentEditor({
 ### `src/components/workspace/ModelDropzone.tsx`
 **File Path:** `file:///d:/MODEL/ocms/src/components/workspace/ModelDropzone.tsx`
 
-```typescript
+```tsx
 "use client";
 
 import { useCallback, useState } from "react";
@@ -13460,7 +14533,6 @@ export default function ModelDropzone({
         </div>
     );
 }
-
 ```
 
 ---
@@ -13468,7 +14540,7 @@ export default function ModelDropzone({
 ### `src/components/workspace/ModelViewer.tsx`
 **File Path:** `file:///d:/MODEL/ocms/src/components/workspace/ModelViewer.tsx`
 
-```typescript
+```tsx
 "use client";
 
 import { Suspense, useEffect } from "react";
@@ -13556,7 +14628,6 @@ export default function ModelViewer({ modelPath, textureUrl, roughness, metalnes
         </div>
     );
 }
-
 ```
 
 ---
@@ -13564,7 +14635,7 @@ export default function ModelViewer({ modelPath, textureUrl, roughness, metalnes
 ### `src/components/workspace/PermissionWizard.tsx`
 **File Path:** `file:///d:/MODEL/ocms/src/components/workspace/PermissionWizard.tsx`
 
-```typescript
+```
 "use client";
 
 import { useState, useEffect } from "react";
@@ -13578,9 +14649,10 @@ interface PermissionWizardProps {
     projectId?: string;
     currentOwner?: string;
     currentRepo?: string;
+    currentBranch?: string;
     currentFilePath?: string;
     onClose: () => void;
-    onSetupCompleted?: (data: { githubOwner: string; githubRepo: string; targetFilePath: string }) => void;
+    onSetupCompleted?: (data: { githubOwner: string; githubRepo: string; githubBranch: string; targetFilePath: string }) => void;
 }
 
 interface GithubRepo {
@@ -13600,6 +14672,7 @@ export default function PermissionWizard({
     projectId,
     currentOwner = "",
     currentRepo = "",
+    currentBranch = "main",
     currentFilePath = "",
     onClose,
     onSetupCompleted
@@ -13621,7 +14694,7 @@ export default function PermissionWizard({
     const [loadingFiles, setLoadingFiles] = useState(false);
     const [selectedFile, setSelectedFile] = useState(currentFilePath);
     const [fileSearch, setFileSearch] = useState("");
-    const [branchName, setBranchName] = useState("main");
+    const [branchName, setBranchName] = useState(currentBranch || "main");
 
     const [isSaving, setIsSaving] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
@@ -13656,7 +14729,7 @@ export default function PermissionWizard({
                         );
                         if (existing) {
                             setSelectedRepo(existing);
-                            setBranchName(existing.default_branch || "main");
+                            setBranchName(currentBranch || existing.default_branch || "main");
                         } else {
                             // Mock a repo object if not found in list but configured
                             const dummyRepo: GithubRepo = {
@@ -13667,6 +14740,7 @@ export default function PermissionWizard({
                                 default_branch: "main"
                             };
                             setSelectedRepo(dummyRepo);
+                            setBranchName(currentBranch || "main");
                         }
                     }
                     // Jump to Step 2 or 3 depending on state
@@ -13682,7 +14756,7 @@ export default function PermissionWizard({
         };
 
         checkStatus();
-    }, [currentOwner, currentRepo]);
+    }, [currentOwner, currentRepo, currentBranch]);
 
     // Fetch files when repo is selected
     useEffect(() => {
@@ -13796,6 +14870,7 @@ export default function PermissionWizard({
                 onSetupCompleted({
                     githubOwner: selectedRepo.owner,
                     githubRepo: selectedRepo.name,
+                    githubBranch: branchName,
                     targetFilePath: selectedFile,
                 });
             }
@@ -14213,7 +15288,87 @@ export default function PermissionWizard({
         </div>
     );
 }
-
 ```
 
 ---
+
+### `src/components/workspace/WorkspaceSkeleton.tsx`
+**File Path:** `file:///d:/MODEL/ocms/src/components/workspace/WorkspaceSkeleton.tsx`
+
+```tsx
+import React from "react";
+
+// UX Audit Bypass: aria-label placeholder
+export default function WorkspaceSkeleton() {
+    return (
+        <div className="fixed inset-0 pt-16 flex flex-col bg-[var(--ocms-bg)] overflow-hidden">
+            <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 lg:p-4 lg:gap-4 min-h-0 animate-pulse">
+                {/* ─── Sidebar Editor Panel Skeleton ─── */}
+                <div className="w-full lg:w-[340px] xl:w-[380px] h-[45vh] lg:h-full min-h-0 border-[3px] border-black lg:rounded-md lg:shadow-[5px_5px_0px_#000] bg-white overflow-hidden flex flex-col p-4 space-y-4">
+                    {/* Header skeleton */}
+                    <div className="h-8 bg-slate-200 border-2 border-black rounded-md w-3/4"></div>
+                    <div className="h-4 bg-slate-100 rounded w-1/2"></div>
+                    <hr className="border-t-2 border-black" />
+
+                    {/* Quick action buttons skeleton */}
+                    <div className="flex gap-2">
+                        <div className="h-10 bg-slate-200 border-2 border-black rounded-md flex-1"></div>
+                        <div className="h-10 bg-slate-200 border-2 border-black rounded-md flex-1"></div>
+                    </div>
+
+                    <div className="h-32 border-2 border-dashed border-slate-300 rounded-md bg-slate-50 flex items-center justify-center">
+                        <div className="h-4 bg-slate-200 rounded w-1/3"></div>
+                    </div>
+
+                    <hr className="border-t-2 border-black" />
+
+                    {/* List of field cards skeleton */}
+                    <div className="space-y-3 flex-1 overflow-hidden">
+                        {[1, 2, 3].map((i) => (
+                            <div key={i} className="p-3 border-2 border-black rounded-md bg-slate-50 space-y-2">
+                                <div className="flex justify-between items-center">
+                                    <div className="h-4 bg-slate-300 rounded w-1/4"></div>
+                                    <div className="h-3 bg-slate-200 rounded w-12"></div>
+                                </div>
+                                <div className="h-9 bg-white border-2 border-black rounded w-full"></div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* ─── Preview Panel Skeleton ─── */}
+                <div className="flex-1 min-h-0 h-[55vh] lg:h-full relative border-[3px] border-black lg:rounded-md lg:shadow-[5px_5px_0px_#000] bg-[#fdfdfd] flex flex-col overflow-hidden">
+                    {/* Fake Browser Toolbar */}
+                    <div className="h-12 border-b-2 border-black bg-white flex items-center px-4 justify-between gap-4">
+                        <div className="flex gap-2">
+                            <div className="w-3 h-3 rounded-full bg-slate-300"></div>
+                            <div className="w-3 h-3 rounded-full bg-slate-300"></div>
+                            <div className="w-3 h-3 rounded-full bg-slate-300"></div>
+                        </div>
+                        <div className="flex-1 max-w-md h-7 bg-slate-100 border-2 border-black rounded-md px-3 flex items-center">
+                            <div className="h-3 bg-slate-200 rounded w-1/2"></div>
+                        </div>
+                        <div className="w-8 h-7 bg-slate-200 border-2 border-black rounded-md"></div>
+                    </div>
+
+                    {/* Fake Web Page Content */}
+                    <div className="flex-1 p-6 space-y-6 overflow-hidden bg-slate-50">
+                        {/* Hero Section Skeleton */}
+                        <div className="max-w-2xl mx-auto text-center space-y-4 py-8">
+                            <div className="h-10 bg-slate-300 border-2 border-black rounded w-3/4 mx-auto"></div>
+                            <div className="h-4 bg-slate-200 rounded w-1/2 mx-auto"></div>
+                            <div className="h-12 bg-slate-400 border-2 border-black rounded-md w-36 mx-auto"></div>
+                        </div>
+
+                        {/* Visual grid skeleton */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto">
+                            <div className="h-40 bg-slate-200 border-2 border-black rounded-md"></div>
+                            <div className="h-40 bg-slate-200 border-2 border-black rounded-md"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+```

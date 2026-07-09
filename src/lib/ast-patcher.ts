@@ -1,10 +1,12 @@
 import generate from "@babel/generator";
 import {
     findJSXElements,
+    isInsideMappedExpression,
     normalizeText,
     parseTSX,
     readJSXElementValue,
     writeJSXElementValue,
+    writeStaticMappedExpressionValue,
 } from "@/lib/jsx-ast-helpers";
 
 export interface ASTChange {
@@ -24,6 +26,11 @@ export interface PatchReport {
     unmatchedSelectors: string[];
 }
 
+interface TargetChoice {
+    target: ReturnType<typeof findJSXElements>[number] | null;
+    reason?: string;
+}
+
 export function patchJSX(sourceCode: string, changes: ASTChange[]): string {
     return patchJSXWithReport(sourceCode, changes).code;
 }
@@ -38,9 +45,21 @@ export function patchJSXWithReport(sourceCode: string, changes: ASTChange[]): Pa
         if (!change.selector || change.newValue === undefined || change.newValue === null) continue;
 
         const candidates = findJSXElements(ast, change.selector);
-        const target = chooseTarget(candidates, change);
+        const choice = chooseTarget(candidates, change);
+        const target = choice.target;
         if (!target) {
-            unmatchedSelectors.add(change.selector);
+            unmatchedSelectors.add(unmatchedSelector(change.selector, choice.reason));
+            continue;
+        }
+
+        if (isInsideMappedExpression(target)) {
+            const mappedWrite = writeStaticMappedExpressionValue(target, change.type, change.newValue, change.oldValue);
+            if (!mappedWrite.applied) {
+                unmatchedSelectors.add(unmatchedSelector(change.selector, mappedWrite.reason || "ambiguous: element renders via .map()"));
+                continue;
+            }
+            matchedSelectors.add(change.selector);
+            appliedCount++;
             continue;
         }
 
@@ -73,8 +92,8 @@ export function patchJSXWithReport(sourceCode: string, changes: ASTChange[]): Pa
 function chooseTarget(
     candidates: ReturnType<typeof findJSXElements>,
     change: ASTChange
-): ReturnType<typeof findJSXElements>[number] | null {
-    if (!candidates.length) return null;
+): TargetChoice {
+    if (!candidates.length) return { target: null };
 
     if (change.oldValue) {
         const normalizedOld = normalizeText(change.oldValue);
@@ -83,8 +102,21 @@ function chooseTarget(
             return currentValue !== null && normalizeText(currentValue) === normalizedOld;
         });
 
-        if (oldValueMatch) return oldValueMatch;
+        if (oldValueMatch) return { target: oldValueMatch };
     }
 
-    return candidates[0] ?? null;
+    const mappedCandidates = candidates.filter(isInsideMappedExpression);
+    if (mappedCandidates.length === 1) return { target: mappedCandidates[0] };
+    if (mappedCandidates.length > 1) {
+        return {
+            target: null,
+            reason: "ambiguous: element renders via .map()",
+        };
+    }
+
+    return { target: candidates[0] ?? null };
+}
+
+function unmatchedSelector(selector: string, reason?: string): string {
+    return reason ? `${selector} (${reason})` : selector;
 }

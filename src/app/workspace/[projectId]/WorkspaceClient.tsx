@@ -10,10 +10,12 @@ import { PBR_PRESETS } from "@/lib/pbr-presets";
 interface WorkspaceClientProps {
     project: {
         id: string;
-        githubOwner: string;
-        githubRepo: string;
-        targetFilePath: string;
-        sourceUrl: string;
+        name: string;
+        githubOwner: string | null;
+        githubRepo: string | null;
+        githubBranch: string;
+        targetFilePath: string | null;
+        sourceUrl: string | null;
     };
     initialSchema: SchemaField[];
 }
@@ -33,18 +35,27 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
     const [schema, setSchema] = useState<SchemaField[]>(initialSchema);
     const [history, setHistory] = useState<SchemaField[][]>([initialSchema]);
 
-    const [previewUrl, setPreviewUrl] = useState(project.sourceUrl);
+    const [previewUrl, setPreviewUrl] = useState(project.sourceUrl ?? "");
     const [iframeLoaded, setIframeLoaded] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
 
-    // GitHub Repo configuration state
-    const [githubOwner, setGithubOwner] = useState(project.githubOwner);
-    const [githubRepo, setGithubRepo] = useState(project.githubRepo);
-    const [targetFilePath, setTargetFilePath] = useState(project.targetFilePath);
+    // GitHub Repo configuration state — null means not yet configured
+    const [githubOwner, setGithubOwner] = useState(project.githubOwner ?? "");
+    const [githubRepo, setGithubRepo] = useState(project.githubRepo ?? "");
+    const [githubBranch, setGithubBranch] = useState(project.githubBranch || "main");
+    const [targetFilePath, setTargetFilePath] = useState(project.targetFilePath ?? "");
     const [showPermissionWizard, setShowPermissionWizard] = useState(false);
 
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const inlineEditRef = useRef(false);
+    const previewNonceRef = useRef<string>("");
+    if (!previewNonceRef.current) {
+        previewNonceRef.current =
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+                ? crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    const previewNonce = previewNonceRef.current;
 
     // Consolidated modal state
     const [modalState, setModalState] = useState<ModalState | null>(null);
@@ -209,10 +220,10 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         const changesPayload = buildChangesPayload(schema);
 
         iframe.contentWindow.postMessage(
-            { source: "ocms-live-bridge", changes: changesPayload },
-            window.location.origin
+            { source: "ocms-live-bridge", changes: changesPayload, nonce: previewNonce },
+            "*"
         );
-    }, [schema, iframeLoaded, buildChangesPayload]);
+    }, [schema, iframeLoaded, buildChangesPayload, previewNonce]);
 
     // Debounced autosave effect for persisting schema edits to database
     useEffect(() => {
@@ -243,16 +254,15 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         if (!iframe?.contentWindow || !iframeLoaded) return;
 
         iframe.contentWindow.postMessage(
-            { source: "ocms-editor", type, selector, text },
-            window.location.origin
+            { source: "ocms-editor", type, selector, text, nonce: previewNonce },
+            "*"
         );
-    }, [iframeLoaded]);
+    }, [iframeLoaded, previewNonce]);
 
     useEffect(() => {
         const handleMessage = async (event: MessageEvent) => {
-            // Lock origin checks to same origin to prevent external origins spoofing messages
-            if (event.origin !== window.location.origin) return;
             if (event.source !== iframeRef.current?.contentWindow) return;
+            if (!event.data || event.data.nonce !== previewNonce) return;
             const { source, fieldId, newValue, file, action, value } = event.data;
 
             try {
@@ -275,8 +285,8 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
                     const changesPayload = buildChangesPayload(schema);
                     iframeRef.current?.contentWindow?.postMessage(
-                        { source: "ocms-live-bridge", changes: changesPayload },
-                        window.location.origin
+                        { source: "ocms-live-bridge", changes: changesPayload, nonce: previewNonce },
+                        "*"
                     );
                     return;
                 }
@@ -380,7 +390,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
         window.addEventListener("message", handleMessage);
         return () => window.removeEventListener("message", handleMessage);
-    }, [handleFieldChange, handleModelInjected, project.id, schema, previewUrl, buildChangesPayload, showToast]);
+    }, [handleFieldChange, handleModelInjected, project.id, schema, previewUrl, buildChangesPayload, showToast, previewNonce]);
 
     const handleSchemaReplace = useCallback((newSchema: SchemaField[]) => {
         setSchema(newSchema);
@@ -408,11 +418,13 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         onModelInjected={handleModelInjected}
                         githubOwner={githubOwner}
                         githubRepo={githubRepo}
+                        githubBranch={githubBranch}
                         targetFilePath={targetFilePath}
                         onHistorySeek={seekHistory}
                         historyCount={history.length}
                         onSchemaReplace={handleSchemaReplace}
                         broadcastGhostEvent={broadcastGhostEvent}
+                        previewMessageNonce={previewNonce}
                         previewUrl={previewUrl}
                         isScanning={isScanning}
                         onScanPage={handleScanPage}
@@ -428,6 +440,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         iframeRef={iframeRef}
                         onLoad={() => setIframeLoaded(true)}
                         projectId={project.id}
+                        previewNonce={previewNonce}
                     />
                 </div>
             </div>
@@ -638,11 +651,13 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                     projectId={project.id}
                     currentOwner={githubOwner}
                     currentRepo={githubRepo}
+                    currentBranch={githubBranch}
                     currentFilePath={targetFilePath}
                     onClose={() => setShowPermissionWizard(false)}
                     onSetupCompleted={(data) => {
                         setGithubOwner(data.githubOwner);
                         setGithubRepo(data.githubRepo);
+                        setGithubBranch(data.githubBranch);
                         setTargetFilePath(data.targetFilePath);
                     }}
                 />

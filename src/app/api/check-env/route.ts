@@ -5,20 +5,36 @@ import { NextResponse } from "next/server";
  *
  * Checks whether critical environment variables are configured.
  * Returns { configured, missing, warnings } — never exposes actual values.
+ *
+ * Variable naming: this app uses AUTH_SECRET (not NEXTAUTH_SECRET).
+ * Both NextAuth v4 and Auth.js v5 support AUTH_SECRET natively.
  */
 export async function GET() {
     const missing: string[] = [];
     const warnings: string[] = [];
 
-    const DUMMY_GITHUB_CLIENT_IDS = [
+    // Known placeholder / dummy values that indicate copy-paste without real config
+    const PLACEHOLDER_PATTERNS = [
         "your_github_client_id",
         "your_github_client_id_here",
         "dummy_client_id",
+        "placeholder",
+        "<your_client_id>",
     ];
-    const DUMMY_GITHUB_CLIENT_SECRETS = [
+    const SECRET_PLACEHOLDER_PATTERNS = [
         "your_github_client_secret",
         "your_github_client_secret_here",
         "dummy_client_secret",
+        "placeholder",
+        "<your_client_secret>",
+    ];
+
+    // AUTH_SECRET placeholder values (the .env ships with one for local dev)
+    const AUTH_SECRET_PLACEHOLDERS = [
+        "dummy_secret_auth_secret_for_local_testing_ocms_123",
+        "your_auth_secret",
+        "changeme",
+        "secret",
     ];
 
     const requiredVars = [
@@ -36,20 +52,26 @@ export async function GET() {
             continue;
         }
 
-        // Check for dummy / placeholder values
-        if (
-            varName === "GITHUB_CLIENT_ID" &&
-            DUMMY_GITHUB_CLIENT_IDS.includes(value.trim().toLowerCase())
-        ) {
+        const v = value.trim().toLowerCase();
+
+        if (varName === "GITHUB_CLIENT_ID" && PLACEHOLDER_PATTERNS.some(p => v.includes(p))) {
             warnings.push(varName);
         }
 
-        if (
-            varName === "GITHUB_CLIENT_SECRET" &&
-            DUMMY_GITHUB_CLIENT_SECRETS.includes(value.trim().toLowerCase())
-        ) {
+        if (varName === "GITHUB_CLIENT_SECRET" && SECRET_PLACEHOLDER_PATTERNS.some(p => v.includes(p))) {
             warnings.push(varName);
         }
+
+        if (varName === "AUTH_SECRET" && AUTH_SECRET_PLACEHOLDERS.some(p => v === p)) {
+            warnings.push(varName);
+        }
+    }
+
+    // Optional: warn if NEXTAUTH_URL is missing (needed in production)
+    const nextauthUrl = process.env.NEXTAUTH_URL;
+    const isProduction = process.env.NODE_ENV === "production";
+    if (isProduction && (!nextauthUrl || nextauthUrl.trim() === "")) {
+        warnings.push("NEXTAUTH_URL");
     }
 
     const configured = missing.length === 0 && warnings.length === 0;

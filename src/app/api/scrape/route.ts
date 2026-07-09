@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cleanHtml } from "@/lib/scraper";
-import { validateUrlForSsrf } from "@/lib/ssrf";
+import { fetchWithValidatedSsrfUrl, validateUrlForSsrf } from "@/lib/ssrf";
+import { withRateLimit } from "@/lib/ratelimit";
 
 /**
  * POST /api/scrape
@@ -11,6 +12,9 @@ import { validateUrlForSsrf } from "@/lib/ssrf";
  */
 export async function POST(request: Request) {
     try {
+        const rateLimited = await withRateLimit("scrape", request, { limit: 30, windowMs: 60_000 });
+        if (rateLimited) return rateLimited;
+
         const body = await request.json();
         const { url } = body;
 
@@ -30,7 +34,7 @@ export async function POST(request: Request) {
             );
         }
 
-        const response = await fetch(url, {
+        const response = await fetchWithValidatedSsrfUrl(url, validation, {
             headers: {
                 "User-Agent":
                     "Mozilla/5.0 (compatible; OCMS-Bot/1.0; +https://ocms.dev)",

@@ -1,99 +1,217 @@
-# OCMS — Local-First Headless CMS
+# OCMS — Open Content Management System
 
-OCMS is a next-generation, local-first, privacy-respecting headless CMS designed for developers who want a seamless visual editing experience without relying on external AI services. Featuring a deterministic AST-patcher and a live synchronized editing interface, OCMS allows you to edit frontend pages visually and sync changes directly back to your source code repository.
+**OCMS** is a local-first, privacy-respecting headless CMS built for developers. Point it at any website URL, and it scrapes the page, generates an editable schema, and lets you visually edit text, images, links, and 3D models — then push changes directly to GitHub with one click.
 
----
-
-## 🚀 Key Features
-
-*   **Deterministic AST-Patcher**: Safely and accurately parses, inspects, and patches local page files (like React/Next.js files) without breaking imports, comments, or formatting.
-*   **Live Ghost Cursor**: A real-time, overlay-based visual editor that mirrors edits and provides direct visual feedback as you customize elements.
-*   **3D Model Integration**: Dynamic support for 3D elements inside your content fields using a built-in `<model-viewer>` interface, complete with PBR material presets (gold, wood, metal, plastic) and sliders.
-*   **Copywriting Tone Engine**: Generate local A/B variations of text fields across various tones (technical, minimalist, playful) directly from local dictionary files.
-*   **Semantic Color Extractor**: Intelligently maps brand keywords (like "finance", "sustainability", "startup") to curated design palettes for immediate UI branding matching.
-*   **IDOR Protection & Multi-User Auth**: Authenticated workspaces that prevent unauthorized database updates or cross-user project tampering.
+No cloud. No subscriptions. No vendor lock-in. Your data stays in your database.
 
 ---
 
-## 🛠️ Tech Stack
+## ✨ What OCMS Does
 
-*   **Framework**: Next.js 14+ (App Router)
-*   **Database**: Prisma ORM with SQLite (local-first storage)
-*   **SDK Package**: Built-in visual helper package (`packages/ghost-cursor`) compiled with `tsup`
-*   **Styling**: Neobrutalist design theme built with custom HSL variables and Tailwind CSS
+| Feature | Description |
+|---------|-------------|
+| **URL Scraper** | Enter any URL → OCMS fetches the HTML and extracts all editable content fields automatically |
+| **Local Schema** | Generates a typed JSON schema (text, image, link, 3D model) from the page structure — no AI required |
+| **Live Preview** | Side-by-side iframe preview with a "Ghost Cursor" that shows edits in real time |
+| **GitHub Sync** | Push content changes directly to any GitHub repository using your OAuth token |
+| **3D Model Injector** | Drop `.glb` / `.gltf` files to replace 2D images with interactive 3D models |
+| **A/B Variant Engine** | Generate alternative copy variants for different audiences |
+| **Color Palette Tool** | Generate and apply harmonious color palettes to your site's CSS variables |
+| **Voice Commands** | Dictate field edits using Web Speech API |
+| **Build Validation** | TypeScript build check before every GitHub push |
 
 ---
 
-## ⚙️ Environment Configuration
+## 🏗️ Architecture Overview
 
-Create a `.env` (or `.env.local`) file in the root directory. You can use the following variables:
-
-```bash
-# Database connection string (SQLite file location)
-DATABASE_URL="file:./dev.db"
-
-# Secret token used by NextAuth / Auth.js for session management
-AUTH_SECRET="some-random-32-character-secret-key-here"
-
-# GitHub OAuth App credentials (optional: defaults to Guest Mode if empty)
-GITHUB_CLIENT_ID=""
-GITHUB_CLIENT_SECRET=""
-
-# SSRF Protections Bypass (Set to true ONLY in local dev environment)
-ALLOW_LOCAL_SSRF="true"
-
-# Local source directory path
-LOCAL_WORKSPACE_PATH=""
+```
+┌─────────────────────────────────────────────────────┐
+│                   Next.js App (App Router)           │
+│                                                     │
+│  ┌──────────────┐    ┌──────────────────────────┐  │
+│  │  Landing Page │    │  Workspace (/workspace/  │  │
+│  │  (/)          │    │  [projectId])            │  │
+│  └──────────────┘    │  ┌────────────────────┐  │  │
+│                      │  │  ContentEditor     │  │  │
+│  ┌──────────────┐    │  │  (field editing)   │  │  │
+│  │  Auth.js     │    │  ├────────────────────┤  │  │
+│  │  (GitHub     │    │  │  LivePreview       │  │  │
+│  │   OAuth)     │    │  │  (iframe + ghost)  │  │  │
+│  └──────────────┘    │  └────────────────────┘  │  │
+│                      └──────────────────────────┘  │
+│  API Routes:                                        │
+│  • /api/projects          — Create / list projects  │
+│  • /api/projects/[id]/    — Scan, schema, GSD       │
+│  • /api/publish-changes   — GitHub push + AST patch │
+│  • /api/auth/*            — NextAuth handlers       │
+│  • /api/check-env         — Env health check        │
+└─────────────────────────────────────────────────────┘
+        │                         │
+   Prisma ORM                 Octokit
+   (SQLite / Postgres)        (GitHub API)
 ```
 
+### Key Libraries
+- **Next.js 14** (App Router, Server Components)
+- **Auth.js / NextAuth v5** (GitHub OAuth, Prisma adapter)
+- **Prisma ORM** (SQLite default, PostgreSQL for production)
+- **@octokit/rest** (GitHub API)
+- **Babel AST parser** (deterministic code patching without AI)
+- **Cheerio** (server-side HTML scraping)
+
 ---
 
-## 📦 Getting Started
+## ⚙️ Environment Variables
+
+Copy `.env.example` to `.env.local` and fill in the values.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | ✅ Yes | Database connection string. SQLite: `file:./dev.db` |
+| `AUTH_SECRET` | ✅ Yes | Session encryption key. Generate: `openssl rand -base64 32` |
+| `NEXTAUTH_URL` | ✅ Production | Your deployment URL. e.g. `https://your-app.vercel.app` |
+| `GITHUB_CLIENT_ID` | ✅ Yes | GitHub OAuth App Client ID |
+| `GITHUB_CLIENT_SECRET` | ✅ Yes | GitHub OAuth App Client Secret |
+| `LOCAL_WORKSPACE_PATH` | Optional | Absolute path to local project for dev-mode file sync |
+| `ALLOW_GUEST_ACCESS` | Dev only | Set `true` to allow no-auth guest login in development |
+| `ALLOW_LOCAL_SSRF` | Dev only | Set `true` to allow scraping `localhost` URLs in dev |
+| `REPLICATE_API_TOKEN` | Optional | Required for Replicate-powered texture generation |
+
+> **Security note:** Never set `ALLOW_GUEST_ACCESS=true` or `ALLOW_LOCAL_SSRF=true` in production. These are hard-blocked when `NODE_ENV=production`.
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Node.js 18+
+- npm 9+
+- A GitHub account (for the OAuth flow)
 
 ### 1. Install Dependencies
-Run the following command at the project root to install all required dependencies:
+
 ```bash
 npm install
 ```
 
-### 2. Set Up the Local Database
-Generate the Prisma client and push the initial database schema to SQLite:
+### 2. Configure Environment
+
+```bash
+cp .env.example .env.local
+# Edit .env.local with your values
+```
+
+### 3. Set Up Database
+
 ```bash
 npx prisma generate
 npx prisma db push
 ```
 
-### 3. Compile the Ghost Cursor Package
-Build the workspace SDK library:
-```bash
-npm run build --workspace=packages/ghost-cursor
-# Or compile directly in the sub-folder:
-cd packages/ghost-cursor && npm run build
+### 4. (Dev) Set Up Guest Mode (optional)
+
+If you don't have GitHub OAuth credentials yet:
+
+```env
+# .env.local
+ALLOW_GUEST_ACCESS=true
+ALLOW_LOCAL_SSRF=true
+LOCAL_WORKSPACE_PATH=/absolute/path/to/your/project
 ```
 
-### 4. Run the Development Server
-Launch the local Next.js development server:
+Then start the app, visit `/api/auth/mock` (POST) via the UI, and you'll get a dev session with local filesystem sync.
+
+### 5. Run the Development Server
+
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to view the OCMS dashboard.
+Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## 🏗️ Building and Deploying
+## 🔐 GitHub Integration
 
-To compile the production bundle:
+OCMS uses GitHub OAuth to:
+1. Authenticate users
+2. Store a GitHub access token (with `repo` scope)
+3. Fetch, patch, and push source files on your behalf
+
+### Setting Up a GitHub OAuth App
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
+2. Click **"New OAuth App"**
+3. Set the callback URL to: `http://localhost:3000/api/auth/callback/github` (or your production URL)
+4. Copy the **Client ID** and **Client Secret** into `.env.local`
+
+---
+
+## 🌐 Demo Mode vs Production Mode
+
+| | Demo / Dev Mode | Production Mode |
+|---|---|---|
+| **Auth** | Guest fallback available (`ALLOW_GUEST_ACCESS=true`) | Real GitHub OAuth required |
+| **File sync** | Local filesystem (`LOCAL_WORKSPACE_PATH`) | GitHub API push only |
+| **Scraping** | Localhost URLs allowed (`ALLOW_LOCAL_SSRF=true`) | External URLs only |
+| **Mock token** | `mock_token` activates local sync | Blocked (403) |
+| **Env banner** | Warns about missing/placeholder vars | Same |
+
+---
+
+## 🚢 Deploying to Production (Vercel)
+
 ```bash
+# 1. Build to verify no errors
 npm run build
+
+# 2. Deploy
+vercel deploy --prod
 ```
 
-OCMS runs perfectly in serverless environments (like Vercel). However, because serverless platforms have read-only/ephemeral filesystems:
-*   Local file writing and local build validation routes (`/api/publish-changes` and `/api/validate-build`) are automatically guarded and will return informative error/warning responses instead of crashing.
-*   To enable direct code commits and deploys in cloud environments, link your workspaces to Git repositories via the OAuth panel.
+### Required Environment Variables (Vercel)
+
+Set these in your Vercel project settings:
+
+```
+DATABASE_URL         = postgresql://...   # Use Vercel Postgres or Neon
+AUTH_SECRET          = <generated>
+NEXTAUTH_URL         = https://your-app.vercel.app
+GITHUB_CLIENT_ID     = <your OAuth app>
+GITHUB_CLIENT_SECRET = <your OAuth app>
+```
+
+> **Note:** SQLite is not suitable for multi-user production. Use PostgreSQL (e.g., [Vercel Postgres](https://vercel.com/storage/postgres) or [Neon](https://neon.tech)). Update `prisma/schema.prisma` to `provider = "postgresql"` and run `npx prisma db push`.
+
+---
+
+## 📦 Building and Running
+
+```bash
+# Development
+npm run dev
+
+# Build check (required before deploying)
+npm run build
+
+# Production server
+npm start
+
+# Lint
+npm run lint
+
+# Run patcher smoke tests
+npm run test:patchers
+```
 
 ---
 
 ## 👥 Authors
 
 Built with precision and passion by **Team SPACHT**.
+
+---
+
+## 📄 License
+
+© 2026 SPACHT. All rights reserved.

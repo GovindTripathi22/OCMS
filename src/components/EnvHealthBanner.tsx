@@ -10,14 +10,19 @@ interface EnvStatus {
     warnings: string[];
 }
 
+/**
+ * Human-readable instructions for each env variable shown in the banner.
+ * Variable names must match what check-env/route.ts checks.
+ */
 const ENV_INSTRUCTIONS: Record<string, string> = {
-    GITHUB_CLIENT_ID: "Required for GitHub OAuth. Register an OAuth app in GitHub Developer Settings.",
-    GITHUB_CLIENT_SECRET: "Required for GitHub OAuth. Found in your GitHub OAuth app settings.",
-    DATABASE_URL: "Required for data persistence. Set your PostgreSQL / database connection string.",
-    NEXTAUTH_SECRET: "Required for session encryption. Generate with: openssl rand -base64 32",
+    GITHUB_CLIENT_ID: "Required for GitHub OAuth. Register an OAuth App at GitHub Developer Settings.",
+    GITHUB_CLIENT_SECRET: "Required for GitHub OAuth. Found in your GitHub OAuth App settings.",
+    DATABASE_URL: "Required for data persistence. Set your database connection string (SQLite: file:./dev.db).",
+    AUTH_SECRET: "Required for session encryption. Generate with: openssl rand -base64 32",
+    NEXTAUTH_URL: "Required in production. Set to your deployment URL (e.g., https://your-app.vercel.app).",
 };
 
-const CRITICAL_VARS = ["DATABASE_URL", "NEXTAUTH_SECRET"];
+const CRITICAL_VARS = ["DATABASE_URL", "AUTH_SECRET"];
 
 export default function EnvHealthBanner() {
     const [status, setStatus] = useState<EnvStatus | null>(null);
@@ -119,7 +124,7 @@ export default function EnvHealthBanner() {
                         </div>
                     )}
 
-                    {/* Warnings — dummy / placeholder values */}
+                    {/* Warnings — placeholder / dummy values detected */}
                     {status.warnings.length > 0 && (
                         <div className="border-[3px] border-black bg-yellow-50 p-3 shadow-[3px_3px_0_0_#000]">
                             <div className="mb-2 flex items-center gap-2">
@@ -135,7 +140,7 @@ export default function EnvHealthBanner() {
                                             {v}
                                         </code>
                                         <span className="text-xs font-semibold text-yellow-800">
-                                            Set to a dummy value — replace with real credentials.
+                                            {ENV_INSTRUCTIONS[v] ?? "Replace with a real value — this appears to be a placeholder."}
                                         </span>
                                     </li>
                                 ))}

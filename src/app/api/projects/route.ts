@@ -4,6 +4,7 @@ import { getAuthorizedUser } from "@/auth";
 import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { Prisma } from "@prisma/client";
 import { validateUrlForSsrf } from "@/lib/ssrf";
+import type { SchemaField } from "@/types/schema";
 
 export async function POST(req: Request) {
     try {
@@ -29,9 +30,7 @@ export async function POST(req: Request) {
         }
 
         // Automatically scrape and generate schema from the real site
-        let schemaFields = null;
-        let scrapedHtml = "";
-        let scrapedUrl = url;
+        let schemaFields: SchemaField[] | null = null;
         try {
             let response = await fetch(url, {
                 redirect: "manual",
@@ -70,23 +69,18 @@ export async function POST(req: Request) {
 
             if (response.ok) {
                 const rawHtml = await response.text();
-                scrapedHtml = rawHtml;
-                scrapedUrl = currentUrl.href;
                 schemaFields = extractFallbackSchemaFields(rawHtml, currentUrl.href);
             }
         } catch (err) {
-            console.error("Auto schema generation failed, using fallback:", err);
+            console.error("Auto schema generation failed:", err);
         }
 
+        // If scraping produced no fields, use an empty schema.
+        // The workspace will prompt the user to scan the page manually.
+        // We never inject placeholder/dummy fields into real project data.
+        const scrapeFailed = !schemaFields || schemaFields.length === 0;
         if (!schemaFields || schemaFields.length === 0) {
-            schemaFields = scrapedHtml
-                ? extractFallbackSchemaFields(scrapedHtml, scrapedUrl)
-                : [
-                { id: "hero-title", type: "text", label: "Hero Title", value: "Welcome to Our Site", selector: "h1" },
-                { id: "hero-subtitle", type: "text", label: "Subtitle", value: "Build something amazing today.", selector: ".subtitle" },
-                { id: "hero-image", type: "image", label: "Hero Image", value: "/placeholder.jpg", selector: "img.hero" },
-                { id: "cta-link", type: "link", label: "CTA Link", value: "/get-started", selector: "a.cta" },
-            ];
+            schemaFields = [];
         }
 
         // Generate GSD planning data
@@ -121,7 +115,7 @@ progress:
             }
         });
 
-        return NextResponse.json(project);
+        return NextResponse.json({ ...project, scrapeFailed });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Failed to create project:", error);

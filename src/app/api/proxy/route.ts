@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getAuthorizedUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import * as cheerio from "cheerio";
-import { validateUrlForSsrf } from "@/lib/ssrf";
+import { fetchWithValidatedSsrfUrl, validateUrlForSsrf } from "@/lib/ssrf";
+import { withRateLimit } from "@/lib/ratelimit";
 
 interface SchemaField {
     id: string;
@@ -15,6 +17,11 @@ interface SchemaField {
 const PROXY_PATH = "/api/proxy?url=";
 type ScriptMode = "static" | "dynamic";
 
+function corsHeaders(req: NextRequest): Record<string, string> {
+    const origin = req.headers.get("origin");
+    return origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {};
+}
+
 function isSkippableUrl(value: string) {
     const trimmed = value.trim();
     return (
@@ -24,12 +31,12 @@ function isSkippableUrl(value: string) {
         trimmed.startsWith("blob:") ||
         trimmed.startsWith("mailto:") ||
         trimmed.startsWith("tel:") ||
-        trimmed.startsWith("javascript:") ||
         trimmed.startsWith(PROXY_PATH)
     );
 }
 
-function toProxyUrl(value: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static") {
+function toProxyUrl(value: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static", nonce?: string) {
+    if (value.trim().toLowerCase().startsWith("javascript:")) return "#";
     if (isSkippableUrl(value)) return value;
 
     try {
@@ -41,26 +48,29 @@ function toProxyUrl(value: string, baseUrl: string, projectId?: string, scriptMo
         if (scriptMode === "dynamic") {
             proxyUrl += `&scriptMode=dynamic`;
         }
+        if (nonce) {
+            proxyUrl += `&nonce=${encodeURIComponent(nonce)}`;
+        }
         return proxyUrl;
     } catch {
         return value;
     }
 }
 
-function rewriteSrcset(value: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static") {
+function rewriteSrcset(value: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static", nonce?: string) {
     return value
         .split(",")
         .map((entry) => {
             const parts = entry.trim().split(/\s+/);
             if (!parts[0]) return entry;
-            return [toProxyUrl(parts[0], baseUrl, projectId, scriptMode), ...parts.slice(1)].join(" ");
+            return [toProxyUrl(parts[0], baseUrl, projectId, scriptMode, nonce), ...parts.slice(1)].join(" ");
         })
         .join(", ");
 }
 
-function rewriteCssUrls(css: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static") {
+function rewriteCssUrls(css: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static", nonce?: string) {
     return css.replace(/url\((['"]?)(?!data:|blob:|#)([^'")]+)\1\)/gi, (_match, quote, assetUrl) => {
-        return `url(${quote}${toProxyUrl(assetUrl, baseUrl, projectId, scriptMode)}${quote})`;
+        return `url(${quote}${toProxyUrl(assetUrl, baseUrl, projectId, scriptMode, nonce)}${quote})`;
     });
 }
 
@@ -77,7 +87,7 @@ function filterScripts(html: string, scriptMode: ScriptMode) {
     });
 }
 
-function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static") {
+function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static", nonce?: string) {
     let rewritten = html.replace(/<base[^>]*>/gi, "");
 
     // Strip pre-existing referrer meta tags to avoid conflicts
@@ -87,6 +97,9 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
     // Dynamic mode keeps scripts and relies on the iframe sandbox plus history guard.
     rewritten = filterScripts(rewritten, scriptMode);
     rewritten = rewritten.replace(/\s(integrity|nonce)=("([^"]*)"|'([^']*)')/gi, "");
+    if (scriptMode === "static") {
+        rewritten = rewritten.replace(/\son[a-z]+\s*=\s*("([^"]*)"|'([^']*)'|[^\s>]+)/gi, "");
+    }
 
     // Inject meta referrer and CSS overrides inside <head> if present
     const referrerMeta = `
@@ -102,6 +115,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
     var baseUrl = ${JSON.stringify(baseUrl)};
     var projectId = ${JSON.stringify(projectId || "")};
     var scriptMode = ${JSON.stringify(scriptMode)};
+    var bridgeNonce = ${JSON.stringify(nonce || "")};
     var proxyPath = "/api/proxy?url=";
 
     var originalFetch = window.fetch;
@@ -116,6 +130,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
         var proxiedUrl = proxyPath + encodeURIComponent(url);
         if (projectId) proxiedUrl += '&projectId=' + encodeURIComponent(projectId);
         if (scriptMode) proxiedUrl += '&scriptMode=' + encodeURIComponent(scriptMode);
+        if (bridgeNonce) proxiedUrl += '&nonce=' + encodeURIComponent(bridgeNonce);
         
         if (typeof input === 'string') {
             return originalFetch(proxiedUrl, init);
@@ -134,6 +149,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
             var proxiedUrl = proxyPath + encodeURIComponent(url);
             if (projectId) proxiedUrl += '&projectId=' + encodeURIComponent(projectId);
             if (scriptMode) proxiedUrl += '&scriptMode=' + encodeURIComponent(scriptMode);
+            if (bridgeNonce) proxiedUrl += '&nonce=' + encodeURIComponent(bridgeNonce);
             return originalOpen.call(this, method, proxiedUrl, async, user, password);
         }
         return originalOpen.call(this, method, url, async, user, password);
@@ -189,7 +205,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
         (match, attr, _quoted, doubleValue, singleValue) => {
             const value = doubleValue ?? singleValue ?? "";
             const quote = doubleValue === undefined ? "'" : '"';
-            return ` ${attr}=${quote}${toProxyUrl(value, baseUrl, projectId, scriptMode)}${quote}`;
+            return ` ${attr}=${quote}${toProxyUrl(value, baseUrl, projectId, scriptMode, nonce)}${quote}`;
         }
     );
 
@@ -198,7 +214,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
         (match, attr, _quoted, doubleValue, singleValue) => {
             const value = doubleValue ?? singleValue ?? "";
             const quote = doubleValue === undefined ? "'" : '"';
-            return ` ${attr}=${quote}${rewriteSrcset(value, baseUrl, projectId, scriptMode)}${quote}`;
+            return ` ${attr}=${quote}${rewriteSrcset(value, baseUrl, projectId, scriptMode, nonce)}${quote}`;
         }
     );
 
@@ -207,7 +223,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
         (match, _quoted, doubleValue, singleValue) => {
             const value = doubleValue ?? singleValue ?? "";
             const quote = doubleValue === undefined ? "'" : '"';
-            return ` style=${quote}${rewriteCssUrls(value, baseUrl, projectId, scriptMode)}${quote}`;
+            return ` style=${quote}${rewriteCssUrls(value, baseUrl, projectId, scriptMode, nonce)}${quote}`;
         }
     );
 
@@ -215,12 +231,20 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
 }
 
 export async function GET(req: NextRequest) {
+    const rateLimited = await withRateLimit("proxy", req, { limit: 120, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
+
+    const userId = await getAuthorizedUser();
+    if (!userId) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     let url = "";
     const rawUrl = req.url;
     const urlParamIndex = rawUrl.indexOf("?url=");
     if (urlParamIndex !== -1) {
         let rawParam = rawUrl.substring(urlParamIndex + 5);
-        const controlParamIndex = ["&projectId=", "&scriptMode="]
+        const controlParamIndex = ["&projectId=", "&scriptMode=", "&nonce="]
             .map((param) => rawParam.indexOf(param))
             .filter((index) => index !== -1)
             .sort((a, b) => a - b)[0];
@@ -251,9 +275,10 @@ export async function GET(req: NextRequest) {
 
     const projectId = req.nextUrl.searchParams.get("projectId") || "";
     const scriptMode: ScriptMode = req.nextUrl.searchParams.get("scriptMode") === "dynamic" ? "dynamic" : "static";
+    const bridgeNonce = req.nextUrl.searchParams.get("nonce") || "";
 
     try {
-        const response = await fetch(url, {
+        const response = await fetchWithValidatedSsrfUrl(url, validation, {
             redirect: "manual",
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -269,12 +294,12 @@ export async function GET(req: NextRequest) {
                 status: response.status,
                 headers: location
                     ? { 
-                        Location: toProxyUrl(location, baseUrl, projectId, scriptMode), 
-                        "Access-Control-Allow-Origin": "*",
+                        Location: toProxyUrl(location, baseUrl, projectId, scriptMode, bridgeNonce), 
+                        ...corsHeaders(req),
                         "Referrer-Policy": "unsafe-url"
                       }
                     : { 
-                        "Access-Control-Allow-Origin": "*",
+                        ...corsHeaders(req),
                         "Referrer-Policy": "unsafe-url"
                       },
             });
@@ -282,12 +307,12 @@ export async function GET(req: NextRequest) {
 
         if (!contentType.includes("text/html")) {
             if (contentType.includes("text/css")) {
-                const css = rewriteCssUrls(await response.text(), baseUrl, projectId, scriptMode);
+                const css = rewriteCssUrls(await response.text(), baseUrl, projectId, scriptMode, bridgeNonce);
                 return new NextResponse(css, {
                     status: response.status,
                     headers: {
                         "Content-Type": contentType,
-                        "Access-Control-Allow-Origin": "*",
+                        ...corsHeaders(req),
                         "Cache-Control": "public, max-age=31536000",
                         "Referrer-Policy": "unsafe-url",
                     },
@@ -299,7 +324,7 @@ export async function GET(req: NextRequest) {
                 status: response.status,
                 headers: {
                     "Content-Type": contentType,
-                    "Access-Control-Allow-Origin": "*",
+                    ...corsHeaders(req),
                     "Cache-Control": "public, max-age=31536000",
                     "Referrer-Policy": "unsafe-url",
                 },
@@ -372,6 +397,7 @@ export async function GET(req: NextRequest) {
 ${modelViewerScript}
 <script>
 (function() {
+    const bridgeNonce = ${JSON.stringify(bridgeNonce)};
     const editableFields = new Map();
     const boundElements = new WeakSet();
     let latestChanges = [];
@@ -384,6 +410,15 @@ ${modelViewerScript}
     let currentHoveredImage = null;
     let inspectorEnabled = false;
     let hoveredInspectorEl = null;
+
+    function withNonce(payload) {
+        if (bridgeNonce) payload.nonce = bridgeNonce;
+        return payload;
+    }
+
+    function postToParent(payload) {
+        window.parent.postMessage(withNonce(payload), window.location.origin);
+    }
 
     function getCssSelector(el) {
         if (el.id) {
@@ -535,13 +570,13 @@ ${modelViewerScript}
                 
                 elToBlur.blur();
                 
-                window.parent.postMessage({
+                postToParent({
                     source: 'ocms-toolbar-action',
                     action,
                     fieldId,
                     selector,
                     value: textVal
-                }, '*');
+                });
             };
             toolbar.appendChild(button);
         });
@@ -588,12 +623,12 @@ ${modelViewerScript}
                 hideToolbarSoon();
             });
             el.addEventListener('input', () => {
-                window.parent.postMessage({
+                postToParent({
                     source: 'ocms-inline-edit',
                     fieldId: el.getAttribute('data-ocms-field-id') || fieldId,
                     selector: el.getAttribute('data-ocms-selector') || selector,
                     newValue: el.innerText
-                }, '*');
+                });
             });
             boundElements.add(el);
         }
@@ -786,7 +821,7 @@ ${modelViewerScript}
         img.setAttribute('data-ocms-field-id', fieldId);
         img.setAttribute('data-ocms-selector', selector);
 
-        window.parent.postMessage({
+        postToParent({
             source: 'ocms-doubleclick-image',
             field: {
                 id: fieldId,
@@ -797,7 +832,7 @@ ${modelViewerScript}
                 originalHtmlTag: img.tagName.toLowerCase(),
                 path: path
             }
-        }, '*');
+        });
     }
 
     function ensureImageHoverToolbar() {
@@ -838,7 +873,7 @@ ${modelViewerScript}
                 const path = getTargetPathname();
 
                 // Add field to parent first
-                window.parent.postMessage({
+                postToParent({
                     source: 'ocms-inline-add-field',
                     field: {
                         id: fieldId,
@@ -849,7 +884,7 @@ ${modelViewerScript}
                         originalHtmlTag: img.tagName.toLowerCase(),
                         path: path
                     }
-                }, '*');
+                });
 
                 // Read and set file
                 const reader = new FileReader();
@@ -860,12 +895,12 @@ ${modelViewerScript}
                     } else {
                         img.style.backgroundImage = 'url(' + base64Url + ')';
                     }
-                    window.parent.postMessage({
+                    postToParent({
                         source: 'ocms-inline-edit',
                         fieldId: fieldId,
                         selector: selector,
                         newValue: base64Url
-                    }, '*');
+                    });
                 };
                 reader.readAsDataURL(file);
             }
@@ -1022,7 +1057,7 @@ ${modelViewerScript}
         targetEl.setAttribute('data-ocms-field-id', fieldId);
         targetEl.setAttribute('data-ocms-selector', selector);
 
-        window.parent.postMessage({
+        postToParent({
             source: 'ocms-inline-add-field',
             field: {
                 id: fieldId,
@@ -1033,7 +1068,7 @@ ${modelViewerScript}
                 originalHtmlTag: elTag,
                 path: path
             }
-        }, '*');
+        });
 
         const prevBg = targetEl.style.backgroundColor;
         targetEl.style.backgroundColor = 'rgba(34, 197, 94, 0.3)';
@@ -1124,7 +1159,7 @@ ${modelViewerScript}
             const metalnessAttr = modelViewer.getAttribute('metalness');
             const textureUrlAttr = modelViewer.getAttribute('texture-url');
 
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-doubleclick-image',
                 field: {
                     id: fieldId,
@@ -1138,7 +1173,7 @@ ${modelViewerScript}
                     metalness: metalnessAttr ? parseFloat(metalnessAttr) : 1.0,
                     textureUrl: textureUrlAttr || ''
                 }
-            }, '*');
+            });
         } else if (img) {
             triggerImageEdit(img);
         } else if (anchor) {
@@ -1154,7 +1189,7 @@ ${modelViewerScript}
             anchor.setAttribute('data-ocms-selector', textSelector);
 
             // Add the text field
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-inline-add-field',
                 field: {
                     id: textFieldId,
@@ -1165,10 +1200,10 @@ ${modelViewerScript}
                     originalHtmlTag: anchor.tagName.toLowerCase(),
                     path: path
                 }
-            }, '*');
+            });
 
             // Add the link URL field
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-inline-add-field',
                 field: {
                     id: linkFieldId,
@@ -1179,7 +1214,7 @@ ${modelViewerScript}
                     originalHtmlTag: anchor.tagName.toLowerCase(),
                     path: path
                 }
-            }, '*');
+            });
 
             // Make the text editable inline
             anchor.setAttribute('contenteditable', 'true');
@@ -1309,12 +1344,12 @@ ${modelViewerScript}
                 var newHref = linkUrlInput.value.trim();
                 if (newHref !== null) {
                     anchor.setAttribute('href', newHref);
-                    window.parent.postMessage({
+                    postToParent({
                         source: 'ocms-inline-edit',
                         fieldId: linkFieldId,
                         selector: textSelector,
                         newValue: newHref
-                    }, '*');
+                    });
                 }
                 cleanupLink();
             };
@@ -1346,7 +1381,7 @@ ${modelViewerScript}
             button.setAttribute('data-ocms-field-id', fieldId);
             button.setAttribute('data-ocms-selector', selector);
 
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-inline-add-field',
                 field: {
                     id: fieldId,
@@ -1357,7 +1392,7 @@ ${modelViewerScript}
                     originalHtmlTag: button.tagName.toLowerCase(),
                     path: path
                 }
-            }, '*');
+            });
 
             button.setAttribute('contenteditable', 'true');
             button.style.userSelect = 'text';
@@ -1380,7 +1415,7 @@ ${modelViewerScript}
             el.setAttribute('data-ocms-field-id', fieldId);
             el.setAttribute('data-ocms-selector', selector);
 
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-inline-add-field',
                 field: {
                     id: fieldId,
@@ -1391,7 +1426,7 @@ ${modelViewerScript}
                     originalHtmlTag: el.tagName.toLowerCase(),
                     path: path
                 }
-            }, '*');
+            });
 
             el.setAttribute('contenteditable', 'true');
             el.style.userSelect = 'text';
@@ -1418,7 +1453,11 @@ ${modelViewerScript}
     }
 
     window.addEventListener('message', (event) => {
-        const { source, changes, type, selector, action, enabled } = event.data || {};
+        if (event.origin !== window.location.origin) return;
+        if (event.source && event.source !== window.parent) return;
+        const message = event.data || {};
+        if (bridgeNonce && message.nonce !== bridgeNonce) return;
+        const { source, changes, type, selector, action, enabled } = message;
         
         if (source === 'ocms-parent' && action === 'toggle-inspector') {
             inspectorEnabled = enabled;
@@ -1541,11 +1580,11 @@ ${modelViewerScript}
         if (/\\.glb$|\\.gltf$/i.test(file.name)) {
             event.preventDefault();
             const target = event.target && event.target.closest('[data-ocms-field-id]');
-            window.parent.postMessage({
+            postToParent({
                 source: 'ocms-model-drop',
                 fieldId: target ? target.getAttribute('data-ocms-field-id') : null,
                 file
-            }, '*');
+            });
             return;
         }
 
@@ -1560,7 +1599,7 @@ ${modelViewerScript}
                 var path = getTargetPathname();
 
                 // Make sure field is registered
-                window.parent.postMessage({
+                postToParent({
                     source: 'ocms-inline-add-field',
                     field: {
                         id: fieldId,
@@ -1571,7 +1610,7 @@ ${modelViewerScript}
                         originalHtmlTag: target.tagName.toLowerCase(),
                         path: path
                     }
-                }, '*');
+                });
 
                 // Read and set file
                 var reader = new FileReader();
@@ -1582,12 +1621,12 @@ ${modelViewerScript}
                     } else {
                         target.style.backgroundImage = 'url(' + base64Url + ')';
                     }
-                    window.parent.postMessage({
+                    postToParent({
                         source: 'ocms-inline-edit',
                         fieldId: fieldId,
                         selector: selector,
                         newValue: base64Url
-                    }, '*');
+                    });
                 };
                 reader.readAsDataURL(file);
             }
@@ -1601,11 +1640,11 @@ ${modelViewerScript}
     }
 
     console.log("OCMS Live Bridge Initialized");
-    window.parent.postMessage({ source: 'ocms-iframe-ready', url: window.location.href }, '*');
+    postToParent({ source: 'ocms-iframe-ready', url: window.location.href });
 })();
 </script>`;
 
-        html = rewriteHtmlAssets(html, baseUrl, projectId, scriptMode);
+        html = rewriteHtmlAssets(html, baseUrl, projectId, scriptMode, bridgeNonce);
 
         html = /<\/body>/i.test(html)
             ? html.replace(/<\/body>/i, `${patchScript}</body>`)
@@ -1615,7 +1654,7 @@ ${modelViewerScript}
             status: response.status,
             headers: {
                 "Content-Type": "text/html; charset=utf-8",
-                "Access-Control-Allow-Origin": "*",
+                ...corsHeaders(req),
                 "Content-Security-Policy": "frame-ancestors *",
                 "Referrer-Policy": "unsafe-url",
             },

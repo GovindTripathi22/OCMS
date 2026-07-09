@@ -12,6 +12,7 @@ interface LivePreviewProps {
     iframeRef: RefObject<HTMLIFrameElement>;
     onLoad?: () => void;
     projectId?: string;
+    previewNonce: string;
 }
 
 export default function LivePreview({
@@ -20,6 +21,7 @@ export default function LivePreview({
     iframeRef,
     onLoad,
     projectId,
+    previewNonce,
 }: LivePreviewProps) {
     const [inputUrl, setInputUrl] = useState(previewUrl);
     const [isLoading, setIsLoading] = useState(true);
@@ -35,19 +37,20 @@ export default function LivePreview({
         iframe.contentWindow.postMessage({
             source: 'ocms-parent',
             action: 'toggle-inspector',
-            enabled: isInspecting
+            enabled: isInspecting,
+            nonce: previewNonce,
         }, '*');
-    }, [isInspecting, iframeRef, previewUrl, isLoading]);
+    }, [isInspecting, iframeRef, previewUrl, isLoading, previewNonce]);
 
     // Mobile: whether the URL bar is expanded
     const [urlBarExpanded, setUrlBarExpanded] = useState(false);
     const urlInputRef = useRef<HTMLInputElement>(null);
 
     const buildProxyUrl = useCallback((targetUrl: string) => {
-        const params = new URLSearchParams({ url: targetUrl, scriptMode });
+        const params = new URLSearchParams({ url: targetUrl, scriptMode, nonce: previewNonce });
         if (projectId) params.set("projectId", projectId);
         return `/api/proxy?${params.toString()}`;
-    }, [projectId, scriptMode]);
+    }, [projectId, scriptMode, previewNonce]);
 
     // Load progress animation
     useEffect(() => {
@@ -253,6 +256,16 @@ export default function LivePreview({
                 >
                     <Code2 className="w-3.5 h-3.5" />
                 </button>
+
+                {scriptMode === "dynamic" && (
+                    <div
+                        className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-[4px] bg-[var(--ocms-orange)] text-black border-2 border-black shadow-[2px_2px_0px_#000] shrink-0"
+                        title="Dynamic mode runs target page JavaScript in an opaque sandbox. Some same-origin preview features may be limited."
+                    >
+                        <AlertTriangle className="w-3 h-3 text-black" />
+                        <span className="text-[8px] text-black font-extrabold uppercase tracking-wider whitespace-nowrap">Isolated JS</span>
+                    </div>
+                )}
             </div>
 
             {/* Progress bar */}
@@ -336,7 +349,11 @@ export default function LivePreview({
                         setIsLoading(false);
                         setHasError(true);
                     }}
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                    sandbox={
+                        scriptMode === "static"
+                            ? "allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                            : "allow-scripts allow-forms allow-popups allow-modals"
+                    }
                     title="Live Website Preview"
                 />
             </div>

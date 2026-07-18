@@ -3,11 +3,15 @@ import { prisma } from "@/lib/prisma";
 import { getAuthorizedUser } from "@/auth";
 import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { Prisma } from "@prisma/client";
-import { validateUrlForSsrf } from "@/lib/ssrf";
+import { fetchWithValidatedSsrfUrl, validateUrlForSsrf } from "@/lib/ssrf";
+import { withRateLimit } from "@/lib/ratelimit";
 import type { SchemaField } from "@/types/schema";
 
 export async function POST(req: Request) {
     try {
+        const rateLimited = await withRateLimit("projects", req, { limit: 20, windowMs: 60_000 });
+        if (rateLimited) return rateLimited;
+
         const { url, name } = await req.json();
         
         if (!url) {
@@ -32,7 +36,7 @@ export async function POST(req: Request) {
         // Automatically scrape and generate schema from the real site
         let schemaFields: SchemaField[] | null = null;
         try {
-            let response = await fetch(url, {
+            let response = await fetchWithValidatedSsrfUrl(url, validation, {
                 redirect: "manual",
                 headers: {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -57,7 +61,10 @@ export async function POST(req: Request) {
 
                 currentUrl = nextUrl;
                 redirectCount++;
-                response = await fetch(currentUrl.href, {
+                const redirectValidation = await validateUrlForSsrf(currentUrl.href);
+                if (!redirectValidation.safe) break;
+
+                response = await fetchWithValidatedSsrfUrl(currentUrl.href, redirectValidation, {
                     redirect: "manual",
                     headers: {
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

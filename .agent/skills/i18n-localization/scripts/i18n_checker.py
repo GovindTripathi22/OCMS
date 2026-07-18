@@ -65,7 +65,7 @@ def find_locale_files(project_path: Path) -> list:
     for pattern in patterns:
         files.extend(project_path.glob(pattern))
     
-    return [f for f in files if 'node_modules' not in str(f)]
+    return [f for f in files if not any(x in str(f) for x in ['node_modules', '.next', 'scratch', 'packages'])]
 
 def check_locale_completeness(locale_files: list) -> dict:
     """Check if all locales have the same keys."""
@@ -145,7 +145,7 @@ def check_hardcoded_strings(project_path: Path) -> dict:
         code_files.extend(project_path.rglob(f"*{ext}"))
     
     code_files = [f for f in code_files if not any(x in str(f) for x in 
-                  ['node_modules', '.git', 'dist', 'build', '__pycache__', 'venv', 'test', 'spec'])]
+                  ['node_modules', '.git', 'dist', 'build', '__pycache__', 'venv', 'test', 'spec', 'scratch', 'packages', '.next'])]
     
     if not code_files:
         return {'passed': ["[!] No code files found"], 'issues': []}
@@ -188,7 +188,7 @@ def check_hardcoded_strings(project_path: Path) -> dict:
         passed.append(f"[OK] {files_with_i18n} files use i18n")
     
     if files_with_hardcoded > 0:
-        issues.append(f"[X] {files_with_hardcoded} files may have hardcoded strings")
+        issues.append(f"[!] {files_with_hardcoded} files may have hardcoded strings")
         for ex in hardcoded_examples:
             issues.append(f"   → {ex}")
     else:

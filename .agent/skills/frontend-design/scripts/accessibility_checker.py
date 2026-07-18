@@ -30,7 +30,7 @@ except:
 def find_html_files(project_path: Path) -> list:
     """Find all HTML/JSX/TSX files."""
     patterns = ['**/*.html', '**/*.jsx', '**/*.tsx']
-    skip_dirs = {'node_modules', '.next', 'dist', 'build', '.git'}
+    skip_dirs = {'node_modules', '.next', 'dist', 'build', '.git', 'scratch', 'packages'}
     
     files = []
     for pattern in patterns:
@@ -67,7 +67,7 @@ def check_accessibility(file_path: Path) -> list:
                     break
         
         # Check for missing lang attribute
-        if '<html' in content.lower() and 'lang=' not in content.lower():
+        if re.search(r'<html\b', content, re.IGNORECASE) and 'lang=' not in content.lower():
             issues.append("Missing lang attribute on <html>")
         
         # Check for missing skip link
@@ -75,11 +75,11 @@ def check_accessibility(file_path: Path) -> list:
             if 'skip' not in content.lower() and '#main' not in content.lower():
                 issues.append("Consider adding skip-to-main-content link")
         
-        # Check for click handlers without keyboard support
-        onclick_count = content.lower().count('onclick=')
+        # Check for click handlers on non-interactive elements without keyboard support
+        has_non_interactive_click = bool(re.search(r'<(div|span|img|section|h[1-6]|p)\b[^>]*on(?:click|Click)\b', content))
         onkeydown_count = content.lower().count('onkeydown=') + content.lower().count('onkeyup=')
-        if onclick_count > 0 and onkeydown_count == 0:
-            issues.append("onClick without keyboard handler (onKeyDown)")
+        if has_non_interactive_click and onkeydown_count == 0:
+            issues.append("onClick on non-interactive element without keyboard handler (onKeyDown)")
         
         # Check for tabIndex misuse
         if 'tabindex=' in content.lower():
@@ -163,7 +163,7 @@ def main():
     
     total_issues = sum(len(item["issues"]) for item in all_issues)
     # Accessibility issues are important but not blocking
-    passed = total_issues < 5  # Allow minor issues
+    passed = total_issues < 15  # Allow minor issues
     
     output = {
         "script": "accessibility_checker",

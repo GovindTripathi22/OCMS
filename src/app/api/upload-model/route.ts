@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthorizedUser } from "@/auth";
 import { Document, NodeIO } from "@gltf-transform/core";
 import { weld, dedup, prune, quantize } from "@gltf-transform/functions";
+import { withRateLimit } from "@/lib/ratelimit";
 
 const ALLOWED_EXTENSIONS = [".glb", ".gltf"];
 const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
@@ -40,6 +41,9 @@ async function optimizeGlb(
 }
 
 export async function POST(req: NextRequest) {
+    const rateLimited = await withRateLimit("upload-model", req, { limit: 10, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
+
     // Local dev only. For production, replace with S3/Cloudflare R2/Supabase Storage and return a CDN URL.
     if (process.env.VERCEL || process.env.NODE_ENV === "production") {
         return NextResponse.json(

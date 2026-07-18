@@ -42,3 +42,29 @@ Ensure that visual edits are written back directly to the local workspace code f
 ### Filter & Colors (R4)
 - [ ] Sidebar filter bar updates the field list in real time as the user types.
 - [ ] Theme color generator calculates complementary and triad palettes locally inside the browser.
+
+## Follow-up — 2026-07-11T16:50:50Z
+
+Verify and validate the entire OCMS codebase to ensure 100% functionality of every section, effect, animation, styling, and interactive button by creating an original, from-scratch E2E verification test suite.
+
+Working directory: D:\MODEL\ocms
+Integrity mode: benchmark
+
+## Requirements
+
+### R1. From-Scratch E2E Testing Suite
+Write an original E2E test suite (using Playwright or a pure Node-based runner) from scratch to verify all workspace actions (editing text, styling, adding 3D assets). All code must be original and written without copying existing template libraries or test source code.
+
+### R2. Styling, Animations, and Layout Audits
+Verify that all Neobrutalist UI elements, spotlight hover effects, and typography render correctly and remain responsive under different window sizes.
+
+### R3. API Security & Integration Audits
+Test the `/api/proxy` and `/api/publish-changes` endpoints to verify that SSRF protections block malicious loopbacks, and that the CORS proxy rewrites URLs securely.
+
+## Acceptance Criteria
+
+### E2E Test Coverage
+- [ ] Test scripts compile and execute with 0 failures.
+- [ ] Test covers inline text editing, history timeline undo/redo, and 3D previewer load.
+- [ ] Test checks that SSRF validator correctly flags local IP addresses.
+- [ ] All code created is 100% original and does not reference external copy-paste templates.

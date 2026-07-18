@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
 import path from "path";
+import { withRateLimit } from "@/lib/ratelimit";
 
 const execAsync = promisify(exec);
 
@@ -11,7 +12,10 @@ const execAsync = promisify(exec);
  * Runs TypeScript compilation check (tsc --noEmit) on the OCMS project
  * and returns whether the build is healthy.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+    const rateLimited = await withRateLimit("validate-build", req, { limit: 5, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
+
     if (process.env.VERCEL) {
         return NextResponse.json({
             valid: true,

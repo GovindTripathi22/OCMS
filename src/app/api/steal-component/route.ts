@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import postcss, { type Declaration, type Rule } from "postcss";
-import { validateUrlForSsrf } from "@/lib/ssrf";
+import { fetchWithValidatedSsrfUrl, validateUrlForSsrf } from "@/lib/ssrf";
+import { withRateLimit } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,6 +44,9 @@ const SAFE_TAGS = new Set([
 
 export async function POST(req: NextRequest) {
     try {
+        const rateLimited = await withRateLimit("steal-component", req, { limit: 20, windowMs: 60_000 });
+        if (rateLimited) return rateLimited;
+
         const { url } = await req.json();
 
         if (!url || typeof url !== "string") {
@@ -65,7 +69,7 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        const fetchRes = await fetch(targetUrl.href, {
+        const fetchRes = await fetchWithValidatedSsrfUrl(targetUrl.href, validation, {
             headers: {
                 "User-Agent": "Mozilla/5.0 (compatible; OCMS-Bot/1.0)",
                 Accept: "text/html,application/xhtml+xml",
@@ -175,7 +179,10 @@ async function collectCssRules($: cheerio.CheerioAPI, baseUrl: URL): Promise<Css
 
 async function fetchStylesheet(href: string, baseUrl: URL): Promise<string> {
     const stylesheetUrl = new URL(href, baseUrl).href;
-    const response = await fetch(stylesheetUrl, {
+    const validation = await validateUrlForSsrf(stylesheetUrl);
+    if (!validation.safe) return "";
+
+    const response = await fetchWithValidatedSsrfUrl(stylesheetUrl, validation, {
         headers: {
             "User-Agent": "Mozilla/5.0 (compatible; OCMS-Bot/1.0)",
             Accept: "text/css,*/*;q=0.1",

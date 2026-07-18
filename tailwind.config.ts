@@ -9,12 +9,6 @@ const config: Config = {
   darkMode: "class",
   theme: {
     extend: {
-      colors: {
-        "ocms-bg": "#060a10",
-        "ocms-surface": "rgba(255,255,255,0.04)",
-        "ocms-border": "rgba(255,255,255,0.08)",
-        "ocms-accent": "#10b981",
-      },
       fontFamily: {
         sans: ["var(--font-space-grotesk)", "system-ui", "sans-serif"],
         mono: ["var(--font-jetbrains-mono)", "monospace"],

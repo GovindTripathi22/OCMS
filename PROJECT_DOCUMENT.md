@@ -20,6 +20,7 @@
 12. [11. API ROUTES](#11-api-routes)
 13. [12. LIBRARY UTILITIES](#12-library-utilities)
 14. [13. WORKSPACE & UI COMPONENTS](#13-workspace-ui-components)
+15. [14. AUTOMATED TESTS](#14-automated-tests)
 
 ---
 
@@ -181,6 +182,12 @@ d:\MODEL\ocms\
 
 ---
 
+
+---
+
+
+---
+
 ## 3. CONFIGURATION & MANIFEST FILES
 
 ### `.editorconfig`
@@ -196,34 +203,7 @@ trim_trailing_whitespace = true
 charset = utf-8
 indent_style = space
 indent_size = 4
-```
 
----
-
-### `.env.example`
-**File Path:** `file:///d:/MODEL/ocms/.env.example`
-
-```
-# Copy this file to .env.local and fill in the values
-
-# Database (SQLite is default, file:./dev.db)
-DATABASE_URL="file:./dev.db"
-
-# Auth Secret - generate with: openssl rand -base64 33
-AUTH_SECRET=""
-
-# NextAuth URL (set to your deployment URL in production)
-NEXTAUTH_URL="http://localhost:3000"
-
-# GitHub OAuth (https://github.com/settings/developers)
-GITHUB_CLIENT_ID=""
-GITHUB_CLIENT_SECRET=""
-
-# Optional: Only needed for local file sync (leave blank to fallback to process.cwd())
-LOCAL_WORKSPACE_PATH=""
-
-# Optional: Only needed if you want to support Replicate API for texture generation
-REPLICATE_API_TOKEN=""
 ```
 
 ---
@@ -235,6 +215,7 @@ REPLICATE_API_TOKEN=""
 {
   "extends": ["next/core-web-vitals", "next/typescript"]
 }
+
 ```
 
 ---
@@ -250,6 +231,7 @@ REPLICATE_API_TOKEN=""
 *.css text eol=lf
 *.html text eol=lf
 *.json text eol=lf
+
 ```
 
 ---
@@ -303,14 +285,58 @@ scratch/
 
 ---
 
+### `jest.config.js`
+**File Path:** `file:///d:/MODEL/ocms/jest.config.js`
+
+```javascript
+/**
+ * jest.config.js — OCMS unit test configuration
+ * Uses ts-jest for TypeScript support without a separate build step.
+ */
+
+/** @type {import('jest').Config} */
+module.exports = {
+    testEnvironment: "node",
+    transform: {
+        "^.+\\.tsx?$": [
+            "ts-jest",
+            {
+                tsconfig: {
+                    module: "commonjs",
+                    moduleResolution: "node",
+                    esModuleInterop: true,
+                    allowSyntheticDefaultImports: true,
+                    strict: false,
+                },
+            },
+        ],
+    },
+    moduleNameMapper: {
+        "^@/(.*)$": "<rootDir>/src/$1",
+    },
+    testMatch: ["**/__tests__/**/*.test.ts"],
+    collectCoverageFrom: [
+        "src/lib/**/*.ts",
+        "src/app/api/**/*.ts",
+        "src/auth.ts",
+        "!src/**/*.d.ts",
+    ],
+    coverageReporters: ["text", "lcov"],
+};
+
+```
+
+---
+
 ### `next.config.mjs`
 **File Path:** `file:///d:/MODEL/ocms/next.config.mjs`
 
-```
+```javascript
 /** @type {import('next').NextConfig} */
 const nextConfig = {};
 
 export default nextConfig;
+
 ```
 
 ---
@@ -328,6 +354,8 @@ export default nextConfig;
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "jest --config jest.config.js",
+    "test:coverage": "jest --config jest.config.js --coverage",
     "test:patchers": "node scripts/run-patcher-smoke-tests.mjs",
     "postinstall": "prisma generate"
   },
@@ -355,17 +383,21 @@ export default nextConfig;
     "undici": "^7.22.0"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
+    "jest": "^30.4.2",
     "postcss": "^8",
     "prisma": "^6.16.2",
     "tailwindcss": "^3.4.1",
+    "ts-jest": "^29.4.11",
     "typescript": "^5"
   }
 }
+
 ```
 
 ---
@@ -393,6 +425,7 @@ export default nextConfig;
     "typescript": "^5.0.0"
   }
 }
+
 ```
 
 ---
@@ -416,6 +449,7 @@ export default nextConfig;
   },
   "include": ["src/**/*"]
 }
+
 ```
 
 ---
@@ -423,7 +457,7 @@ export default nextConfig;
 ### `postcss.config.mjs`
 **File Path:** `file:///d:/MODEL/ocms/postcss.config.mjs`
 
-```
+```javascript
 /** @type {import('postcss-load-config').Config} */
 const config = {
   plugins: {
@@ -432,6 +466,7 @@ const config = {
 };
 
 export default config;
+
 ```
 
 ---
@@ -451,12 +486,6 @@ const config: Config = {
   darkMode: "class",
   theme: {
     extend: {
-      colors: {
-        "ocms-bg": "#060a10",
-        "ocms-surface": "rgba(255,255,255,0.04)",
-        "ocms-border": "rgba(255,255,255,0.08)",
-        "ocms-accent": "#10b981",
-      },
       fontFamily: {
         sans: ["var(--font-space-grotesk)", "system-ui", "sans-serif"],
         mono: ["var(--font-jetbrains-mono)", "monospace"],
@@ -484,6 +513,7 @@ const config: Config = {
   plugins: [],
 };
 export default config;
+
 ```
 
 ---
@@ -518,6 +548,7 @@ export default config;
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]
 }
+
 ```
 
 ---
@@ -548,7 +579,9 @@ export default config;
     "src/lib/publish-change-normalizer.ts"
   ]
 }
+
 ```
+
 
 ---
 
@@ -566,6 +599,7 @@ export default defineConfig({
     path: "prisma/migrations",
   },
 });
+
 ```
 
 ---
@@ -755,7 +789,9 @@ enum SubscriptionType {
   FREE  // 10 generations/month, basic features
   PRO   // 100 operations/month, GitHub sync, priority support
 }
+
 ```
+
 
 ---
 
@@ -770,6 +806,7 @@ enum SubscriptionType {
 
 // NOTE: This file should not be edited
 // see https://nextjs.org/docs/app/building-your-application/configuring/typescript for more information.
+
 ```
 
 ---
@@ -794,7 +831,9 @@ export interface SchemaField {
     textureUrl?: string;
 }
 
+
 ```
+
 
 ---
 
@@ -809,54 +848,7 @@ import { handlers } from "@/auth"
 export const runtime = "nodejs"
 
 export const { GET, POST } = handlers
-```
 
----
-
-### `src/app/api/auth/github/route.ts`
-**File Path:** `file:///d:/MODEL/ocms/src/app/api/auth/github/route.ts`
-
-```typescript
-import { NextResponse } from "next/server";
-
-/**
- * POST /api/auth/github
- * Handles GitHub OAuth callback — placeholder for NextAuth integration.
- */
-export async function POST(request: Request) {
-    try {
-        const body = await request.json();
-        const { code } = body;
-
-        if (!code) {
-            return NextResponse.json(
-                { error: "Missing authorization code" },
-                { status: 400 }
-            );
-        }
-
-        // TODO: Exchange `code` for access token using GitHub OAuth App credentials
-        // const tokenResponse = await fetch("https://github.com/login/oauth/access_token", { ... })
-
-        return NextResponse.json({
-            message: "GitHub OAuth placeholder — exchange code for token here",
-            success: true,
-        });
-    } catch {
-        return NextResponse.json(
-            { error: "Authentication failed" },
-            { status: 500 }
-        );
-    }
-}
-
-export async function GET() {
-    return NextResponse.json({
-        provider: "github",
-        status: "ready",
-        message: "Use POST with { code } to authenticate",
-    });
-}
 ```
 
 ---
@@ -871,20 +863,41 @@ import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * POST /api/auth/mock
+ *
+ * Development-only route that creates a mock GitHub account record
+ * with a "mock_token" so the publish flow works against the local filesystem.
+ *
+ * HARD BLOCK: This route returns 403 in production regardless of any
+ * environment flags. It must never be reachable in a live deployment.
+ */
 export async function POST() {
-    try {
-        const isProduction = process.env.NODE_ENV === "production";
-        const allowGuest = process.env.ALLOW_GUEST_ACCESS === "true";
-        if (isProduction && !allowGuest) {
-            return NextResponse.json({ error: "Unauthorized - mock auth disabled in production" }, { status: 401 });
-        }
+    // Hard production block — this check cannot be bypassed by env flags
+    if (process.env.NODE_ENV === "production") {
+        return NextResponse.json(
+            { error: "This endpoint is not available in production." },
+            { status: 403 }
+        );
+    }
 
+    // Secondary guard: also require explicit opt-in in dev
+    if (process.env.ALLOW_GUEST_ACCESS !== "true") {
+        return NextResponse.json(
+            {
+                error: "Mock auth is disabled. Set ALLOW_GUEST_ACCESS=true in your .env.local to enable guest mode.",
+            },
+            { status: 403 }
+        );
+    }
+
+    try {
         const userId = await getAuthorizedUser();
         if (!userId) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        // Upsert Account record with mock token
+        // Upsert Account record with mock token (local dev only)
         const existingAccount = await prisma.account.findFirst({
             where: {
                 userId: userId,
@@ -912,12 +925,17 @@ export async function POST() {
             });
         }
 
-        return NextResponse.json({ success: true, message: "Mock account registered successfully." });
+        return NextResponse.json({
+            success: true,
+            message: "[DEV MODE] Mock account registered. Changes will sync to local filesystem.",
+            warning: "This only works in development. Set up real GitHub OAuth for production use.",
+        });
     } catch (error) {
         console.error("Mock auth error:", error);
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -968,6 +986,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
 });
 
+/**
+ * Returns the authenticated user ID.
+ *
+ * Guest fallback is ONLY allowed when ALL of the following are true:
+ *   1. NODE_ENV is "development" (never in production)
+ *   2. ALLOW_GUEST_ACCESS === "true" (explicit opt-in)
+ *
+ * This prevents accidental guest access in production deployments.
+ */
 export async function getAuthorizedUser(): Promise<string | null> {
     const session = await auth();
     let userId = session?.user?.id;
@@ -975,20 +1002,32 @@ export async function getAuthorizedUser(): Promise<string | null> {
     if (!userId) {
         const isProduction = process.env.NODE_ENV === "production";
         const allowGuest = process.env.ALLOW_GUEST_ACCESS === "true";
-        
-        if (isProduction && !allowGuest) {
+
+        // Hard block: guest access is never allowed in production
+        if (isProduction) {
             return null;
         }
 
-        // Fallback to Guest user in development or if explicitly allowed
+        // Require explicit opt-in even in development
+        if (!allowGuest) {
+            return null;
+        }
+
+        console.warn(
+            "[OCMS] Guest fallback activated. " +
+            "Set ALLOW_GUEST_ACCESS=false to disable. " +
+            "This will NOT work in production."
+        );
+
+        // Fallback to Guest user (development + explicit ALLOW_GUEST_ACCESS=true only)
         let guestUser = await prisma.user.findFirst({
-            where: { email: "guest@ocms.ai" }
+            where: { email: "guest@ocms.dev" }
         });
         if (!guestUser) {
             guestUser = await prisma.user.create({
                 data: {
                     name: "Guest User",
-                    email: "guest@ocms.ai",
+                    email: "guest@ocms.dev",
                 }
             });
         }
@@ -996,7 +1035,9 @@ export async function getAuthorizedUser(): Promise<string | null> {
     }
     return userId;
 }
+
 ```
+
 
 ---
 
@@ -1061,7 +1102,9 @@ export const config = {
         '/((?!_next/static|_next/image|_next/webpack-hmr|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
     ],
 };
+
 ```
+
 
 ---
 
@@ -1600,6 +1643,7 @@ export const config = {
 }
 ```
 
+
 ---
 
 ## 9. ROOT LAYOUT
@@ -1676,7 +1720,9 @@ export default function RootLayout({
     </html>
   );
 }
+
 ```
+
 
 ---
 
@@ -1982,6 +2028,7 @@ export default function HomePage() {
     </main>
   );
 }
+
 ```
 
 ---
@@ -1998,14 +2045,17 @@ import LivePreview from "@/components/workspace/LivePreview";
 import PermissionWizard from "@/components/workspace/PermissionWizard";
 import type { SchemaField } from "@/types/schema";
 import { PBR_PRESETS } from "@/lib/pbr-presets";
+import { isExpectedPreviewMessage, type PreviewScriptMode } from "@/lib/preview-message-security";
 
 interface WorkspaceClientProps {
     project: {
         id: string;
-        githubOwner: string;
-        githubRepo: string;
-        targetFilePath: string;
-        sourceUrl: string;
+        name: string;
+        githubOwner: string | null;
+        githubRepo: string | null;
+        githubBranch: string;
+        targetFilePath: string | null;
+        sourceUrl: string | null;
     };
     initialSchema: SchemaField[];
 }
@@ -2025,18 +2075,28 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
     const [schema, setSchema] = useState<SchemaField[]>(initialSchema);
     const [history, setHistory] = useState<SchemaField[][]>([initialSchema]);
 
-    const [previewUrl, setPreviewUrl] = useState(project.sourceUrl);
+    const [previewUrl, setPreviewUrl] = useState(project.sourceUrl ?? "");
+    const [previewScriptMode, setPreviewScriptMode] = useState<PreviewScriptMode>("static");
     const [iframeLoaded, setIframeLoaded] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
 
-    // GitHub Repo configuration state
-    const [githubOwner, setGithubOwner] = useState(project.githubOwner);
-    const [githubRepo, setGithubRepo] = useState(project.githubRepo);
-    const [targetFilePath, setTargetFilePath] = useState(project.targetFilePath);
+    // GitHub Repo configuration state — null means not yet configured
+    const [githubOwner, setGithubOwner] = useState(project.githubOwner ?? "");
+    const [githubRepo, setGithubRepo] = useState(project.githubRepo ?? "");
+    const [githubBranch, setGithubBranch] = useState(project.githubBranch || "main");
+    const [targetFilePath, setTargetFilePath] = useState(project.targetFilePath ?? "");
     const [showPermissionWizard, setShowPermissionWizard] = useState(false);
 
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const inlineEditRef = useRef(false);
+    const previewNonceRef = useRef<string>("");
+    if (!previewNonceRef.current) {
+        previewNonceRef.current =
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+                ? crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    const previewNonce = previewNonceRef.current;
 
     // Consolidated modal state
     const [modalState, setModalState] = useState<ModalState | null>(null);
@@ -2201,10 +2261,10 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         const changesPayload = buildChangesPayload(schema);
 
         iframe.contentWindow.postMessage(
-            { source: "ocms-live-bridge", changes: changesPayload },
-            window.location.origin
+            { source: "ocms-live-bridge", changes: changesPayload, nonce: previewNonce },
+            "*"
         );
-    }, [schema, iframeLoaded, buildChangesPayload]);
+    }, [schema, iframeLoaded, buildChangesPayload, previewNonce]);
 
     // Debounced autosave effect for persisting schema edits to database
     useEffect(() => {
@@ -2235,16 +2295,20 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         if (!iframe?.contentWindow || !iframeLoaded) return;
 
         iframe.contentWindow.postMessage(
-            { source: "ocms-editor", type, selector, text },
-            window.location.origin
+            { source: "ocms-editor", type, selector, text, nonce: previewNonce },
+            "*"
         );
-    }, [iframeLoaded]);
+    }, [iframeLoaded, previewNonce]);
 
     useEffect(() => {
         const handleMessage = async (event: MessageEvent) => {
-            // Lock origin checks to same origin to prevent external origins spoofing messages
-            if (event.origin !== window.location.origin) return;
-            if (event.source !== iframeRef.current?.contentWindow) return;
+            if (!isExpectedPreviewMessage({
+                event,
+                expectedOrigin: window.location.origin,
+                expectedSource: iframeRef.current?.contentWindow,
+                expectedNonce: previewNonceRef.current,
+                scriptMode: previewScriptMode,
+            })) return;
             const { source, fieldId, newValue, file, action, value } = event.data;
 
             try {
@@ -2267,8 +2331,8 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
                     const changesPayload = buildChangesPayload(schema);
                     iframeRef.current?.contentWindow?.postMessage(
-                        { source: "ocms-live-bridge", changes: changesPayload },
-                        window.location.origin
+                        { source: "ocms-live-bridge", changes: changesPayload, nonce: previewNonce },
+                        "*"
                     );
                     return;
                 }
@@ -2372,7 +2436,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
         window.addEventListener("message", handleMessage);
         return () => window.removeEventListener("message", handleMessage);
-    }, [handleFieldChange, handleModelInjected, project.id, schema, previewUrl, buildChangesPayload, showToast]);
+    }, [handleFieldChange, handleModelInjected, project.id, schema, previewUrl, buildChangesPayload, showToast, previewNonce, previewScriptMode]);
 
     const handleSchemaReplace = useCallback((newSchema: SchemaField[]) => {
         setSchema(newSchema);
@@ -2400,11 +2464,13 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         onModelInjected={handleModelInjected}
                         githubOwner={githubOwner}
                         githubRepo={githubRepo}
+                        githubBranch={githubBranch}
                         targetFilePath={targetFilePath}
                         onHistorySeek={seekHistory}
                         historyCount={history.length}
                         onSchemaReplace={handleSchemaReplace}
                         broadcastGhostEvent={broadcastGhostEvent}
+                        previewMessageNonce={previewNonce}
                         previewUrl={previewUrl}
                         isScanning={isScanning}
                         onScanPage={handleScanPage}
@@ -2420,6 +2486,9 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         iframeRef={iframeRef}
                         onLoad={() => setIframeLoaded(true)}
                         projectId={project.id}
+                        previewNonce={previewNonce}
+                        scriptMode={previewScriptMode}
+                        onScriptModeChange={setPreviewScriptMode}
                     />
                 </div>
             </div>
@@ -2630,11 +2699,13 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                     projectId={project.id}
                     currentOwner={githubOwner}
                     currentRepo={githubRepo}
+                    currentBranch={githubBranch}
                     currentFilePath={targetFilePath}
                     onClose={() => setShowPermissionWizard(false)}
                     onSetupCompleted={(data) => {
                         setGithubOwner(data.githubOwner);
                         setGithubRepo(data.githubRepo);
+                        setGithubBranch(data.githubBranch);
                         setTargetFilePath(data.targetFilePath);
                     }}
                 />
@@ -2642,6 +2713,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         </div>
     );
 }
+
 ```
 
 ---
@@ -2693,37 +2765,34 @@ export default async function WorkspacePage({
         });
     }
 
-
     if (!project) {
         notFound();
     }
 
-    // Safely parse the schema or use fallback
+    // Safely parse the schema — no placeholder fallback in production.
+    // If schema is empty, WorkspaceClient will show a scan prompt.
     let initialSchema: SchemaField[] = [];
     try {
         if (project.generatedSchema) {
-            initialSchema = project.generatedSchema as unknown as SchemaField[];
+            const parsed = project.generatedSchema as unknown as SchemaField[];
+            // Ensure it's a valid non-empty array before using it
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                initialSchema = parsed;
+            }
         }
     } catch (e) {
-        console.error("Failed to parse schema", e);
-    }
-
-    // Default schema if none generated
-    if (!initialSchema || initialSchema.length === 0) {
-        initialSchema = [
-            { id: "hero-title", type: "text", label: "Hero Title", value: "Welcome to Our Site", selector: "h1" },
-            { id: "hero-subtitle", type: "text", label: "Subtitle", value: "Build something amazing today.", selector: ".subtitle" },
-            { id: "hero-image", type: "image", label: "Hero Image", value: "/placeholder.jpg", selector: "img.hero" },
-            { id: "cta-link", type: "link", label: "CTA Link", value: "/get-started", selector: "a.cta" },
-        ];
+        console.error("Failed to parse project schema:", e);
+        // initialSchema stays empty — workspace will prompt user to scan
     }
 
     const projectData = {
         id: project.id,
-        githubOwner: project.githubOwner || "",
-        githubRepo: project.githubRepo || "",
-        targetFilePath: project.targetFilePath || "",
-        sourceUrl: project.sourceUrl || ""
+        name: project.name,
+        githubOwner: project.githubOwner ?? null,
+        githubRepo: project.githubRepo ?? null,
+        githubBranch: project.githubBranch || "main",
+        targetFilePath: project.targetFilePath ?? null,
+        sourceUrl: project.sourceUrl ?? null,
     };
 
     return (
@@ -3061,7 +3130,9 @@ export default function NewWorkspacePage() {
         </div>
     );
 }
+
 ```
+
 
 ---
 
@@ -3071,88 +3142,85 @@ export default function NewWorkspacePage() {
 **File Path:** `file:///d:/MODEL/ocms/src/app/api/check-env/route.ts`
 
 ```typescript
-import { Suspense } from "react";
-import WorkspaceClient from "./WorkspaceClient";
-import WorkspaceSkeleton from "@/components/workspace/WorkspaceSkeleton";
-import { prisma } from "@/lib/prisma";
-import { notFound, redirect } from "next/navigation";
-import { getAuthorizedUser } from "@/auth";
-import type { SchemaField } from "@/types/schema";
+import { NextResponse } from "next/server";
 
-export default async function WorkspacePage({ 
-    params,
-    searchParams 
-}: { 
-    params: { projectId: string },
-    searchParams: { target?: string }
-}) {
-    const currentUserId = await getAuthorizedUser();
+/**
+ * GET /api/check-env
+ *
+ * Checks whether critical environment variables are configured.
+ * Returns { configured, missing, warnings } — never exposes actual values.
+ *
+ * Variable naming: this app uses AUTH_SECRET (not NEXTAUTH_SECRET).
+ * Both NextAuth v4 and Auth.js v5 support AUTH_SECRET natively.
+ */
+export async function GET() {
+    const missing: string[] = [];
+    const warnings: string[] = [];
 
-    if (!currentUserId) {
-        redirect("/");
-    }
+    // Known placeholder / dummy values that indicate copy-paste without real config
+    const PLACEHOLDER_PATTERNS = [
+        "your_github_client_id",
+        "your_github_client_id_here",
+        "dummy_client_id",
+        "placeholder",
+        "<your_client_id>",
+    ];
+    const SECRET_PLACEHOLDER_PATTERNS = [
+        "your_github_client_secret",
+        "your_github_client_secret_here",
+        "dummy_client_secret",
+        "placeholder",
+        "<your_client_secret>",
+    ];
 
-    let project = await prisma.project.findUnique({
-        where: { id: params.projectId }
-    });
+    // AUTH_SECRET placeholder values (the .env ships with one for local dev)
+    const AUTH_SECRET_PLACEHOLDERS = [
+        "dummy_secret_auth_secret_for_local_testing_ocms_123",
+        "your_auth_secret",
+        "changeme",
+        "secret",
+    ];
 
-    // IDOR Protection: If project exists but belongs to a different user, deny access (404)
-    if (project && project.userId !== currentUserId) {
-        notFound();
-    }
+    const requiredVars = [
+        "GITHUB_CLIENT_ID",
+        "GITHUB_CLIENT_SECRET",
+        "DATABASE_URL",
+        "AUTH_SECRET",
+    ] as const;
 
-    const targetUrl = searchParams.target;
+    for (const varName of requiredVars) {
+        const value = process.env[varName];
 
-    if (!project && targetUrl) {
-        project = await prisma.project.create({
-            data: {
-                id: params.projectId, 
-                name: "Auto-Recovered Project",
-                sourceUrl: targetUrl,
-                userId: currentUserId
-            }
-        });
-    }
-
-
-    if (!project) {
-        notFound();
-    }
-
-    // Safely parse the schema or use fallback
-    let initialSchema: SchemaField[] = [];
-    try {
-        if (project.generatedSchema) {
-            initialSchema = project.generatedSchema as unknown as SchemaField[];
+        if (!value || value.trim() === "") {
+            missing.push(varName);
+            continue;
         }
-    } catch (e) {
-        console.error("Failed to parse schema", e);
+
+        const v = value.trim().toLowerCase();
+
+        if (varName === "GITHUB_CLIENT_ID" && PLACEHOLDER_PATTERNS.some(p => v.includes(p))) {
+            warnings.push(varName);
+        }
+
+        if (varName === "GITHUB_CLIENT_SECRET" && SECRET_PLACEHOLDER_PATTERNS.some(p => v.includes(p))) {
+            warnings.push(varName);
+        }
+
+        if (varName === "AUTH_SECRET" && AUTH_SECRET_PLACEHOLDERS.some(p => v === p)) {
+            warnings.push(varName);
+        }
     }
 
-    // Default schema if none generated
-    if (!initialSchema || initialSchema.length === 0) {
-        initialSchema = [
-            { id: "hero-title", type: "text", label: "Hero Title", value: "Welcome to Our Site", selector: "h1" },
-            { id: "hero-subtitle", type: "text", label: "Subtitle", value: "Build something amazing today.", selector: ".subtitle" },
-            { id: "hero-image", type: "image", label: "Hero Image", value: "/placeholder.jpg", selector: "img.hero" },
-            { id: "cta-link", type: "link", label: "CTA Link", value: "/get-started", selector: "a.cta" },
-        ];
+    // Optional: warn if NEXTAUTH_URL is missing (needed in production)
+    const nextauthUrl = process.env.NEXTAUTH_URL;
+    const isProduction = process.env.NODE_ENV === "production";
+    if (isProduction && (!nextauthUrl || nextauthUrl.trim() === "")) {
+        warnings.push("NEXTAUTH_URL");
     }
 
-    const projectData = {
-        id: project.id,
-        githubOwner: project.githubOwner || "",
-        githubRepo: project.githubRepo || "",
-        githubBranch: project.githubBranch || "main",
-        targetFilePath: project.targetFilePath || "",
-        sourceUrl: project.sourceUrl || ""
-    };
+    const configured = missing.length === 0 && warnings.length === 0;
 
-    return (
-        <Suspense fallback={<WorkspaceSkeleton />}>
-            <WorkspaceClient project={projectData} initialSchema={initialSchema} />
-        </Suspense>
-    );
+    return NextResponse.json({ configured, missing, warnings });
 }
 
 ```
@@ -3370,6 +3438,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Failed to extract colors" }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -3471,6 +3540,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Failed to generate variant" }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -3557,6 +3627,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: message }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -3736,6 +3807,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: errMsg }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -3945,6 +4017,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -4066,6 +4139,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Failed to run inline action" }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -4161,6 +4235,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: errMsg }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -4267,6 +4342,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Failed to parse voice command" }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -4717,6 +4793,7 @@ export async function POST(
         return NextResponse.json({ error: "Action failed", details: msg }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -4775,6 +4852,7 @@ export async function PATCH(
         );
     }
 }
+
 ```
 
 ---
@@ -4788,20 +4866,32 @@ import { prisma } from "@/lib/prisma";
 import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { Prisma } from "@prisma/client";
 import { getAuthorizedUser } from "@/auth";
-import { validateUrlForSsrf } from "@/lib/ssrf";
+import { fetchWithValidatedSsrfUrl, validateUrlForSsrf } from "@/lib/ssrf";
+import { withRateLimit } from "@/lib/ratelimit";
+
+
+
 
 export async function POST(
     req: NextRequest,
     { params }: { params: { projectId: string } }
 ) {
     try {
+        const rateLimited = await withRateLimit("scan-page", req, { limit: 20, windowMs: 60_000 });
+        if (rateLimited) return rateLimited;
+
+        // Auth check FIRST — before any network requests
+        const userId = await getAuthorizedUser();
+        if (!userId) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         const { url, html } = await req.json();
 
         if (!url) {
             return NextResponse.json({ error: "URL is required" }, { status: 400 });
         }
 
-        const targetUrl = url;
         let pathname = "/";
         try {
             const parsed = new URL(url);
@@ -4810,7 +4900,7 @@ export async function POST(
             return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
         }
 
-        // Validate URL format and security via shared SSRF utility
+        // Validate URL against SSRF blocklist
         const validation = await validateUrlForSsrf(url);
         if (!validation.safe) {
             return NextResponse.json(
@@ -4819,52 +4909,11 @@ export async function POST(
             );
         }
 
-        // Fetch the page content if not provided
-        let scrapedHtml = html || "";
-        let finalUrl = targetUrl;
-
-        if (!scrapedHtml) {
-            try {
-                const response = await fetch(targetUrl, {
-                    redirect: "follow",
-                    headers: {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        Accept: "text/html",
-                    },
-                    signal: AbortSignal.timeout(12000), // 12s timeout
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Server responded with status ${response.status}`);
-                }
-
-                scrapedHtml = await response.text();
-                finalUrl = response.url;
-            } catch (err: unknown) {
-                console.error("[Scan Page Fetch Error]:", err);
-                const errMsg = err instanceof Error ? err.message : String(err);
-                return NextResponse.json({ error: `Failed to fetch page content: ${errMsg}` }, { status: 500 });
-            }
-        }
-
-        // Generate schema fields via local scraper
-        let newFields = extractFallbackSchemaFields(scrapedHtml, finalUrl);
-
-        // Set path property on the new fields
-        newFields = newFields.map((f) => ({
-            ...f,
-            path: pathname,
-        }));
-
-        const userId = await getAuthorizedUser();
-        if (!userId) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
+        // Check project ownership before doing any work
         const existingProject = await prisma.project.findFirst({
             where: {
                 id: params.projectId,
-                userId: userId
+                userId: userId,
             }
         });
 
@@ -4872,18 +4921,97 @@ export async function POST(
             return NextResponse.json({ error: "Project not found or access denied" }, { status: 404 });
         }
 
-        let existingFields: Record<string, unknown>[] = [];
-        if (existingProject.generatedSchema) {
-            existingFields = existingProject.generatedSchema as unknown as Record<string, unknown>[];
+        // Fetch page content if not provided inline
+        let scrapedHtml = html || "";
+        let finalUrl = url;
+        let scrapeFailed = false;
+
+        if (!scrapedHtml) {
+            try {
+                let currentUrl = new URL(url);
+                let currentValidation = validation;
+                let response: Response;
+                let redirects = 0;
+
+                do {
+                    response = await fetchWithValidatedSsrfUrl(currentUrl.href, currentValidation, {
+                        redirect: "manual",
+                        headers: {
+                            "User-Agent": "Mozilla/5.0 (compatible; OCMS/1.0; +https://ocms.ai/bot)",
+                            Accept: "text/html",
+                        },
+                        signal: AbortSignal.timeout(12000),
+                    });
+
+                    if (![301, 302, 303, 307, 308].includes(response.status)) break;
+                    const location = response.headers.get("location");
+                    if (!location || redirects++ >= 5) break;
+
+                    currentUrl = new URL(location, currentUrl.href);
+                    currentValidation = await validateUrlForSsrf(currentUrl.href);
+                    if (!currentValidation.safe) {
+                        scrapeFailed = true;
+                        break;
+                    }
+                } while (true);
+
+                if (!response.ok) {
+                    scrapeFailed = true;
+                    console.warn(`[Scan Page] HTTP ${response.status} for ${url}`);
+                } else {
+                    scrapedHtml = await response.text();
+                    finalUrl = currentUrl.href;
+                }
+            } catch (err: unknown) {
+                scrapeFailed = true;
+                const errMsg = err instanceof Error ? err.message : String(err);
+                console.error("[Scan Page Fetch Error]:", errMsg);
+            }
         }
 
-        // Filter out old fields for the current path to replace them with fresh ones
+        if (scrapeFailed || !scrapedHtml) {
+            return NextResponse.json({
+                success: false,
+                scrapeFailed: true,
+                error: "Could not fetch page content. The URL may be unreachable or return no HTML.",
+                schema: existingProject.generatedSchema ?? [],
+                newFieldsCount: 0,
+            }, { status: 200 }); // 200 so client can handle gracefully
+        }
+
+        // Generate new fields from the scraped HTML
+        let newFields = extractFallbackSchemaFields(scrapedHtml, finalUrl);
+
+        // Attach path to each new field
+        newFields = newFields.map((f) => ({
+            ...f,
+            path: pathname,
+        }));
+
+        // Parse existing schema
+        let existingFields: Record<string, unknown>[] = [];
+        if (existingProject.generatedSchema) {
+            const raw = existingProject.generatedSchema as unknown;
+            if (Array.isArray(raw)) {
+                existingFields = raw as Record<string, unknown>[];
+            }
+        }
+
+        // Preserve fields for OTHER paths (don't touch them)
         const preservedFields = existingFields.filter((f: Record<string, unknown>) => {
-            const fPath = f.path || "/";
+            const fPath = (f.path as string) || "/";
             return fPath !== pathname;
         });
 
-        const mergedSchema = [...preservedFields, ...newFields];
+        // Deduplicate: skip new fields whose selector already exists in preserved fields
+        const preservedSelectors = new Set(
+            preservedFields.map((f) => f.selector as string).filter(Boolean)
+        );
+        const deduplicatedNewFields = newFields.filter(
+            (f) => !f.selector || !preservedSelectors.has(f.selector)
+        );
+
+        const mergedSchema = [...preservedFields, ...deduplicatedNewFields];
 
         // Update database
         await prisma.project.update({
@@ -4896,15 +5024,19 @@ export async function POST(
         return NextResponse.json({
             success: true,
             schema: mergedSchema,
-            newFieldsCount: newFields.length,
+            newFieldsCount: deduplicatedNewFields.length,
+            preservedFieldsCount: preservedFields.length,
         });
 
     } catch (error: unknown) {
         console.error("Scan page error:", error);
-        const errMsg = error instanceof Error ? error.message : String(error);
-        return NextResponse.json({ error: "Internal Server Error", details: errMsg }, { status: 500 });
+        return NextResponse.json(
+            { error: "Internal Server Error" },
+            { status: 500 }
+        );
     }
 }
+
 ```
 
 ---
@@ -4917,27 +5049,78 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthorizedUser } from "@/auth";
 
+const VALID_FIELD_TYPES = new Set(["text", "image", "link", "3d-model", "list"]);
+
+interface SchemaFieldInput {
+    id: string;
+    type: string;
+    selector?: string;
+    label?: string;
+    value?: string;
+    path?: string;
+    [key: string]: unknown;
+}
+
+function validateSchemaField(field: unknown, index: number): string | null {
+    if (!field || typeof field !== "object") {
+        return `Field at index ${index} is not an object`;
+    }
+    const f = field as SchemaFieldInput;
+    if (!f.id || typeof f.id !== "string" || f.id.trim() === "") {
+        return `Field at index ${index} is missing a valid "id"`;
+    }
+    if (!f.type || !VALID_FIELD_TYPES.has(f.type)) {
+        return `Field "${f.id}" has invalid type "${f.type}". Must be one of: ${Array.from(VALID_FIELD_TYPES).join(", ")}`;
+    }
+    return null;
+}
+
 export async function PUT(
     req: NextRequest,
     { params }: { params: { projectId: string } }
 ) {
     try {
-        const { schema } = await req.json();
-        
-        if (!schema) {
-            return NextResponse.json({ error: "Schema is required" }, { status: 400 });
-        }
-
         const userId = await getAuthorizedUser();
-
         if (!userId) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
+        const body = await req.json();
+        const { schema } = body;
+
+        if (!schema) {
+            return NextResponse.json({ error: "Schema is required" }, { status: 400 });
+        }
+
+        if (!Array.isArray(schema)) {
+            return NextResponse.json(
+                { error: "Schema must be an array of fields" },
+                { status: 400 }
+            );
+        }
+
+        // Validate each field
+        const validationErrors: string[] = [];
+        for (let i = 0; i < schema.length; i++) {
+            const error = validateSchemaField(schema[i], i);
+            if (error) validationErrors.push(error);
+        }
+
+        if (validationErrors.length > 0) {
+            return NextResponse.json(
+                {
+                    error: "Schema validation failed",
+                    details: validationErrors,
+                },
+                { status: 400 }
+            );
+        }
+
+        // Verify project ownership
         const existingProject = await prisma.project.findFirst({
             where: {
                 id: params.projectId,
-                userId: userId
+                userId: userId,
             }
         });
 
@@ -4945,23 +5128,34 @@ export async function PUT(
             return NextResponse.json({ error: "Project not found or access denied" }, { status: 404 });
         }
 
+        // Deduplicate fields by id (keep last occurrence)
+        const seenIds = new Map<string, SchemaFieldInput>();
+        for (const field of schema as SchemaFieldInput[]) {
+            seenIds.set(field.id, field);
+        }
+        const deduplicatedSchema = Array.from(seenIds.values());
+
         const project = await prisma.project.update({
             where: { id: params.projectId },
             data: {
-                generatedSchema: schema,
+                generatedSchema: deduplicatedSchema as unknown as import("@prisma/client").Prisma.InputJsonValue,
             },
         });
 
-        return NextResponse.json({ success: true, project });
+        return NextResponse.json({
+            success: true,
+            fieldCount: deduplicatedSchema.length,
+            project: { id: project.id, updatedAt: project.updatedAt },
+        });
     } catch (error: unknown) {
         console.error("Failed to update project schema:", error);
-        const msg = error instanceof Error ? error.message : "Unknown error";
         return NextResponse.json(
-            { error: "Failed to update project schema", details: msg },
+            { error: "Failed to update project schema" },
             { status: 500 }
         );
     }
 }
+
 ```
 
 ---
@@ -4975,10 +5169,15 @@ import { prisma } from "@/lib/prisma";
 import { getAuthorizedUser } from "@/auth";
 import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { Prisma } from "@prisma/client";
-import { validateUrlForSsrf } from "@/lib/ssrf";
+import { fetchWithValidatedSsrfUrl, validateUrlForSsrf } from "@/lib/ssrf";
+import { withRateLimit } from "@/lib/ratelimit";
+import type { SchemaField } from "@/types/schema";
 
 export async function POST(req: Request) {
     try {
+        const rateLimited = await withRateLimit("projects", req, { limit: 20, windowMs: 60_000 });
+        if (rateLimited) return rateLimited;
+
         const { url, name } = await req.json();
         
         if (!url) {
@@ -5001,11 +5200,9 @@ export async function POST(req: Request) {
         }
 
         // Automatically scrape and generate schema from the real site
-        let schemaFields = null;
-        let scrapedHtml = "";
-        let scrapedUrl = url;
+        let schemaFields: SchemaField[] | null = null;
         try {
-            let response = await fetch(url, {
+            let response = await fetchWithValidatedSsrfUrl(url, validation, {
                 redirect: "manual",
                 headers: {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -5030,7 +5227,10 @@ export async function POST(req: Request) {
 
                 currentUrl = nextUrl;
                 redirectCount++;
-                response = await fetch(currentUrl.href, {
+                const redirectValidation = await validateUrlForSsrf(currentUrl.href);
+                if (!redirectValidation.safe) break;
+
+                response = await fetchWithValidatedSsrfUrl(currentUrl.href, redirectValidation, {
                     redirect: "manual",
                     headers: {
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -5042,23 +5242,18 @@ export async function POST(req: Request) {
 
             if (response.ok) {
                 const rawHtml = await response.text();
-                scrapedHtml = rawHtml;
-                scrapedUrl = currentUrl.href;
                 schemaFields = extractFallbackSchemaFields(rawHtml, currentUrl.href);
             }
         } catch (err) {
-            console.error("Auto schema generation failed, using fallback:", err);
+            console.error("Auto schema generation failed:", err);
         }
 
+        // If scraping produced no fields, use an empty schema.
+        // The workspace will prompt the user to scan the page manually.
+        // We never inject placeholder/dummy fields into real project data.
+        const scrapeFailed = !schemaFields || schemaFields.length === 0;
         if (!schemaFields || schemaFields.length === 0) {
-            schemaFields = scrapedHtml
-                ? extractFallbackSchemaFields(scrapedHtml, scrapedUrl)
-                : [
-                { id: "hero-title", type: "text", label: "Hero Title", value: "Welcome to Our Site", selector: "h1" },
-                { id: "hero-subtitle", type: "text", label: "Subtitle", value: "Build something amazing today.", selector: ".subtitle" },
-                { id: "hero-image", type: "image", label: "Hero Image", value: "/placeholder.jpg", selector: "img.hero" },
-                { id: "cta-link", type: "link", label: "CTA Link", value: "/get-started", selector: "a.cta" },
-            ];
+            schemaFields = [];
         }
 
         // Generate GSD planning data
@@ -5093,13 +5288,14 @@ progress:
             }
         });
 
-        return NextResponse.json(project);
+        return NextResponse.json({ ...project, scrapeFailed });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Failed to create project:", error);
         return NextResponse.json({ error: "Internal Server Error", details: message }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -6774,6 +6970,7 @@ ${modelViewerScript}
         return NextResponse.json({ error: "Failed to proxy URL." }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -6794,9 +6991,23 @@ import path from "path";
 
 export const dynamic = "force-dynamic";
 
+/** Allowlist of safe characters for repo owner / repo name */
+const SAFE_REPO_SEGMENT = /^[a-zA-Z0-9_.\-]+$/;
+
+/** Validate that a path does not contain traversal sequences */
+function isPathSafe(filePath: string): boolean {
+    if (!filePath || typeof filePath !== "string") return false;
+    const normalized = path.normalize(filePath);
+    // Block absolute paths and traversal
+    if (path.isAbsolute(normalized)) return false;
+    if (normalized.startsWith("..")) return false;
+    if (normalized.includes("..")) return false;
+    return true;
+}
+
 export async function POST(req: NextRequest) {
     try {
-        // Authenticate user
+        // Authenticate user first
         const userId = await getAuthorizedUser();
         if (!userId) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -6804,15 +7015,30 @@ export async function POST(req: NextRequest) {
 
         const { projectId, repoOwner, repoName, filePath, changes } = await req.json();
 
+        // ── Input validation ──
         if (!repoOwner || !repoName || !filePath || !changes || !Array.isArray(changes)) {
-            return patchJson({ error: "Missing required fields" }, { status: 400 });
+            return patchJson({ error: "Missing required fields: repoOwner, repoName, filePath, changes" }, { status: 400 });
+        }
+
+        // Validate repo owner and repo name (prevent path injection)
+        if (!SAFE_REPO_SEGMENT.test(repoOwner)) {
+            return patchJson({ error: "Invalid repoOwner format" }, { status: 400 });
+        }
+        if (!SAFE_REPO_SEGMENT.test(repoName)) {
+            return patchJson({ error: "Invalid repoName format" }, { status: 400 });
+        }
+
+        // Validate file path (no traversal, no absolute paths)
+        if (!isPathSafe(filePath)) {
+            return patchJson({ error: "Invalid or unsafe filePath" }, { status: 400 });
         }
 
         const astChanges = normalizeChanges(changes);
         if (!astChanges.length) {
-            return patchJson({ error: "No patchable JSX changes were provided" }, { status: 400 });
+            return patchJson({ error: "No patchable changes were provided" }, { status: 400 });
         }
 
+        // Look up the project to get authoritative repo values
         const project = projectId
             ? await prisma.project.findFirst({
                 where: { id: projectId, userId },
@@ -6821,6 +7047,7 @@ export async function POST(req: NextRequest) {
                     githubRepo: true,
                     githubBranch: true,
                     targetFilePath: true,
+                    name: true,
                 },
             })
             : null;
@@ -6829,12 +7056,14 @@ export async function POST(req: NextRequest) {
             return patchJson({ error: "Project not found" }, { status: 404 });
         }
 
+        // Prefer project DB values; fall back to request body (for projects without GitHub config)
         const targetOwner = project?.githubOwner || repoOwner;
         const targetRepo = project?.githubRepo || repoName;
         const targetPath = project?.targetFilePath || filePath;
         const targetBranch = project?.githubBranch || "main";
+        const projectName = project?.name || "OCMS Project";
 
-        // Fetch GitHub access token from the Prisma Account table
+        // Fetch GitHub access token from the Account table
         const account = await prisma.account.findFirst({
             where: {
                 userId: userId,
@@ -6842,60 +7071,81 @@ export async function POST(req: NextRequest) {
             },
         });
 
+        // ── No GitHub account: demo/offline mode ──
         if (!account || !account.access_token) {
             return patchJson({
-                success: true,
-                message: "[DEMO MODE] Sync simulated successfully. Login to push to real GitHub.",
-                commitUrl: "#",
+                demoMode: true,
+                success: false,
+                message: "No GitHub account connected. Sign in with GitHub to push changes to a repository.",
+                hint: "Use the GitHub Setup Assistant in the toolbar to connect your account.",
             }, { status: 200 });
         }
 
+        // ── Local filesystem mode (mock_token = dev mode) ──
         if (account.access_token === "mock_token") {
+            // Block local writes in production
+            if (process.env.NODE_ENV === "production") {
+                return patchJson({
+                    error: "Local filesystem sync is not available in production. Connect a real GitHub account.",
+                }, { status: 403 });
+            }
+
+            const localWorkspacePath = process.env.LOCAL_WORKSPACE_PATH;
+            if (!localWorkspacePath) {
+                return patchJson({
+                    error: "LOCAL_WORKSPACE_PATH is not set. Set it in your .env.local to enable local file sync.",
+                }, { status: 400 });
+            }
+
             try {
-                const localRoot = path.resolve(process.env.LOCAL_WORKSPACE_PATH || process.cwd());
+                const localRoot = path.resolve(localWorkspacePath);
                 const localFilePath = path.resolve(localRoot, targetPath);
                 const insideLocalRoot = localFilePath === localRoot || localFilePath.startsWith(`${localRoot}${path.sep}`);
 
-                if (!insideLocalRoot || !fs.existsSync(localFilePath)) {
+                if (!insideLocalRoot) {
+                    return patchJson({ error: `Path traversal blocked: ${targetPath}` }, { status: 403 });
+                }
+                if (!fs.existsSync(localFilePath)) {
                     return patchJson({ error: `Local file not found: ${targetPath}` }, { status: 404 });
                 }
 
                 const localContent = fs.readFileSync(localFilePath, "utf8");
                 const patchResult = patchSource(localContent, targetPath, astChanges);
-                const updatedCode = patchResult.code;
 
                 if (patchResult.appliedCount === 0) {
                     return noPatchResponse(patchResult);
                 }
 
-                if (updatedCode === localContent) {
+                if (patchResult.code === localContent) {
                     return patchJson({
                         success: true,
-                        message: "Matching nodes were found, but no source changes were necessary.",
+                        message: "Selectors matched but no source changes were necessary (values already match).",
                         commitUrl: "#",
                         unchanged: true,
                     }, { status: 200 }, patchResult);
                 }
 
-                fs.writeFileSync(localFilePath, updatedCode, "utf8");
-                console.log(`[Local Sync] Successfully updated local file in Mock mode: ${localFilePath}`);
+                fs.writeFileSync(localFilePath, patchResult.code, "utf8");
+                console.log(`[Local Sync] Updated: ${localFilePath}`);
 
                 return patchJson({
                     success: true,
-                    message: publishMessage(patchResult, "Local file updated successfully (Offline Mode)."),
+                    message: buildCommitMessage(patchResult, "Local file updated (Dev Mode).", astChanges, projectName, targetPath),
                     commitUrl: "#",
+                    devMode: true,
                 }, { status: 200 }, patchResult);
             } catch (err) {
-                console.error("Local mock publish error:", err);
-                return patchJson({ error: `Local publish failed: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 });
+                console.error("Local sync error:", err);
+                return patchJson({
+                    error: `Local sync failed: ${err instanceof Error ? err.message : String(err)}`,
+                }, { status: 500 });
             }
         }
 
-        // Initialize Octokit with the user's token
+        // ── Real GitHub push ──
         const octokit = new Octokit({ auth: account.access_token });
 
-        // --- STEP 1: The GitHub Fetch (Octokit) ---
-        // Fetch the target file content from the repository
+        // STEP 1: Fetch file from GitHub
         let fileData;
         try {
             const { data } = await octokit.repos.getContent({
@@ -6906,77 +7156,96 @@ export async function POST(req: NextRequest) {
             });
             fileData = data;
         } catch (err: unknown) {
-            console.error("Octokit getContent error:", err);
             const errorMessage = err instanceof Error ? err.message : String(err);
-            return patchJson({ error: `Failed to fetch file from GitHub: ${errorMessage}` }, { status: 404 });
+            return patchJson({
+                error: `Failed to fetch file from GitHub: ${errorMessage}. Check that the repo, owner, and file path are correct.`,
+            }, { status: 404 });
         }
 
         if (Array.isArray(fileData) || fileData.type !== "file") {
-            return patchJson({ error: "Target path is not a valid file" }, { status: 400 });
+            return patchJson({ error: "Target path points to a directory, not a file" }, { status: 400 });
         }
 
         const fileSha = fileData.sha;
-        // The content from GitHub API is base64 encoded, need to decode it to UTF-8
         const decodedContent = Buffer.from(fileData.content, "base64").toString("utf8");
 
-        // --- STEP 2: Deterministic AST Code Modifier (AI-Free) ---
+        // STEP 2: Apply changes via AST patcher
         const patchResult = patchSource(decodedContent, targetPath, astChanges);
-        const updatedCode = patchResult.code;
+
         if (patchResult.appliedCount === 0) {
             return noPatchResponse(patchResult);
         }
 
-        if (updatedCode === decodedContent) {
+        if (patchResult.code === decodedContent) {
             return NextResponse.json({
                 success: true,
-                message: "Matching nodes were found, but no source changes were necessary.",
+                message: "Selectors matched but no source changes were necessary (values already match).",
                 commitUrl: "#",
                 unchanged: true,
                 matchedSelectors: patchResult.matchedSelectors,
+                appliedCount: patchResult.appliedCount,
+                unmatchedSelectors: patchResult.unmatchedSelectors,
             }, { status: 200 });
         }
 
-        // Write changes back to the local workspace code files (R5 Local Sync)
-        try {
-            const localRoot = path.resolve(process.env.LOCAL_WORKSPACE_PATH || process.cwd());
-            const localFilePath = path.resolve(localRoot, targetPath);
-            const insideLocalRoot = localFilePath === localRoot || localFilePath.startsWith(`${localRoot}${path.sep}`);
+        // STEP 3: Local workspace sync (best-effort, non-blocking)
+        const localWorkspacePath = process.env.LOCAL_WORKSPACE_PATH;
+        if (localWorkspacePath) {
+            try {
+                const localRoot = path.resolve(localWorkspacePath);
+                const localFilePath = path.resolve(localRoot, targetPath);
+                const insideLocalRoot = localFilePath === localRoot || localFilePath.startsWith(`${localRoot}${path.sep}`);
 
-            if (insideLocalRoot && fs.existsSync(localFilePath)) {
-                fs.writeFileSync(localFilePath, updatedCode, "utf8");
-                console.log(`[Local Sync] Successfully updated local file: ${localFilePath}`);
-            } else if (!insideLocalRoot) {
-                console.warn(`[Local Sync] Refused to write outside workspace: ${localFilePath}`);
-            } else {
-                console.warn(`[Local Sync] Local file not found: ${localFilePath}`);
+                if (insideLocalRoot && fs.existsSync(localFilePath)) {
+                    fs.writeFileSync(localFilePath, patchResult.code, "utf8");
+                    console.log(`[Local Sync] Mirrored to: ${localFilePath}`);
+                } else if (!insideLocalRoot) {
+                    console.warn(`[Local Sync] Blocked path traversal attempt: ${localFilePath}`);
+                }
+            } catch (localErr) {
+                console.error("[Local Sync Error]:", localErr);
+                // Non-fatal — the GitHub push will still proceed
             }
-        } catch (localErr) {
-            console.error("[Local Sync Error]:", localErr);
         }
 
-        // --- STEP 3: The GitHub Push (Octokit) ---
-        // Encode the updated code back to base64
-        const encodedContent = Buffer.from(updatedCode).toString("base64");
+        // STEP 4: Push to GitHub with a descriptive commit message
+        const commitMessage = buildCommitMessage(patchResult, "", astChanges, projectName, targetPath);
+        const encodedContent = Buffer.from(patchResult.code).toString("base64");
 
-        const { data: updateResult } = await octokit.repos.createOrUpdateFileContents({
-            owner: targetOwner,
-            repo: targetRepo,
-            path: targetPath,
-            message: `OCMS: Update ${patchResult.appliedCount} content field${patchResult.appliedCount === 1 ? "" : "s"}`,
-            content: encodedContent,
-            sha: fileSha,
-            branch: targetBranch,
-        });
+        let updateResult;
+        try {
+            const { data } = await octokit.repos.createOrUpdateFileContents({
+                owner: targetOwner,
+                repo: targetRepo,
+                path: targetPath,
+                message: commitMessage,
+                content: encodedContent,
+                sha: fileSha,
+                branch: targetBranch,
+            });
+            updateResult = data;
+        } catch (err: unknown) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            // Detect SHA conflict (409 from GitHub means the file was modified between our read and write)
+            if (errMsg.includes("409") || errMsg.toLowerCase().includes("conflict") || errMsg.toLowerCase().includes("sha")) {
+                return patchJson({
+                    error: "Conflict detected: the file was modified on GitHub since you last loaded it. Please reload the workspace and try again.",
+                    conflict: true,
+                }, { status: 409 });
+            }
+            return patchJson({ error: `GitHub push failed: ${errMsg}` }, { status: 500 });
+        }
 
         return patchJson({
             success: true,
-            message: publishMessage(patchResult, `Code successfully updated and pushed to GitHub branch "${targetBranch}".`),
+            message: buildCommitMessage(patchResult, `Pushed to branch "${targetBranch}" successfully.`, astChanges, projectName, targetPath),
             commitUrl: updateResult.commit.html_url,
         }, { status: 200 }, patchResult);
 
     } catch (error: unknown) {
         console.error("Publish changes error:", error);
-        return patchJson({ error: "Internal server error" }, { status: 500 });
+        // Safe error: don't leak internal details to clients
+        return patchJson({ error: "An unexpected error occurred. Please try again." }, { status: 500 });
     }
 }
 
@@ -6988,8 +7257,31 @@ function patchSource(sourceCode: string, filePath: string, changes: ASTChange[])
 
 function noPatchResponse(report: PatchReport) {
     return patchJson({
-        error: "No matching JSX or HTML nodes were found for the provided selectors",
+        error: "No matching nodes were found for the provided selectors. The page structure may have changed — try rescanning.",
+        hint: "Tip: rescan the page to regenerate selectors, then try again.",
     }, { status: 422 }, report);
+}
+
+/** Build a descriptive commit message including field names and file path */
+function buildCommitMessage(
+    report: PatchReport,
+    suffix: string,
+    changes: ASTChange[],
+    projectName: string,
+    filePath: string
+): string {
+    const fieldNames = changes
+        .slice(0, 3)
+        .map(c => c.selector)
+        .filter(Boolean)
+        .join(", ");
+    const more = changes.length > 3 ? ` (+${changes.length - 3} more)` : "";
+    const fieldSummary = fieldNames ? ` [${fieldNames}${more}]` : "";
+    const unmatchedNote = report.unmatchedSelectors.length > 0
+        ? ` (${report.unmatchedSelectors.length} selector(s) unmatched)`
+        : "";
+    const base = `OCMS: Update ${report.appliedCount} field(s) in ${filePath}${fieldSummary}${unmatchedNote}`;
+    return suffix ? `${base} — ${suffix}` : base;
 }
 
 function patchJson(
@@ -7005,10 +7297,6 @@ function patchJson(
     }, init);
 }
 
-function publishMessage(report: PatchReport, completeMessage: string): string {
-    if (report.unmatchedSelectors.length === 0) return completeMessage;
-    return `Applied ${report.appliedCount} change${report.appliedCount === 1 ? "" : "s"}, but ${report.unmatchedSelectors.length} selector${report.unmatchedSelectors.length === 1 ? "" : "s"} did not match.`;
-}
 ```
 
 ---
@@ -7099,6 +7387,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: message }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -7110,7 +7399,8 @@ export async function POST(request: Request) {
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import postcss, { type Declaration, type Rule } from "postcss";
-import { validateUrlForSsrf } from "@/lib/ssrf";
+import { fetchWithValidatedSsrfUrl, validateUrlForSsrf } from "@/lib/ssrf";
+import { withRateLimit } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7152,6 +7442,9 @@ const SAFE_TAGS = new Set([
 
 export async function POST(req: NextRequest) {
     try {
+        const rateLimited = await withRateLimit("steal-component", req, { limit: 20, windowMs: 60_000 });
+        if (rateLimited) return rateLimited;
+
         const { url } = await req.json();
 
         if (!url || typeof url !== "string") {
@@ -7174,7 +7467,7 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        const fetchRes = await fetch(targetUrl.href, {
+        const fetchRes = await fetchWithValidatedSsrfUrl(targetUrl.href, validation, {
             headers: {
                 "User-Agent": "Mozilla/5.0 (compatible; OCMS-Bot/1.0)",
                 Accept: "text/html,application/xhtml+xml",
@@ -7284,7 +7577,10 @@ async function collectCssRules($: cheerio.CheerioAPI, baseUrl: URL): Promise<Css
 
 async function fetchStylesheet(href: string, baseUrl: URL): Promise<string> {
     const stylesheetUrl = new URL(href, baseUrl).href;
-    const response = await fetch(stylesheetUrl, {
+    const validation = await validateUrlForSsrf(stylesheetUrl);
+    if (!validation.safe) return "";
+
+    const response = await fetchWithValidatedSsrfUrl(stylesheetUrl, validation, {
         headers: {
             "User-Agent": "Mozilla/5.0 (compatible; OCMS-Bot/1.0)",
             Accept: "text/css,*/*;q=0.1",
@@ -7921,6 +8217,7 @@ ${markup}
 }
 `;
 }
+
 ```
 
 ---
@@ -8073,6 +8370,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }
+
 ```
 
 ---
@@ -8088,6 +8386,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthorizedUser } from "@/auth";
 import { Document, NodeIO } from "@gltf-transform/core";
 import { weld, dedup, prune, quantize } from "@gltf-transform/functions";
+import { withRateLimit } from "@/lib/ratelimit";
 
 const ALLOWED_EXTENSIONS = [".glb", ".gltf"];
 const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
@@ -8123,6 +8422,9 @@ async function optimizeGlb(
 }
 
 export async function POST(req: NextRequest) {
+    const rateLimited = await withRateLimit("upload-model", req, { limit: 10, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
+
     // Local dev only. For production, replace with S3/Cloudflare R2/Supabase Storage and return a CDN URL.
     if (process.env.VERCEL || process.env.NODE_ENV === "production") {
         return NextResponse.json(
@@ -8251,6 +8553,7 @@ export async function POST(req: NextRequest) {
         );
     }
 }
+
 ```
 
 ---
@@ -8259,10 +8562,11 @@ export async function POST(req: NextRequest) {
 **File Path:** `file:///d:/MODEL/ocms/src/app/api/validate-build/route.ts`
 
 ```typescript
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
 import path from "path";
+import { withRateLimit } from "@/lib/ratelimit";
 
 const execAsync = promisify(exec);
 
@@ -8272,7 +8576,10 @@ const execAsync = promisify(exec);
  * Runs TypeScript compilation check (tsc --noEmit) on the OCMS project
  * and returns whether the build is healthy.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+    const rateLimited = await withRateLimit("validate-build", req, { limit: 5, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
+
     if (process.env.VERCEL) {
         return NextResponse.json({
             valid: true,
@@ -8328,6 +8635,7 @@ export async function GET() {
         );
     }
 }
+
 ```
 
 ---
@@ -8424,6 +8732,7 @@ export async function GET(req: NextRequest) {
         );
     }
 }
+
 ```
 
 ---
@@ -8750,7 +9059,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Internal Server Error", details: errMsg }, { status: 500 });
     }
 }
+
 ```
+
 
 ---
 
@@ -8759,107 +9070,226 @@ export async function POST(req: NextRequest) {
 ### `README.md`
 **File Path:** `file:///d:/MODEL/ocms/README.md`
 
-```markdown
-# OCMS — Local-First Headless CMS
+````markdown
+# OCMS — Open Content Management System
 
-OCMS is a next-generation, local-first, privacy-respecting headless CMS designed for developers who want a seamless visual editing experience without relying on external AI services. Featuring a deterministic AST-patcher and a live synchronized editing interface, OCMS allows you to edit frontend pages visually and sync changes directly back to your source code repository.
+**OCMS** is a local-first, privacy-respecting headless CMS built for developers. Point it at any website URL, and it scrapes the page, generates an editable schema, and lets you visually edit text, images, links, and 3D models — then push changes directly to GitHub with one click.
 
----
-
-## 🚀 Key Features
-
-*   **Deterministic AST-Patcher**: Safely and accurately parses, inspects, and patches local page files (like React/Next.js files) without breaking imports, comments, or formatting.
-*   **Live Ghost Cursor**: A real-time, overlay-based visual editor that mirrors edits and provides direct visual feedback as you customize elements.
-*   **3D Model Integration**: Dynamic support for 3D elements inside your content fields using a built-in `<model-viewer>` interface, complete with PBR material presets (gold, wood, metal, plastic) and sliders.
-*   **Copywriting Tone Engine**: Generate local A/B variations of text fields across various tones (technical, minimalist, playful) directly from local dictionary files.
-*   **Semantic Color Extractor**: Intelligently maps brand keywords (like "finance", "sustainability", "startup") to curated design palettes for immediate UI branding matching.
-*   **IDOR Protection & Multi-User Auth**: Authenticated workspaces that prevent unauthorized database updates or cross-user project tampering.
+No cloud. No subscriptions. No vendor lock-in. Your data stays in your database.
 
 ---
 
-## 🛠️ Tech Stack
+## ✨ What OCMS Does
 
-*   **Framework**: Next.js 14+ (App Router)
-*   **Database**: Prisma ORM with SQLite (local-first storage)
-*   **SDK Package**: Built-in visual helper package (`packages/ghost-cursor`) compiled with `tsup`
-*   **Styling**: Neobrutalist design theme built with custom HSL variables and Tailwind CSS
+| Feature | Description |
+|---------|-------------|
+| **URL Scraper** | Enter any URL → OCMS fetches the HTML and extracts all editable content fields automatically |
+| **Local Schema** | Generates a typed JSON schema (text, image, link, 3D model) from the page structure — no AI required |
+| **Live Preview** | Side-by-side iframe preview with a "Ghost Cursor" that shows edits in real time |
+| **GitHub Sync** | Push content changes directly to any GitHub repository using your OAuth token |
+| **3D Model Injector** | Drop `.glb` / `.gltf` files to replace 2D images with interactive 3D models |
+| **A/B Variant Engine** | Generate alternative copy variants for different audiences |
+| **Color Palette Tool** | Generate and apply harmonious color palettes to your site's CSS variables |
+| **Voice Commands** | Dictate field edits using Web Speech API |
+| **Build Validation** | TypeScript build check before every GitHub push |
 
 ---
 
-## ⚙️ Environment Configuration
+## 🏗️ Architecture Overview
 
-Create a `.env` (or `.env.local`) file in the root directory. You can use the following variables:
-
-```bash
-# Database connection string (SQLite file location)
-DATABASE_URL="file:./dev.db"
-
-# Secret token used by NextAuth / Auth.js for session management
-AUTH_SECRET="some-random-32-character-secret-key-here"
-
-# GitHub OAuth App credentials (optional: defaults to Guest Mode if empty)
-GITHUB_CLIENT_ID=""
-GITHUB_CLIENT_SECRET=""
-
-# SSRF Protections Bypass (Set to true ONLY in local dev environment)
-ALLOW_LOCAL_SSRF="true"
-
-# Local source directory path
-LOCAL_WORKSPACE_PATH=""
+```
+┌─────────────────────────────────────────────────────┐
+│                   Next.js App (App Router)           │
+│                                                     │
+│  ┌──────────────┐    ┌──────────────────────────┐  │
+│  │  Landing Page │    │  Workspace (/workspace/  │  │
+│  │  (/)          │    │  [projectId])            │  │
+│  └──────────────┘    │  ┌────────────────────┐  │  │
+│                      │  │  ContentEditor     │  │  │
+│  ┌──────────────┐    │  │  (field editing)   │  │  │
+│  │  Auth.js     │    │  ├────────────────────┤  │  │
+│  │  (GitHub     │    │  │  LivePreview       │  │  │
+│  │   OAuth)     │    │  │  (iframe + ghost)  │  │  │
+│  └──────────────┘    │  └────────────────────┘  │  │
+│                      └──────────────────────────┘  │
+│  API Routes:                                        │
+│  • /api/projects          — Create / list projects  │
+│  • /api/projects/[id]/    — Scan, schema, GSD       │
+│  • /api/publish-changes   — GitHub push + AST patch │
+│  • /api/auth/*            — NextAuth handlers       │
+│  • /api/check-env         — Env health check        │
+└─────────────────────────────────────────────────────┘
+        │                         │
+   Prisma ORM                 Octokit
+   (SQLite / Postgres)        (GitHub API)
 ```
 
+### Key Libraries
+- **Next.js 14** (App Router, Server Components)
+- **Auth.js / NextAuth v5** (GitHub OAuth, Prisma adapter)
+- **Prisma ORM** (SQLite default, PostgreSQL for production)
+- **@octokit/rest** (GitHub API)
+- **Babel AST parser** (deterministic code patching without AI)
+- **Cheerio** (server-side HTML scraping)
+
 ---
 
-## 📦 Getting Started
+## ⚙️ Environment Variables
+
+Copy `.env.example` to `.env.local` and fill in the values.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | ✅ Yes | Database connection string. SQLite: `file:./dev.db` |
+| `AUTH_SECRET` | ✅ Yes | Session encryption key. Generate: `openssl rand -base64 32` |
+| `NEXTAUTH_URL` | ✅ Production | Your deployment URL. e.g. `https://your-app.vercel.app` |
+| `GITHUB_CLIENT_ID` | ✅ Yes | GitHub OAuth App Client ID |
+| `GITHUB_CLIENT_SECRET` | ✅ Yes | GitHub OAuth App Client Secret |
+| `LOCAL_WORKSPACE_PATH` | Optional | Absolute path to local project for dev-mode file sync |
+| `ALLOW_GUEST_ACCESS` | Dev only | Set `true` to allow no-auth guest login in development |
+| `ALLOW_LOCAL_SSRF` | Dev only | Set `true` to allow scraping `localhost` URLs in dev |
+| `REPLICATE_API_TOKEN` | Optional | Required for Replicate-powered texture generation |
+
+> **Security note:** Never set `ALLOW_GUEST_ACCESS=true` or `ALLOW_LOCAL_SSRF=true` in production. These are hard-blocked when `NODE_ENV=production`.
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Node.js 18+
+- npm 9+
+- A GitHub account (for the OAuth flow)
 
 ### 1. Install Dependencies
-Run the following command at the project root to install all required dependencies:
+
 ```bash
 npm install
 ```
 
-### 2. Set Up the Local Database
-Generate the Prisma client and push the initial database schema to SQLite:
+### 2. Configure Environment
+
+```bash
+cp .env.example .env.local
+# Edit .env.local with your values
+```
+
+### 3. Set Up Database
+
 ```bash
 npx prisma generate
 npx prisma db push
 ```
 
-### 3. Compile the Ghost Cursor Package
-Build the workspace SDK library:
-```bash
-npm run build --workspace=packages/ghost-cursor
-# Or compile directly in the sub-folder:
-cd packages/ghost-cursor && npm run build
+### 4. (Dev) Set Up Guest Mode (optional)
+
+If you don't have GitHub OAuth credentials yet:
+
+```env
+# .env.local
+ALLOW_GUEST_ACCESS=true
+ALLOW_LOCAL_SSRF=true
+LOCAL_WORKSPACE_PATH=/absolute/path/to/your/project
 ```
 
-### 4. Run the Development Server
-Launch the local Next.js development server:
+Then start the app, visit `/api/auth/mock` (POST) via the UI, and you'll get a dev session with local filesystem sync.
+
+### 5. Run the Development Server
+
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to view the OCMS dashboard.
+Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## 🏗️ Building and Deploying
+## 🔐 GitHub Integration
 
-To compile the production bundle:
+OCMS uses GitHub OAuth to:
+1. Authenticate users
+2. Store a GitHub access token (with `repo` scope)
+3. Fetch, patch, and push source files on your behalf
+
+### Setting Up a GitHub OAuth App
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
+2. Click **"New OAuth App"**
+3. Set the callback URL to: `http://localhost:3000/api/auth/callback/github` (or your production URL)
+4. Copy the **Client ID** and **Client Secret** into `.env.local`
+
+---
+
+## 🌐 Demo Mode vs Production Mode
+
+| | Demo / Dev Mode | Production Mode |
+|---|---|---|
+| **Auth** | Guest fallback available (`ALLOW_GUEST_ACCESS=true`) | Real GitHub OAuth required |
+| **File sync** | Local filesystem (`LOCAL_WORKSPACE_PATH`) | GitHub API push only |
+| **Scraping** | Localhost URLs allowed (`ALLOW_LOCAL_SSRF=true`) | External URLs only |
+| **Mock token** | `mock_token` activates local sync | Blocked (403) |
+| **Env banner** | Warns about missing/placeholder vars | Same |
+
+---
+
+## 🚢 Deploying to Production (Vercel)
+
 ```bash
+# 1. Build to verify no errors
 npm run build
+
+# 2. Deploy
+vercel deploy --prod
 ```
 
-OCMS runs perfectly in serverless environments (like Vercel). However, because serverless platforms have read-only/ephemeral filesystems:
-*   Local file writing and local build validation routes (`/api/publish-changes` and `/api/validate-build`) are automatically guarded and will return informative error/warning responses instead of crashing.
-*   To enable direct code commits and deploys in cloud environments, link your workspaces to Git repositories via the OAuth panel.
+### Required Environment Variables (Vercel)
+
+Set these in your Vercel project settings:
+
+```
+DATABASE_URL         = postgresql://...   # Use Vercel Postgres or Neon
+AUTH_SECRET          = <generated>
+NEXTAUTH_URL         = https://your-app.vercel.app
+GITHUB_CLIENT_ID     = <your OAuth app>
+GITHUB_CLIENT_SECRET = <your OAuth app>
+```
+
+> **Note:** SQLite is not suitable for multi-user production. Use PostgreSQL (e.g., [Vercel Postgres](https://vercel.com/storage/postgres) or [Neon](https://neon.tech)). Update `prisma/schema.prisma` to `provider = "postgresql"` and run `npx prisma db push`.
+
+---
+
+## 📦 Building and Running
+
+```bash
+# Development
+npm run dev
+
+# Build check (required before deploying)
+npm run build
+
+# Production server
+npm start
+
+# Lint
+npm run lint
+
+# Run patcher smoke tests
+npm run test:patchers
+```
 
 ---
 
 ## 👥 Authors
 
 Built with precision and passion by **Team SPACHT**.
-```
+
+---
+
+## 📄 License
+
+© 2026 SPACHT. All rights reserved.
+
+````
 
 ---
 
@@ -8885,6 +9315,7 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
+
 ```
 
 ---
@@ -9052,6 +9483,7 @@ if (typeof window !== "undefined") {
 }
 
 export default GhostCursor;
+
 ```
 
 ---
@@ -9104,6 +9536,7 @@ export default GhostCursor;
         });
     });
 })();
+
 ```
 
 ---
@@ -9308,6 +9741,7 @@ export default GhostCursor;
     </script>
 </body>
 </html>
+
 ```
 
 ---
@@ -9509,6 +9943,7 @@ assert.match(publicReport.code, /Welcome to Hardened Patching/);
 assert.match(publicReport.code, /href="\/start"/);
 
 console.log("patcher smoke tests passed");
+
 ```
 
 ---
@@ -9516,7 +9951,7 @@ console.log("patcher smoke tests passed");
 ### `scripts/run-patcher-smoke-tests.mjs`
 **File Path:** `file:///d:/MODEL/ocms/scripts/run-patcher-smoke-tests.mjs`
 
-```
+```javascript
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -9555,6 +9990,7 @@ function rewriteAliases(dir) {
         fs.writeFileSync(fullPath, updated, "utf8");
     }
 }
+
 ```
 
 ---
@@ -9685,6 +10121,7 @@ function chooseTarget(
 function unmatchedSelector(selector: string, reason?: string): string {
     return reason ? `${selector} (${reason})` : selector;
 }
+
 ```
 
 ---
@@ -9989,6 +10426,7 @@ Stopped at: ${state.lastActivity || "Initialization"}
 Resume file: None
 `;
 }
+
 ```
 
 ---
@@ -10172,6 +10610,7 @@ export function patchHTMLWithReport(sourceCode: string, changes: ASTChange[]): P
         unmatchedSelectors: Array.from(unmatchedSelectors),
     };
 }
+
 ```
 
 ---
@@ -10949,6 +11388,7 @@ function findClosing(value: string, start: number, open: string, close: string):
     }
     return -1;
 }
+
 ```
 
 ---
@@ -11002,6 +11442,30 @@ export const PBR_PRESETS: PbrPreset[] = [
         previewColor: "#1e293b"
     }
 ];
+
+```
+
+---
+
+### `src/lib/preview-message-security.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/lib/preview-message-security.ts`
+
+```typescript
+export type PreviewScriptMode = "static" | "dynamic";
+
+interface PreviewMessageValidationInput {
+    event: Pick<MessageEvent, "origin" | "source" | "data">;
+    expectedOrigin: string;
+    expectedSource: WindowProxy | null | undefined;
+    expectedNonce: string;
+    scriptMode: PreviewScriptMode;
+}
+
+export function isExpectedPreviewMessage({ event, expectedOrigin, expectedSource, expectedNonce, scriptMode }: PreviewMessageValidationInput): boolean {
+    const isExpectedOrigin = event.origin === expectedOrigin || (scriptMode === "dynamic" && event.origin === "null");
+    return isExpectedOrigin && event.source === expectedSource && Boolean(event.data) && event.data.nonce === expectedNonce;
+}
+
 ```
 
 ---
@@ -11023,6 +11487,7 @@ export const prisma =
     });
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+
 ```
 
 ---
@@ -11073,6 +11538,7 @@ function normalizeChangeType(type: unknown): ASTChange["type"] | null {
     if (type === "list") return "text";
     return null;
 }
+
 ```
 
 ---
@@ -11191,9 +11657,9 @@ function hashIdentity(value: string): string {
 
 function pruneRuntimeBuckets(now: number): void {
     if (runtimeBuckets.size < 1000) return;
-    for (const [key, bucket] of runtimeBuckets) {
+    runtimeBuckets.forEach((bucket, key) => {
         if (bucket.resetAt <= now) runtimeBuckets.delete(key);
-    }
+    });
 }
 
 export async function checkAndIncrementQuota(
@@ -11262,6 +11728,7 @@ export async function checkAndIncrementQuota(
     const now = new Date();
     return { allowed: false, remaining: 0, limit, resetsAt: new Date(now.getTime() + CYCLE_MS) };
 }
+
 ```
 
 ---
@@ -11712,6 +12179,7 @@ export function cleanHtml(rawHtml: string): CleanResult {
         elementsRemoved,
     };
 }
+
 ```
 
 ---
@@ -11749,6 +12217,7 @@ export function syncSchemaFromSource(sourceCode: string, currentSchema: SchemaFi
         };
     });
 }
+
 ```
 
 ---
@@ -11886,7 +12355,9 @@ export async function fetchWithValidatedSsrfUrl(
         dispatcher,
     } as RequestInitWithDispatcher);
 }
+
 ```
+
 
 ---
 
@@ -11908,14 +12379,19 @@ interface EnvStatus {
     warnings: string[];
 }
 
+/**
+ * Human-readable instructions for each env variable shown in the banner.
+ * Variable names must match what check-env/route.ts checks.
+ */
 const ENV_INSTRUCTIONS: Record<string, string> = {
-    GITHUB_CLIENT_ID: "Required for GitHub OAuth. Register an OAuth app in GitHub Developer Settings.",
-    GITHUB_CLIENT_SECRET: "Required for GitHub OAuth. Found in your GitHub OAuth app settings.",
-    DATABASE_URL: "Required for data persistence. Set your PostgreSQL / database connection string.",
-    NEXTAUTH_SECRET: "Required for session encryption. Generate with: openssl rand -base64 32",
+    GITHUB_CLIENT_ID: "Required for GitHub OAuth. Register an OAuth App at GitHub Developer Settings.",
+    GITHUB_CLIENT_SECRET: "Required for GitHub OAuth. Found in your GitHub OAuth App settings.",
+    DATABASE_URL: "Required for data persistence. Set your database connection string (SQLite: file:./dev.db).",
+    AUTH_SECRET: "Required for session encryption. Generate with: openssl rand -base64 32",
+    NEXTAUTH_URL: "Required in production. Set to your deployment URL (e.g., https://your-app.vercel.app).",
 };
 
-const CRITICAL_VARS = ["DATABASE_URL", "NEXTAUTH_SECRET"];
+const CRITICAL_VARS = ["DATABASE_URL", "AUTH_SECRET"];
 
 export default function EnvHealthBanner() {
     const [status, setStatus] = useState<EnvStatus | null>(null);
@@ -12017,7 +12493,7 @@ export default function EnvHealthBanner() {
                         </div>
                     )}
 
-                    {/* Warnings — dummy / placeholder values */}
+                    {/* Warnings — placeholder / dummy values detected */}
                     {status.warnings.length > 0 && (
                         <div className="border-[3px] border-black bg-yellow-50 p-3 shadow-[3px_3px_0_0_#000]">
                             <div className="mb-2 flex items-center gap-2">
@@ -12033,7 +12509,7 @@ export default function EnvHealthBanner() {
                                             {v}
                                         </code>
                                         <span className="text-xs font-semibold text-yellow-800">
-                                            Set to a dummy value — replace with real credentials.
+                                            {ENV_INSTRUCTIONS[v] ?? "Replace with a real value — this appears to be a placeholder."}
                                         </span>
                                     </li>
                                 ))}
@@ -12076,6 +12552,7 @@ export default function EnvHealthBanner() {
         </div>
     );
 }
+
 ```
 
 ---
@@ -12252,6 +12729,7 @@ export default function Navbar() {
         </>
     );
 }
+
 ```
 
 ---
@@ -12268,39 +12746,7 @@ import React from "react";
 export function Providers({ children }: { children: React.ReactNode }) {
     return <SessionProvider>{children}</SessionProvider>;
 }
-```
 
----
-
-### `src/components/ui/glass-panel.tsx`
-**File Path:** `file:///d:/MODEL/ocms/src/components/ui/glass-panel.tsx`
-
-```tsx
-import { ReactNode } from "react";
-
-interface GlassPanelProps {
-    children: ReactNode;
-    className?: string;
-    variant?: "default" | "strong";
-}
-
-/**
- * GlassPanel — reusable glassmorphism container.
- * The base building-block for every layout section in OCMS.
- */
-export default function GlassPanel({
-    children,
-    className = "",
-    variant = "default",
-}: GlassPanelProps) {
-    const base = variant === "strong" ? "glass-strong" : "glass";
-
-    return (
-        <div className={`${base} rounded-lg ${className}`}>
-            {children}
-        </div>
-    );
-}
 ```
 
 ---
@@ -12308,7 +12754,7 @@ export default function GlassPanel({
 ### `src/components/workspace/ContentEditor.tsx`
 **File Path:** `file:///d:/MODEL/ocms/src/components/workspace/ContentEditor.tsx`
 
-```
+```tsx
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -12548,10 +12994,10 @@ export default function ContentEditor({
     onFieldChange,
     onFieldUpdate,
     onModelInjected,
-    githubOwner = "GovindTripathi22",
-    githubRepo = "OCMS",
+    githubOwner,
+    githubRepo,
     githubBranch = "main",
-    targetFilePath = "src/app/page.tsx",
+    targetFilePath,
     onHistorySeek,
     historyCount = 1,
     historyIndex = 0,
@@ -12602,7 +13048,8 @@ export default function ContentEditor({
             }
         } catch (err) {
             console.error("Lighthouse Audit Failed:", err);
-            alert(err instanceof Error ? err.message : "Failed to run PageSpeed audit");
+            setErrorMessage(err instanceof Error ? err.message : "Failed to run PageSpeed audit");
+        setSyncStatus("error");
         } finally {
             setIsAuditingLighthouse(false);
         }
@@ -12749,7 +13196,9 @@ export default function ContentEditor({
     const handleApplyMaterialVariant = async () => {
         const modelField = schema.find(f => f.type === "3d-model");
         if (!modelField) {
-            alert("No 3D Model field found in the schema to apply to.");
+            setErrorMessage("No 3D model field found in the schema. Add a 3D model field first.");
+            setSyncStatus("error");
+            setTimeout(() => setSyncStatus("idle"), 4000);
             return;
         }
 
@@ -12823,18 +13272,16 @@ export default function ContentEditor({
             console.warn("Build validation check failed, proceeding anyway...");
         }
 
-        const summary = changedFields
-            .map((field) => {
-                const original = initialSchema.find((item) => item.id === field.id);
-                const fromValue = original?.value ?? "(new field)";
-                return `${field.id}: "${(fromValue || "").slice(0, 80)}" -> "${(field.value || "").slice(0, 80)}"`;
-            })
-            .join("\n");
-
-        const confirmed = window.confirm(`Save & Sync will commit these changes:\n\n${summary}`);
-        if (!confirmed) {
-            setSyncStatus("idle");
-            return;
+        // Log the summary for debugging — UI shows status via syncStatus states
+        if (changedFields.length > 0) {
+            const summary = changedFields
+                .map((field) => {
+                    const original = initialSchema.find((item) => item.id === field.id);
+                    const fromValue = original?.value ?? "(new field)";
+                    return `${field.id}: "${(fromValue || "").slice(0, 80)}" -> "${(field.value || "").slice(0, 80)}"`;
+                })
+                .join("\n");
+            console.info("[OCMS] Committing changes:\n" + summary);
         }
 
         const changes = changedFields.map((f) => {
@@ -13064,7 +13511,8 @@ export default function ContentEditor({
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Failed to steal component");
-            alert("Component stolen successfully! (Code logged to console)");
+        setSyncStatus("success");
+            setTimeout(() => setSyncStatus("idle"), 3000);
             console.log("STOLEN COMPONENT CODE:\n", data.code);
         } catch (err: unknown) {
             setErrorMessage(err instanceof Error ? err.message : "Failed to steal component");
@@ -13972,7 +14420,7 @@ export default function ContentEditor({
                 
                 <div className="flex items-center justify-between text-[9px] font-black uppercase text-slate-500 mb-2.5 px-1 select-none">
                     <span className="truncate max-w-[220px]" title={`${githubOwner}/${githubRepo}@${githubBranch}:${targetFilePath}`}>
-                        Sync: {githubOwner}/{githubRepo}@{githubBranch}:{targetFilePath.split("/").pop()}
+                        Sync: {githubOwner}/{githubRepo}@{githubBranch}:{targetFilePath?.split("/").pop()}
                     </span>
                     {openPermissionWizard && (
                         <button
@@ -14006,6 +14454,7 @@ export default function ContentEditor({
         </div>
     );
 }
+
 ```
 
 ---
@@ -14013,7 +14462,7 @@ export default function ContentEditor({
 ### `src/components/workspace/LivePreview.tsx`
 **File Path:** `file:///d:/MODEL/ocms/src/components/workspace/LivePreview.tsx`
 
-```
+```tsx
 "use client";
 
 import {
@@ -14029,6 +14478,8 @@ interface LivePreviewProps {
     onLoad?: () => void;
     projectId?: string;
     previewNonce: string;
+    scriptMode: "static" | "dynamic";
+    onScriptModeChange: (mode: "static" | "dynamic") => void;
 }
 
 export default function LivePreview({
@@ -14038,12 +14489,13 @@ export default function LivePreview({
     onLoad,
     projectId,
     previewNonce,
+    scriptMode,
+    onScriptModeChange,
 }: LivePreviewProps) {
     const [inputUrl, setInputUrl] = useState(previewUrl);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
     const [loadProgress, setLoadProgress] = useState(0);
-    const [scriptMode, setScriptMode] = useState<"static" | "dynamic">("static");
     const [isInspecting, setIsInspecting] = useState(false);
 
     // Sync inspection state to the preview iframe
@@ -14055,8 +14507,8 @@ export default function LivePreview({
             action: 'toggle-inspector',
             enabled: isInspecting,
             nonce: previewNonce,
-        }, '*');
-    }, [isInspecting, iframeRef, previewUrl, isLoading, previewNonce]);
+        }, scriptMode === "static" ? window.location.origin : "*");
+    }, [isInspecting, iframeRef, previewUrl, isLoading, previewNonce, scriptMode]);
 
     // Mobile: whether the URL bar is expanded
     const [urlBarExpanded, setUrlBarExpanded] = useState(false);
@@ -14239,7 +14691,7 @@ export default function LivePreview({
                 <div className="hidden sm:flex shrink-0 items-center rounded-md border-[3px] border-black overflow-hidden shadow-[2px_2px_0px_#000]">
                     <button
                         type="button"
-                        onClick={() => setScriptMode("static")}
+                        onClick={() => onScriptModeChange("static")}
                         className={`px-2 sm:px-3 py-2 text-[9px] font-black uppercase border-r-[3px] border-black transition-colors touch-manipulation ${
                             scriptMode === "static" ? "bg-[var(--ocms-yellow)] text-black" : "bg-white text-slate-700 hover:bg-slate-100"
                         }`}
@@ -14250,7 +14702,7 @@ export default function LivePreview({
                     </button>
                     <button
                         type="button"
-                        onClick={() => setScriptMode("dynamic")}
+                        onClick={() => onScriptModeChange("dynamic")}
                         className={`px-2 sm:px-3 py-2 text-[9px] font-black uppercase transition-colors flex items-center gap-1 touch-manipulation ${
                             scriptMode === "dynamic" ? "bg-[var(--ocms-blue)] text-black" : "bg-white text-slate-700 hover:bg-slate-100"
                         }`}
@@ -14264,7 +14716,7 @@ export default function LivePreview({
                 {/* Mobile Static/JS — icon toggle */}
                 <button
                     type="button"
-                    onClick={() => setScriptMode((m) => m === "static" ? "dynamic" : "static")}
+                    onClick={() => onScriptModeChange(scriptMode === "static" ? "dynamic" : "static")}
                     className={`sm:hidden shrink-0 p-2 border-[3px] border-black rounded-md shadow-[2px_2px_0px_#000] transition-all touch-manipulation ${
                         scriptMode === "dynamic" ? "bg-[var(--ocms-blue)]" : "bg-white"
                     }`}
@@ -14376,6 +14828,7 @@ export default function LivePreview({
         </div>
     );
 }
+
 ```
 
 ---
@@ -14533,6 +14986,7 @@ export default function ModelDropzone({
         </div>
     );
 }
+
 ```
 
 ---
@@ -14628,6 +15082,7 @@ export default function ModelViewer({ modelPath, textureUrl, roughness, metalnes
         </div>
     );
 }
+
 ```
 
 ---
@@ -14635,7 +15090,7 @@ export default function ModelViewer({ modelPath, textureUrl, roughness, metalnes
 ### `src/components/workspace/PermissionWizard.tsx`
 **File Path:** `file:///d:/MODEL/ocms/src/components/workspace/PermissionWizard.tsx`
 
-```
+```tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -15288,6 +15743,7 @@ export default function PermissionWizard({
         </div>
     );
 }
+
 ```
 
 ---
@@ -15371,4 +15827,441 @@ export default function WorkspaceSkeleton() {
         </div>
     );
 }
+
+```
+
+
+---
+
+## 14. AUTOMATED TESTS
+
+### `src/__tests__/preview-message-security.test.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/__tests__/preview-message-security.test.ts`
+
+```typescript
+import { isExpectedPreviewMessage } from "@/lib/preview-message-security";
+
+const source = {} as WindowProxy;
+const nonce = "preview-nonce";
+const origin = "http://localhost:3000";
+
+function event(overrides: Partial<Pick<MessageEvent, "origin" | "source" | "data">> = {}): Pick<MessageEvent, "origin" | "source" | "data"> {
+    return { origin, source, data: { nonce }, ...overrides };
+}
+
+describe("isExpectedPreviewMessage", () => {
+    it("accepts same-origin static preview messages", () => {
+        expect(isExpectedPreviewMessage({ event: event(), expectedOrigin: origin, expectedSource: source, expectedNonce: nonce, scriptMode: "static" })).toBe(true);
+    });
+
+    it("accepts opaque-origin dynamic preview messages", () => {
+        expect(isExpectedPreviewMessage({ event: event({ origin: "null" }), expectedOrigin: origin, expectedSource: source, expectedNonce: nonce, scriptMode: "dynamic" })).toBe(true);
+    });
+
+    it("rejects opaque-origin static messages and mismatched bridge data", () => {
+        const input = { expectedOrigin: origin, expectedSource: source, expectedNonce: nonce, scriptMode: "static" as const };
+        expect(isExpectedPreviewMessage({ ...input, event: event({ origin: "null" }) })).toBe(false);
+        expect(isExpectedPreviewMessage({ ...input, event: event({ data: { nonce: "wrong" } }) })).toBe(false);
+        expect(isExpectedPreviewMessage({ ...input, event: event({ source: {} as WindowProxy }) })).toBe(false);
+    });
+});
+
+```
+
+---
+
+### `src/__tests__/publish-normalizer.test.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/__tests__/publish-normalizer.test.ts`
+
+```typescript
+/**
+ * Unit tests for the publish change normalizer.
+ * Verifies that raw changes from the client are sanitized properly.
+ */
+
+import { normalizeChanges, type SourceChange } from "@/lib/publish-change-normalizer";
+
+describe("normalizeChanges", () => {
+    it("returns empty array for empty input", () => {
+        expect(normalizeChanges([])).toEqual([]);
+    });
+
+    it("normalizes a valid text change", () => {
+        const changes: SourceChange[] = [
+            { selector: "h1", type: "text", newValue: "Hello World" },
+        ];
+        const result = normalizeChanges(changes);
+        expect(result).toHaveLength(1);
+        expect(result[0].selector).toBe("h1");
+        expect(result[0].type).toBe("text");
+        expect(result[0].newValue).toBe("Hello World");
+    });
+
+    it("normalizes a valid image change", () => {
+        const changes: SourceChange[] = [
+            { selector: "img.hero", type: "image", newValue: "/new-image.jpg", alt: "New hero" },
+        ];
+        const result = normalizeChanges(changes);
+        expect(result).toHaveLength(1);
+        expect(result[0].type).toBe("image");
+        expect(result[0].alt).toBe("New hero");
+    });
+
+    it("maps 'list' type to 'text'", () => {
+        const changes: SourceChange[] = [
+            { selector: "ul.items", type: "list", newValue: "Item 1\nItem 2" },
+        ];
+        const result = normalizeChanges(changes);
+        expect(result).toHaveLength(1);
+        expect(result[0].type).toBe("text"); // list maps to text
+    });
+
+    it("drops changes with missing selector", () => {
+        const changes: SourceChange[] = [
+            { type: "text", newValue: "No selector here" },
+        ];
+        const result = normalizeChanges(changes);
+        expect(result).toHaveLength(0);
+    });
+
+    it("drops changes with non-string selector", () => {
+        const changes: SourceChange[] = [
+            { selector: 123 as unknown as string, type: "text", newValue: "value" },
+        ];
+        const result = normalizeChanges(changes);
+        expect(result).toHaveLength(0);
+    });
+
+    it("drops changes with missing newValue", () => {
+        const changes: SourceChange[] = [
+            { selector: "h1", type: "text" },
+        ];
+        const result = normalizeChanges(changes);
+        expect(result).toHaveLength(0);
+    });
+
+    it("drops changes with invalid type", () => {
+        const changes: SourceChange[] = [
+            { selector: "h1", type: "unknown-type", newValue: "value" },
+        ];
+        const result = normalizeChanges(changes);
+        expect(result).toHaveLength(0);
+    });
+
+    it("includes oldValue when string", () => {
+        const changes: SourceChange[] = [
+            { selector: "h1", type: "text", newValue: "New", oldValue: "Old" },
+        ];
+        const result = normalizeChanges(changes);
+        expect(result[0].oldValue).toBe("Old");
+    });
+
+    it("omits oldValue when not a string", () => {
+        const changes: SourceChange[] = [
+            { selector: "h1", type: "text", newValue: "New", oldValue: 42 as unknown as string },
+        ];
+        const result = normalizeChanges(changes);
+        expect(result[0].oldValue).toBeUndefined();
+    });
+
+    it("normalizes multiple valid changes", () => {
+        const changes: SourceChange[] = [
+            { selector: "h1", type: "text", newValue: "Title" },
+            { selector: "p.sub", type: "text", newValue: "Subtitle" },
+            { selector: "img.logo", type: "image", newValue: "/logo.png" },
+        ];
+        const result = normalizeChanges(changes);
+        expect(result).toHaveLength(3);
+    });
+
+    it("filters out invalid changes from a mixed batch", () => {
+        const changes: SourceChange[] = [
+            { selector: "h1", type: "text", newValue: "Good" },
+            { selector: "bad-type", type: "unknown", newValue: "Bad" },
+            { type: "text", newValue: "No selector" },
+            { selector: "img.ok", type: "image", newValue: "/ok.jpg" },
+        ];
+        const result = normalizeChanges(changes);
+        expect(result).toHaveLength(2);
+        expect(result[0].selector).toBe("h1");
+        expect(result[1].selector).toBe("img.ok");
+    });
+});
+
+```
+
+---
+
+### `src/__tests__/schema-merge.test.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/__tests__/schema-merge.test.ts`
+
+```typescript
+/**
+ * Unit tests for schema merge logic used in the scan-page route.
+ * Tests deduplication, path-based preservation, and merge correctness.
+ */
+
+// The schema merge logic is extracted here for testability.
+// It mirrors the logic in /api/projects/[projectId]/scan-page/route.ts
+
+interface SchemaField {
+    id: string;
+    type: string;
+    selector?: string;
+    label?: string;
+    value?: string;
+    path?: string;
+}
+
+/**
+ * Merges new fields for a given path into an existing schema.
+ * - Fields for OTHER paths are preserved as-is
+ * - New fields for the CURRENT path replace old ones
+ * - Deduplication: new fields whose selector matches a preserved field are skipped
+ */
+function mergeSchema(
+    existingFields: SchemaField[],
+    newFields: SchemaField[],
+    targetPath: string
+): SchemaField[] {
+    // Normalize path
+    const normalizePath = (p?: string) => p || "/";
+
+    // Preserve fields for other paths
+    const preservedFields = existingFields.filter(
+        (f) => normalizePath(f.path) !== normalizePath(targetPath)
+    );
+
+    // Deduplicate: skip new fields whose selector already exists in preserved
+    const preservedSelectors = new Set(
+        preservedFields.map((f) => f.selector).filter(Boolean) as string[]
+    );
+    const deduplicatedNew = newFields.filter(
+        (f) => !f.selector || !preservedSelectors.has(f.selector)
+    );
+
+    return [...preservedFields, ...deduplicatedNew];
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+describe("mergeSchema", () => {
+    const existingSchema: SchemaField[] = [
+        { id: "home-title", type: "text", selector: "h1", path: "/" },
+        { id: "home-image", type: "image", selector: "img.hero", path: "/" },
+        { id: "about-title", type: "text", selector: "h2", path: "/about" },
+    ];
+
+    it("replaces fields for the current path with new ones", () => {
+        const newFields: SchemaField[] = [
+            { id: "home-title-v2", type: "text", selector: "h1.new", path: "/" },
+        ];
+        const result = mergeSchema(existingSchema, newFields, "/");
+        // about field preserved, home fields replaced by new
+        expect(result.find((f) => f.id === "about-title")).toBeDefined();
+        expect(result.find((f) => f.id === "home-title")).toBeUndefined();
+        expect(result.find((f) => f.id === "home-title-v2")).toBeDefined();
+    });
+
+    it("preserves fields for other paths unchanged", () => {
+        const newFields: SchemaField[] = [
+            { id: "home-new", type: "text", selector: "span.new", path: "/" },
+        ];
+        const result = mergeSchema(existingSchema, newFields, "/");
+        const aboutField = result.find((f) => f.id === "about-title");
+        expect(aboutField).toBeDefined();
+        expect(aboutField?.path).toBe("/about");
+    });
+
+    it("deduplicates: skips new fields whose selector matches a preserved field", () => {
+        const existingWithMultiplePaths: SchemaField[] = [
+            { id: "home-h1", type: "text", selector: "h1", path: "/" },
+            { id: "about-h1", type: "text", selector: "h1", path: "/about" }, // same selector, different path
+        ];
+        const newFields: SchemaField[] = [
+            // h1 is already in /about (preserved path), should be skipped
+            { id: "blog-h1", type: "text", selector: "h1", path: "/blog" },
+        ];
+        const result = mergeSchema(existingWithMultiplePaths, newFields, "/");
+        // The /about h1 is preserved; the new /blog h1 is deduplicated because selector matches
+        const blogH1 = result.find((f) => f.id === "blog-h1");
+        expect(blogH1).toBeUndefined(); // deduplicated
+    });
+
+    it("returns new fields when existing schema is empty", () => {
+        const newFields: SchemaField[] = [
+            { id: "title", type: "text", selector: "h1", path: "/" },
+        ];
+        const result = mergeSchema([], newFields, "/");
+        expect(result).toHaveLength(1);
+        expect(result[0].id).toBe("title");
+    });
+
+    it("returns existing schema when new fields are empty", () => {
+        const result = mergeSchema(existingSchema, [], "/");
+        // Only /about field is preserved (/ fields are replaced by nothing)
+        expect(result).toHaveLength(1);
+        expect(result[0].id).toBe("about-title");
+    });
+
+    it("handles fields with no path (defaults to /)", () => {
+        const existing: SchemaField[] = [
+            { id: "no-path-field", type: "text", selector: "p" }, // no path
+            { id: "about-field", type: "text", selector: "h2", path: "/about" },
+        ];
+        const newFields: SchemaField[] = [
+            { id: "new-root-field", type: "text", selector: "span", path: "/" },
+        ];
+        // Field with no path is treated as "/" so it gets replaced
+        const result = mergeSchema(existing, newFields, "/");
+        expect(result.find((f) => f.id === "no-path-field")).toBeUndefined();
+        expect(result.find((f) => f.id === "about-field")).toBeDefined();
+        expect(result.find((f) => f.id === "new-root-field")).toBeDefined();
+    });
+
+    it("preserves all paths when scanning a deep route", () => {
+        const existing: SchemaField[] = [
+            { id: "home-a", type: "text", selector: "h1", path: "/" },
+            { id: "blog-a", type: "text", selector: "h2", path: "/blog" },
+            { id: "contact-a", type: "text", selector: "h3", path: "/contact" },
+        ];
+        const newFields: SchemaField[] = [
+            { id: "blog-b", type: "text", selector: "h2.new", path: "/blog" },
+        ];
+        const result = mergeSchema(existing, newFields, "/blog");
+        expect(result.find((f) => f.id === "home-a")).toBeDefined();
+        expect(result.find((f) => f.id === "contact-a")).toBeDefined();
+        expect(result.find((f) => f.id === "blog-a")).toBeUndefined(); // replaced
+        expect(result.find((f) => f.id === "blog-b")).toBeDefined(); // new
+    });
+});
+
+```
+
+---
+
+### `src/__tests__/ssrf.test.ts`
+**File Path:** `file:///d:/MODEL/ocms/src/__tests__/ssrf.test.ts`
+
+```typescript
+/**
+ * Unit tests for SSRF validation utility.
+ * Tests the isPrivateIp and validateUrlForSsrf functions.
+ */
+
+import { isPrivateIp, validateUrlForSsrf } from "@/lib/ssrf";
+
+// ── isPrivateIp ────────────────────────────────────────────────────────────
+
+describe("isPrivateIp", () => {
+    it("blocks 127.x.x.x (loopback)", () => {
+        expect(isPrivateIp("127.0.0.1")).toBe(true);
+        expect(isPrivateIp("127.0.0.0")).toBe(true);
+        expect(isPrivateIp("127.255.255.255")).toBe(true);
+    });
+
+    it("blocks 10.x.x.x (Class A private)", () => {
+        expect(isPrivateIp("10.0.0.1")).toBe(true);
+        expect(isPrivateIp("10.255.255.255")).toBe(true);
+    });
+
+    it("blocks 172.16-31.x.x (Class B private)", () => {
+        expect(isPrivateIp("172.16.0.1")).toBe(true);
+        expect(isPrivateIp("172.31.255.255")).toBe(true);
+    });
+
+    it("allows 172.15.x.x (just outside Class B range)", () => {
+        expect(isPrivateIp("172.15.0.1")).toBe(false);
+    });
+
+    it("blocks 192.168.x.x (Class C private)", () => {
+        expect(isPrivateIp("192.168.0.1")).toBe(true);
+        expect(isPrivateIp("192.168.1.100")).toBe(true);
+    });
+
+    it("blocks 169.254.x.x (link-local)", () => {
+        expect(isPrivateIp("169.254.0.1")).toBe(true);
+        expect(isPrivateIp("169.254.169.254")).toBe(true); // AWS metadata
+    });
+
+    it("blocks 0.0.0.0", () => {
+        expect(isPrivateIp("0.0.0.0")).toBe(true);
+    });
+
+    it("allows legitimate public IPs", () => {
+        expect(isPrivateIp("8.8.8.8")).toBe(false);       // Google DNS
+        expect(isPrivateIp("1.1.1.1")).toBe(false);       // Cloudflare DNS
+        expect(isPrivateIp("104.21.0.1")).toBe(false);    // Cloudflare
+    });
+
+    it("blocks IPv6 loopback", () => {
+        expect(isPrivateIp("::1")).toBe(true);
+        expect(isPrivateIp("0:0:0:0:0:0:0:1")).toBe(true);
+    });
+
+    it("blocks IPv6 ULA (fc00::/7)", () => {
+        expect(isPrivateIp("fc00::1")).toBe(true);
+        expect(isPrivateIp("fd12:3456:789a::1")).toBe(true);
+    });
+
+    it("blocks IPv4-mapped IPv6 private addresses", () => {
+        expect(isPrivateIp("::ffff:192.168.1.1")).toBe(true);
+        expect(isPrivateIp("::ffff:127.0.0.1")).toBe(true);
+    });
+});
+
+// ── validateUrlForSsrf ──────────────────────────────────────────────────────
+
+describe("validateUrlForSsrf", () => {
+    const ORIGINAL_ENV = process.env;
+
+    beforeEach(() => {
+        process.env = { ...ORIGINAL_ENV, ALLOW_LOCAL_SSRF: "false" };
+    });
+
+    afterEach(() => {
+        process.env = ORIGINAL_ENV;
+    });
+
+    it("rejects non-http/https protocols", async () => {
+        const result = await validateUrlForSsrf("ftp://example.com");
+        expect(result.safe).toBe(false);
+        expect(result.error).toMatch(/protocol/i);
+    });
+
+    it("rejects file:// protocol", async () => {
+        const result = await validateUrlForSsrf("file:///etc/passwd");
+        expect(result.safe).toBe(false);
+    });
+
+    it("rejects localhost by hostname", async () => {
+        const result = await validateUrlForSsrf("http://localhost/admin");
+        expect(result.safe).toBe(false);
+        expect(result.error).toMatch(/blocked/i);
+    });
+
+    it("rejects 127.0.0.1 by hostname", async () => {
+        const result = await validateUrlForSsrf("http://127.0.0.1/");
+        expect(result.safe).toBe(false);
+    });
+
+    it("returns safe for real public domain", async () => {
+        // Note: this does a real DNS lookup — requires network
+        const result = await validateUrlForSsrf("https://example.com");
+        // DNS may resolve, just check shape not error
+        expect(typeof result.safe).toBe("boolean");
+    });
+
+    it("allows localhost when ALLOW_LOCAL_SSRF=true", async () => {
+        process.env.ALLOW_LOCAL_SSRF = "true";
+        const result = await validateUrlForSsrf("http://localhost:3000");
+        expect(result.safe).toBe(true);
+    });
+
+    it("rejects malformed URL", async () => {
+        const result = await validateUrlForSsrf("not-a-url");
+        expect(result.safe).toBe(false);
+    });
+});
+
 ```

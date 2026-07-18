@@ -13,6 +13,8 @@ interface LivePreviewProps {
     onLoad?: () => void;
     projectId?: string;
     previewNonce: string;
+    scriptMode: "static" | "dynamic";
+    onScriptModeChange: (mode: "static" | "dynamic") => void;
 }
 
 export default function LivePreview({
@@ -22,12 +24,13 @@ export default function LivePreview({
     onLoad,
     projectId,
     previewNonce,
+    scriptMode,
+    onScriptModeChange,
 }: LivePreviewProps) {
     const [inputUrl, setInputUrl] = useState(previewUrl);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
     const [loadProgress, setLoadProgress] = useState(0);
-    const [scriptMode, setScriptMode] = useState<"static" | "dynamic">("static");
     const [isInspecting, setIsInspecting] = useState(false);
 
     // Sync inspection state to the preview iframe
@@ -39,8 +42,8 @@ export default function LivePreview({
             action: 'toggle-inspector',
             enabled: isInspecting,
             nonce: previewNonce,
-        }, '*');
-    }, [isInspecting, iframeRef, previewUrl, isLoading, previewNonce]);
+        }, scriptMode === "static" ? window.location.origin : "*");
+    }, [isInspecting, iframeRef, previewUrl, isLoading, previewNonce, scriptMode]);
 
     // Mobile: whether the URL bar is expanded
     const [urlBarExpanded, setUrlBarExpanded] = useState(false);
@@ -223,7 +226,7 @@ export default function LivePreview({
                 <div className="hidden sm:flex shrink-0 items-center rounded-md border-[3px] border-black overflow-hidden shadow-[2px_2px_0px_#000]">
                     <button
                         type="button"
-                        onClick={() => setScriptMode("static")}
+                        onClick={() => onScriptModeChange("static")}
                         className={`px-2 sm:px-3 py-2 text-[9px] font-black uppercase border-r-[3px] border-black transition-colors touch-manipulation ${
                             scriptMode === "static" ? "bg-[var(--ocms-yellow)] text-black" : "bg-white text-slate-700 hover:bg-slate-100"
                         }`}
@@ -234,7 +237,7 @@ export default function LivePreview({
                     </button>
                     <button
                         type="button"
-                        onClick={() => setScriptMode("dynamic")}
+                        onClick={() => onScriptModeChange("dynamic")}
                         className={`px-2 sm:px-3 py-2 text-[9px] font-black uppercase transition-colors flex items-center gap-1 touch-manipulation ${
                             scriptMode === "dynamic" ? "bg-[var(--ocms-blue)] text-black" : "bg-white text-slate-700 hover:bg-slate-100"
                         }`}
@@ -248,7 +251,7 @@ export default function LivePreview({
                 {/* Mobile Static/JS — icon toggle */}
                 <button
                     type="button"
-                    onClick={() => setScriptMode((m) => m === "static" ? "dynamic" : "static")}
+                    onClick={() => onScriptModeChange(scriptMode === "static" ? "dynamic" : "static")}
                     className={`sm:hidden shrink-0 p-2 border-[3px] border-black rounded-md shadow-[2px_2px_0px_#000] transition-all touch-manipulation ${
                         scriptMode === "dynamic" ? "bg-[var(--ocms-blue)]" : "bg-white"
                     }`}

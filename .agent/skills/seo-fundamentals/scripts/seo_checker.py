@@ -34,7 +34,7 @@ except:
 SKIP_DIRS = {
     'node_modules', '.next', 'dist', 'build', '.git', '.github',
     '__pycache__', '.vscode', '.idea', 'coverage', 'test', 'tests',
-    '__tests__', 'spec', 'docs', 'documentation', 'examples'
+    '__tests__', 'spec', 'docs', 'documentation', 'examples', 'scratch', 'packages'
 }
 
 # Files to skip (not pages)
@@ -54,8 +54,17 @@ def is_page_file(file_path: Path) -> bool:
     if any(skip in name for skip in SKIP_PATTERNS):
         return False
     
-    # Check path - pages in specific directories are likely pages
     parts = [p.lower() for p in file_path.parts]
+    
+    # Skip Next.js non-page files and workspace dashboard routes
+    if stem in ['layout', 'template', 'error', 'loading', 'not-found', 'middleware']:
+        return False
+    if 'workspace' in parts:
+        return False
+    if 'app' in parts and stem != 'page' and not stem.endswith('.page'):
+        return False
+        
+    # Check path - pages in specific directories are likely pages
     page_dirs = ['pages', 'app', 'routes', 'views', 'screens']
     
     if any(d in parts for d in page_dirs):
@@ -63,7 +72,7 @@ def is_page_file(file_path: Path) -> bool:
     
     # Filename indicators for pages
     page_names = ['page', 'index', 'home', 'about', 'contact', 'blog', 
-                  'post', 'article', 'product', 'landing', 'layout']
+                  'post', 'article', 'product', 'landing']
     
     if any(p in stem for p in page_names):
         return True

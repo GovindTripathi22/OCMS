@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { Prisma } from "@prisma/client";
 import { getAuthorizedUser } from "@/auth";
-import { validateUrlForSsrf } from "@/lib/ssrf";
+import { fetchWithValidatedSsrfUrl, validateUrlForSsrf } from "@/lib/ssrf";
+import { withRateLimit } from "@/lib/ratelimit";
 
 
 
@@ -13,6 +14,9 @@ export async function POST(
     { params }: { params: { projectId: string } }
 ) {
     try {
+        const rateLimited = await withRateLimit("scan-page", req, { limit: 20, windowMs: 60_000 });
+        if (rateLimited) return rateLimited;
+
         // Auth check FIRST — before any network requests
         const userId = await getAuthorizedUser();
         if (!userId) {
@@ -61,21 +65,39 @@ export async function POST(
 
         if (!scrapedHtml) {
             try {
-                const response = await fetch(url, {
-                    redirect: "follow",
-                    headers: {
-                        "User-Agent": "Mozilla/5.0 (compatible; OCMS/1.0; +https://ocms.ai/bot)",
-                        Accept: "text/html",
-                    },
-                    signal: AbortSignal.timeout(12000),
-                });
+                let currentUrl = new URL(url);
+                let currentValidation = validation;
+                let response: Response;
+                let redirects = 0;
+
+                do {
+                    response = await fetchWithValidatedSsrfUrl(currentUrl.href, currentValidation, {
+                        redirect: "manual",
+                        headers: {
+                            "User-Agent": "Mozilla/5.0 (compatible; OCMS/1.0; +https://ocms.ai/bot)",
+                            Accept: "text/html",
+                        },
+                        signal: AbortSignal.timeout(12000),
+                    });
+
+                    if (![301, 302, 303, 307, 308].includes(response.status)) break;
+                    const location = response.headers.get("location");
+                    if (!location || redirects++ >= 5) break;
+
+                    currentUrl = new URL(location, currentUrl.href);
+                    currentValidation = await validateUrlForSsrf(currentUrl.href);
+                    if (!currentValidation.safe) {
+                        scrapeFailed = true;
+                        break;
+                    }
+                } while (true);
 
                 if (!response.ok) {
                     scrapeFailed = true;
                     console.warn(`[Scan Page] HTTP ${response.status} for ${url}`);
                 } else {
                     scrapedHtml = await response.text();
-                    finalUrl = response.url;
+                    finalUrl = currentUrl.href;
                 }
             } catch (err: unknown) {
                 scrapeFailed = true;

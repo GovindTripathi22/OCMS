@@ -6,6 +6,7 @@ import LivePreview from "@/components/workspace/LivePreview";
 import PermissionWizard from "@/components/workspace/PermissionWizard";
 import type { SchemaField } from "@/types/schema";
 import { PBR_PRESETS } from "@/lib/pbr-presets";
+import { isExpectedPreviewMessage, type PreviewScriptMode } from "@/lib/preview-message-security";
 
 interface WorkspaceClientProps {
     project: {
@@ -36,6 +37,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
     const [history, setHistory] = useState<SchemaField[][]>([initialSchema]);
 
     const [previewUrl, setPreviewUrl] = useState(project.sourceUrl ?? "");
+    const [previewScriptMode, setPreviewScriptMode] = useState<PreviewScriptMode>("static");
     const [iframeLoaded, setIframeLoaded] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
 
@@ -261,8 +263,13 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
     useEffect(() => {
         const handleMessage = async (event: MessageEvent) => {
-            if (event.source !== iframeRef.current?.contentWindow) return;
-            if (!event.data || event.data.nonce !== previewNonce) return;
+            if (!isExpectedPreviewMessage({
+                event,
+                expectedOrigin: window.location.origin,
+                expectedSource: iframeRef.current?.contentWindow,
+                expectedNonce: previewNonceRef.current,
+                scriptMode: previewScriptMode,
+            })) return;
             const { source, fieldId, newValue, file, action, value } = event.data;
 
             try {
@@ -390,7 +397,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
         window.addEventListener("message", handleMessage);
         return () => window.removeEventListener("message", handleMessage);
-    }, [handleFieldChange, handleModelInjected, project.id, schema, previewUrl, buildChangesPayload, showToast, previewNonce]);
+    }, [handleFieldChange, handleModelInjected, project.id, schema, previewUrl, buildChangesPayload, showToast, previewNonce, previewScriptMode]);
 
     const handleSchemaReplace = useCallback((newSchema: SchemaField[]) => {
         setSchema(newSchema);
@@ -441,6 +448,8 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         onLoad={() => setIframeLoaded(true)}
                         projectId={project.id}
                         previewNonce={previewNonce}
+                        scriptMode={previewScriptMode}
+                        onScriptModeChange={setPreviewScriptMode}
                     />
                 </div>
             </div>

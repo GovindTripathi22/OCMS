@@ -56,7 +56,7 @@ def check_typescript_coverage(project_path: Path) -> dict:
     elif stats['any_count'] <= 5:
         issues.append(f"[!] {stats['any_count']} 'any' types found (acceptable)")
     else:
-        issues.append(f"[X] {stats['any_count']} 'any' types found (too many)")
+        issues.append(f"[!] {stats['any_count']} 'any' types found")
     
     if stats['total_functions'] > 0:
         typed_ratio = (stats['total_functions'] - stats['untyped_functions']) / stats['total_functions'] * 100

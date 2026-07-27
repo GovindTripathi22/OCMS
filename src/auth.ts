@@ -17,6 +17,7 @@ declare module "next-auth" {
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
     adapter: PrismaAdapter(prisma),
+    secret: process.env.AUTH_SECRET || "ocms_dev_fallback_secret_key_12345",
     providers: [
         GitHub({
             clientId: process.env.GITHUB_CLIENT_ID ?? "",

@@ -18,6 +18,9 @@ declare module "next-auth" {
 export const { handlers, auth, signIn, signOut } = NextAuth({
     adapter: PrismaAdapter(prisma),
     secret: process.env.AUTH_SECRET || "ocms_dev_fallback_secret_key_12345",
+    session: {
+        strategy: "jwt",
+    },
     providers: [
         GitHub({
             clientId: process.env.GITHUB_CLIENT_ID ?? "",
@@ -31,10 +34,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }),
     ],
     callbacks: {
-        session: async ({ session, user }) => {
-            if (session.user) {
-                session.user.id = user.id;
-                session.user.subscription = user.subscription || "free";
+        jwt: async ({ token, user, account }) => {
+            if (user) {
+                token.id = user.id;
+            }
+            if (account?.access_token) {
+                token.accessToken = account.access_token;
+            }
+            return token;
+        },
+        session: async ({ session, token }) => {
+            if (session.user && token) {
+                session.user.id = (token.id as string) || (token.sub as string) || "user";
+                session.user.subscription = "free";
             }
             return session;
         },

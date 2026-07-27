@@ -15,8 +15,51 @@ declare module "next-auth" {
     }
 }
 
+const baseAdapter = PrismaAdapter(prisma);
+
+const resilientAdapter = {
+    ...baseAdapter,
+    createUser: async (data: any) => {
+        try {
+            return await baseAdapter.createUser!(data);
+        } catch (e) {
+            console.warn("[Auth] DB createUser bypassed (No active DB):", e);
+            return { ...data, id: data.id || data.email || "jwt-user-id" };
+        }
+    },
+    getUser: async (id: string) => {
+        try {
+            return await baseAdapter.getUser!(id);
+        } catch {
+            return null;
+        }
+    },
+    getUserByEmail: async (email: string) => {
+        try {
+            return await baseAdapter.getUserByEmail!(email);
+        } catch {
+            return null;
+        }
+    },
+    getUserByAccount: async (provider_providerAccountId: any) => {
+        try {
+            return await baseAdapter.getUserByAccount!(provider_providerAccountId);
+        } catch {
+            return null;
+        }
+    },
+    linkAccount: async (data: any) => {
+        try {
+            return await baseAdapter.linkAccount!(data);
+        } catch (e) {
+            console.warn("[Auth] DB linkAccount bypassed (No active DB):", e);
+            return data;
+        }
+    },
+};
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
-    adapter: PrismaAdapter(prisma),
+    adapter: resilientAdapter,
     secret: process.env.AUTH_SECRET || "ocms_dev_fallback_secret_key_12345",
     session: {
         strategy: "jwt",

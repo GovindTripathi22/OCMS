@@ -1,29 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getAuthorizedUser } from "@/auth";
+import { withRateLimit } from "@/lib/ratelimit";
+import { validateUrlForSsrf } from "@/lib/ssrf";
 
 export async function POST(req: NextRequest) {
     try {
+        const rateLimited = await withRateLimit("lighthouse-audit", req, { limit: 10, windowMs: 60_000 });
+        if (rateLimited) return rateLimited;
+
+        if (!(await getAuthorizedUser())) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         const { url } = await req.json();
 
-        if (!url) {
+        if (typeof url !== "string" || !url.trim()) {
             return NextResponse.json({ error: "URL is required" }, { status: 400 });
         }
 
-        // Clean and validate URL
         let isLocalUrl = false;
         try {
             const parsed = new URL(url);
             const hostname = parsed.hostname.toLowerCase();
-            if (
+            isLocalUrl =
                 hostname === "localhost" ||
                 hostname === "127.0.0.1" ||
+                hostname === "[::1]" ||
+                hostname.endsWith(".local") ||
                 hostname.startsWith("192.168.") ||
-                hostname.startsWith("10.") ||
-                hostname.endsWith(".local")
-            ) {
-                isLocalUrl = true;
-            }
+                hostname.startsWith("10.");
         } catch {
             return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
+        }
+
+        // Validate public target for SSRF safety before calling PageSpeed Insights API
+        if (!isLocalUrl) {
+            const validation = await validateUrlForSsrf(url);
+            if (!validation.safe) {
+                return NextResponse.json(
+                    { error: validation.error || "Forbidden URL" },
+                    { status: validation.error?.includes("blocked") ? 403 : 400 }
+                );
+            }
         }
 
         // If it's a public URL, fetch actual scores from Google PageSpeed Insights API

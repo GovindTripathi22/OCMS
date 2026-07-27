@@ -265,6 +265,30 @@ export default function HomePage() {
       </section>
 
       {/* ═══════════════════ CTA ═══════════════════ */}
+      <section id="pricing" className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 py-14 sm:py-20 scroll-mt-20">
+        <div className="glass-card max-w-3xl mx-auto p-1 border-[3px] border-black bg-white shadow-[6px_6px_0_0_#000]">
+          <div className="p-6 sm:p-10 text-center bg-[#fcfbf9]">
+            <span className="feature-tag bg-[var(--ocms-green)] text-black border-2 border-black shadow-[2px_2px_0_0_#000]">Simple Pricing</span>
+            <h2 className="mt-5 text-3xl sm:text-5xl font-black text-black tracking-tight">Free while you build.</h2>
+            <p className="mt-4 max-w-xl mx-auto text-sm sm:text-base text-slate-800 font-bold leading-relaxed">
+              OCMS runs locally with no platform subscription. Bring your own GitHub account and optional API keys for the services you choose to connect.
+            </p>
+            <div className="mt-7 grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
+              {[
+                ["$0", "Core workspace"],
+                ["Local", "Content and schemas"],
+                ["Yours", "GitHub & service keys"],
+              ].map(([value, label]) => (
+                <div key={label} className="border-[3px] border-black bg-white rounded-md px-4 py-3 shadow-[3px_3px_0_0_#000]">
+                  <div className="text-xl font-black text-black">{value}</div>
+                  <div className="mt-1 text-[10px] uppercase tracking-wider font-black text-slate-700">{label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 py-14 sm:py-20">
         <div className="relative glass-card p-6 sm:p-14 md:p-20 text-center overflow-hidden border-[3px] border-black bg-white shadow-[6px_6px_0_0_#000] hover:shadow-[8px_8px_0_0_var(--ocms-orange)]">
           <h2 className="text-3xl sm:text-4xl md:text-6xl font-black text-black tracking-tight mb-4 relative">

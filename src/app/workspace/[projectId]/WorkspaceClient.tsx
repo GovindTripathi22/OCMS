@@ -35,6 +35,7 @@ interface ModalState {
 export default function WorkspaceClient({ project, initialSchema }: WorkspaceClientProps) {
     const [schema, setSchema] = useState<SchemaField[]>(initialSchema);
     const [history, setHistory] = useState<SchemaField[][]>([initialSchema]);
+    const [historyIndex, setHistoryIndex] = useState(0);
 
     const [previewUrl, setPreviewUrl] = useState(project.sourceUrl ?? "");
     const [previewScriptMode, setPreviewScriptMode] = useState<PreviewScriptMode>("static");
@@ -100,15 +101,11 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
     }, []);
 
     const pushHistory = useCallback((next: SchemaField[]) => {
+        const nextIndex = historyIndexRef.current + 1;
+        historyIndexRef.current = nextIndex;
+        setHistoryIndex(nextIndex);
         setHistory((currentHistory) => {
-            const idx = historyIndexRef.current;
-            const updated = [
-                ...currentHistory.slice(0, idx + 1),
-                next,
-            ];
-            historyIndexRef.current = updated.length - 1;
-
-            return updated;
+            return [...currentHistory.slice(0, nextIndex), next];
         });
         isDirtyRef.current = true;
     }, []);
@@ -146,26 +143,27 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         setModalState(null);
     };
 
-    const handleScanPage = useCallback(async () => {
+    const handleScanPage = useCallback(async (fetchFromServer = false) => {
         const iframe = iframeRef.current;
-        if (!iframe?.contentDocument) {
-            showToast("Preview is not loaded yet.", "error");
+        if (!previewUrl) {
+            showToast("Enter a preview URL before scanning.", "error");
             return;
         }
 
         setIsScanning(true);
         try {
-            // Retrieve outer HTML directly from the iframe's loaded DOM!
-            const html = iframe.contentDocument.documentElement.outerHTML;
+            // Static previews can reuse their loaded DOM. Dynamic previews have an
+            // opaque origin by design, so fall back to the server-side fetch path.
+            let html: string | undefined;
+            if (!fetchFromServer && iframe?.contentDocument?.documentElement) {
+                html = iframe.contentDocument.documentElement.outerHTML;
+            }
             const currentUrl = previewUrl;
 
             const response = await fetch(`/api/projects/${project.id}/scan-page`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    url: currentUrl,
-                    html: html
-                }),
+                body: JSON.stringify({ url: currentUrl, ...(html ? { html } : {}) }),
             });
 
             const data = await response.json();
@@ -173,15 +171,14 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
             if (data.schema) {
                 setSchema(data.schema);
-                const idx = historyIndexRef.current;
+                const nextIndex = historyIndexRef.current + 1;
+                historyIndexRef.current = nextIndex;
+                setHistoryIndex(nextIndex);
                 setHistory((prev) => {
-                    const updated = [...prev.slice(0, idx + 1), data.schema];
-                    historyIndexRef.current = updated.length - 1;
-
-                    return updated;
+                    return [...prev.slice(0, nextIndex), data.schema];
                 });
                 isDirtyRef.current = true;
-                showToast("Page content scanned successfully!");
+                showToast(data.newFieldsCount ? `Scanned ${data.newFieldsCount} editable field${data.newFieldsCount === 1 ? "" : "s"}.` : "Page scanned, but no editable fields were found.");
             }
         } catch (err: unknown) {
             const errMsg = err instanceof Error ? err.message : "Failed to scan page";
@@ -302,14 +299,14 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                     inlineEditRef.current = true;
                     handleFieldChange(fieldId, newValue);
                     inlineEditRef.current = false;
+                    const nextIndex = historyIndexRef.current + 1;
+                    historyIndexRef.current = nextIndex;
+                    setHistoryIndex(nextIndex);
                     setHistory((currentHistory) => {
                         const idx = historyIndexRef.current;
-                        const base = currentHistory[idx] ?? schema;
+                        const base = currentHistory[idx - 1] ?? schema;
                         const next = base.map((f) => (f.id === fieldId ? { ...f, value: newValue } : f));
-                        const updated = [...currentHistory.slice(0, idx + 1), next];
-                        historyIndexRef.current = updated.length - 1;
-
-                        return updated;
+                        return [...currentHistory.slice(0, nextIndex), next];
                     });
                 }
 
@@ -320,12 +317,11 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                             return prev;
                         }
                         const next = [...prev, newField];
+                        const nextIndex = historyIndexRef.current + 1;
+                        historyIndexRef.current = nextIndex;
+                        setHistoryIndex(nextIndex);
                         setHistory((currentHistory) => {
-                            const idx = historyIndexRef.current;
-                            const updated = [...currentHistory.slice(0, idx + 1), next];
-                            historyIndexRef.current = updated.length - 1;
-
-                            return updated;
+                            return [...currentHistory.slice(0, nextIndex), next];
                         });
                         return next;
                     });
@@ -405,10 +401,14 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
     }, [pushHistory]);
 
     const seekHistory = useCallback((percent: number) => {
-        const index = Math.floor((percent / 100) * (history.length - 1));
+        if (history.length === 0) return;
+        const normalizedPercent = Math.min(100, Math.max(0, percent));
+        const index = Math.round((normalizedPercent / 100) * (history.length - 1));
+        const snapshot = history[index];
+        if (!snapshot) return;
         historyIndexRef.current = index;
-
-        setSchema(history[index]);
+        setHistoryIndex(index);
+        setSchema(snapshot);
     }, [history]);
 
     return (
@@ -429,6 +429,8 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         targetFilePath={targetFilePath}
                         onHistorySeek={seekHistory}
                         historyCount={history.length}
+                        historyIndex={historyIndex}
+                        onHistoryIndexChange={(index) => seekHistory((index / Math.max(history.length - 1, 1)) * 100)}
                         onSchemaReplace={handleSchemaReplace}
                         broadcastGhostEvent={broadcastGhostEvent}
                         previewMessageNonce={previewNonce}

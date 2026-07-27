@@ -30,6 +30,7 @@ export default function LivePreview({
     const [inputUrl, setInputUrl] = useState(previewUrl);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
+    const [errorMessage, setErrorMessage] = useState("");
     const [loadProgress, setLoadProgress] = useState(0);
     const [isInspecting, setIsInspecting] = useState(false);
 
@@ -49,6 +50,10 @@ export default function LivePreview({
     const [urlBarExpanded, setUrlBarExpanded] = useState(false);
     const urlInputRef = useRef<HTMLInputElement>(null);
 
+    useEffect(() => {
+        setInputUrl(previewUrl);
+    }, [previewUrl]);
+
     const buildProxyUrl = useCallback((targetUrl: string) => {
         const params = new URLSearchParams({ url: targetUrl, scriptMode, nonce: previewNonce });
         if (projectId) params.set("projectId", projectId);
@@ -67,13 +72,27 @@ export default function LivePreview({
 
     const handleNavigate = useCallback(() => {
         let url = inputUrl.trim();
-        if (url && !url.startsWith("http")) {
+        if (url && !/^https?:\/\//i.test(url)) {
             url = `https://${url}`;
             setInputUrl(url);
         }
+
+        try {
+            const parsedUrl = new URL(url);
+            if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+                throw new Error("Only http and https URLs can be previewed.");
+            }
+        } catch {
+            setErrorMessage("Enter a valid http or https URL to load a preview.");
+            setIsLoading(false);
+            setHasError(true);
+            return;
+        }
+
         onUrlChange(url);
         setIsLoading(true);
         setHasError(false);
+        setErrorMessage("");
         setUrlBarExpanded(false);
     }, [inputUrl, onUrlChange]);
 
@@ -81,6 +100,7 @@ export default function LivePreview({
         if (iframeRef.current) {
             setIsLoading(true);
             setHasError(false);
+            setErrorMessage("");
             iframeRef.current.src = buildProxyUrl(previewUrl);
         }
     }, [previewUrl, iframeRef, buildProxyUrl]);
@@ -90,6 +110,7 @@ export default function LivePreview({
         if (!iframeRef.current) return;
         setIsLoading(true);
         setHasError(false);
+        setErrorMessage("");
         iframeRef.current.src = buildProxyUrl(previewUrl);
     }, [scriptMode, previewUrl, iframeRef, buildProxyUrl]);
 
@@ -313,10 +334,7 @@ export default function LivePreview({
                             <div>
                                 <p className="text-sm text-black font-extrabold uppercase tracking-wide">Can&apos;t load preview</p>
                                 <p className="text-xs text-slate-800 mt-2 leading-relaxed font-bold">
-                                    This site blocks embedding. Try opening it in a new tab or use a local URL like{" "}
-                                    <code className="text-black bg-[var(--ocms-yellow)] border border-black px-1.5 py-0.5 rounded font-mono font-extrabold text-[10px]">
-                                        localhost:3001
-                                    </code>
+                                    {errorMessage || <>This site blocks embedding. Try opening it in a new tab or use a local URL like{" "}<code className="text-black bg-[var(--ocms-yellow)] border border-black px-1.5 py-0.5 rounded font-mono font-extrabold text-[10px]">localhost:3001</code>.</>}
                                 </p>
                             </div>
                             <div className="flex gap-2 w-full">
@@ -351,6 +369,7 @@ export default function LivePreview({
                     onError={() => {
                         setIsLoading(false);
                         setHasError(true);
+                        setErrorMessage("The preview request failed to load.");
                     }}
                     sandbox={
                         scriptMode === "static"

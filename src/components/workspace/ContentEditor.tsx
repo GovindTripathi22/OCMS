@@ -42,7 +42,7 @@ interface ContentEditorProps {
     previewMessageNonce?: string;
     previewUrl?: string;
     isScanning?: boolean;
-    onScanPage?: (skipAi?: boolean) => void;
+    onScanPage?: (fetchFromServer?: boolean) => void;
     openPermissionWizard?: () => void;
 }
 
@@ -55,6 +55,25 @@ const fieldIcons: Record<SchemaField["type"], React.ReactNode> = {
 };
 
 type SyncStatus = "idle" | "syncing" | "success" | "error";
+
+interface AnimationRule {
+    id: string;
+    el: string;
+    trigger: string;
+    anim: string;
+}
+
+const SYNCED_FIELD_PROPERTIES: (keyof SchemaField)[] = [
+    "type",
+    "selector",
+    "value",
+    "alt",
+    "objectFit",
+    "borderRadius",
+    "roughness",
+    "metalness",
+    "textureUrl",
+];
 
 interface SpeechRecognitionResultLike {
     0: {
@@ -254,6 +273,7 @@ export default function ContentEditor({
     openPermissionWizard,
 }: ContentEditorProps) {
     const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
+    const [syncedSchema, setSyncedSchema] = useState<SchemaField[]>(initialSchema);
     const [errorMessage, setErrorMessage] = useState("");
     const [warningMessage, setWarningMessage] = useState("");
     const [isListening, setIsListening] = useState(false);
@@ -272,6 +292,10 @@ export default function ContentEditor({
             setTimelinePos(100);
         }
     }, [historyIndex, historyCount]);
+
+    useEffect(() => {
+        setSyncedSchema(initialSchema);
+    }, [initialSchema]);
 
     const handleRunLighthouseAudit = async () => {
         if (!previewUrl) return;
@@ -298,8 +322,8 @@ export default function ContentEditor({
         }
     };
 
-    const handleScanPage = (skipAi?: boolean) => {
-        if (onScanPage) onScanPage(skipAi);
+    const handleScanPage = (fetchFromServer?: boolean) => {
+        if (onScanPage) onScanPage(fetchFromServer);
     };
 
     // Feature States
@@ -309,6 +333,11 @@ export default function ContentEditor({
     const [isGeneratingVariant, setIsGeneratingVariant] = useState(false);
     const [currentColors, setCurrentColors] = useState(["#fbbf24", "#22c55e", "#3b82f6", "#f97316", "#ec4899"]);
     const [isGhostModeActive, setIsGhostModeActive] = useState(true);
+    const [animationRules, setAnimationRules] = useState<AnimationRule[]>([
+        { id: "hero-title", el: "Hero Title", trigger: "0%", anim: "Fade Up" },
+        { id: "cta", el: "CTA Button", trigger: "15%", anim: "Slide Right" },
+        { id: "feature-grid", el: "Feature Grid", trigger: "30%", anim: "Scale In" },
+    ]);
 
     // R4 Local Utilities states
     const [filterQuery, setFilterQuery] = useState("");
@@ -471,7 +500,9 @@ export default function ContentEditor({
         } catch (err) {
             console.error("Apply Material Variant Error:", err);
             setTextureApplyStatus("error");
-            alert(err instanceof Error ? err.message : "Failed to save material variant");
+            setErrorMessage(err instanceof Error ? err.message : "Failed to save material variant");
+            setSyncStatus("error");
+            setTimeout(() => setSyncStatus("idle"), 4000);
         }
     };
 
@@ -480,8 +511,8 @@ export default function ContentEditor({
 
     const handleSaveAndSync = async () => {
         const changedFields = schema.filter((field) => {
-            const original = initialSchema.find((item) => item.id === field.id);
-            return !original || original.value !== field.value || original.type !== field.type;
+            const original = syncedSchema.find((item) => item.id === field.id);
+            return !original || SYNCED_FIELD_PROPERTIES.some((property) => field[property] !== original[property]);
         });
 
         if (changedFields.length === 0) {
@@ -519,7 +550,7 @@ export default function ContentEditor({
         if (changedFields.length > 0) {
             const summary = changedFields
                 .map((field) => {
-                    const original = initialSchema.find((item) => item.id === field.id);
+                    const original = syncedSchema.find((item) => item.id === field.id);
                     const fromValue = original?.value ?? "(new field)";
                     return `${field.id}: "${(fromValue || "").slice(0, 80)}" -> "${(field.value || "").slice(0, 80)}"`;
                 })
@@ -528,7 +559,7 @@ export default function ContentEditor({
         }
 
         const changes = changedFields.map((f) => {
-            const original = initialSchema.find((item) => item.id === f.id);
+            const original = syncedSchema.find((item) => item.id === f.id);
             return {
                 fieldId: f.id,
                 selector: f.selector,
@@ -566,7 +597,17 @@ export default function ContentEditor({
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Unknown error");
             setSyncStatus("success");
-            if (Array.isArray(data.unmatchedSelectors) && data.unmatchedSelectors.length > 0) {
+            const unmatchedSelectors = new Set(
+                Array.isArray(data.unmatchedSelectors) ? data.unmatchedSelectors : []
+            );
+            setSyncedSchema((previousSchema) =>
+                schema.flatMap((field) => {
+                    if (!unmatchedSelectors.has(field.selector ?? "")) return [field];
+                    const previous = previousSchema.find((item) => item.id === field.id);
+                    return previous ? [previous] : [];
+                })
+            );
+            if (unmatchedSelectors.size > 0) {
                 setWarningMessage(
                     `Applied ${data.appliedCount || 0} change(s), but ${data.unmatchedSelectors.length} selector(s) did not match.`
                 );
@@ -633,6 +674,26 @@ export default function ContentEditor({
         } catch {
             console.warn("Clipboard write failed");
         }
+    };
+
+    const handleAddAnimationRule = () => {
+        const nextField = schema.find((field) => !animationRules.some((rule) => rule.id === field.id));
+        if (!nextField) {
+            setErrorMessage(schema.length === 0 ? "Scan a page before adding an animation rule." : "All scanned fields already have an animation rule.");
+            setSyncStatus("error");
+            setTimeout(() => setSyncStatus("idle"), 3000);
+            return;
+        }
+
+        setAnimationRules((rules) => [
+            ...rules,
+            {
+                id: nextField.id,
+                el: nextField.label || nextField.id,
+                trigger: `${Math.min(90, rules.length * 15)}%`,
+                anim: "Fade Up",
+            },
+        ]);
     };
 
     const toggleVoice = () => {
@@ -849,7 +910,7 @@ export default function ContentEditor({
                             <div className="border-[3px] border-black border-dashed bg-white p-5 rounded-md text-center">
                                 <Sparkles className="w-8 h-8 text-[var(--ocms-yellow)] mx-auto mb-2 animate-pulse" />
                                 <p className="text-xs font-black uppercase text-black tracking-wide">No editable fields here</p>
-                                <p className="text-[10px] text-slate-700 mt-1 font-bold">This page hasn&apos;t been scanned by AI yet.</p>
+                                <p className="text-[10px] text-slate-700 mt-1 font-bold">This page hasn&apos;t been scanned yet.</p>
                                 <div className="flex gap-2 mt-4">
                                     <button
                                         type="button"
@@ -858,7 +919,7 @@ export default function ContentEditor({
                                         className="flex-1 py-2.5 bg-[var(--ocms-blue)] text-black font-black uppercase tracking-wider text-[10px] border-[3px] border-black rounded-md shadow-[3px_3px_0px_#000] hover:shadow-[5px_5px_0px_#000] hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
                                     >
                                         {isScanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-                                        {isScanning ? "Scanning..." : "AI Scan"}
+                                        {isScanning ? "Scanning..." : "Scan Preview"}
                                     </button>
                                     <button
                                         type="button"
@@ -867,7 +928,7 @@ export default function ContentEditor({
                                         className="flex-1 py-2.5 bg-white text-black font-black uppercase tracking-wider text-[10px] border-[3px] border-black rounded-md shadow-[3px_3px_0px_#000] hover:shadow-[5px_5px_0px_#000] hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
                                     >
                                         {isScanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Code2 className="w-3.5 h-3.5" />}
-                                        {isScanning ? "Scanning..." : "Fast Scan (No AI)"}
+                                        {isScanning ? "Scanning..." : "Fetch & Scan"}
                                     </button>
                                 </div>
                             </div>
@@ -892,7 +953,7 @@ export default function ContentEditor({
                                         className="flex-1 py-2 bg-white text-black font-black uppercase tracking-wider text-[10px] border-[3px] border-black rounded-md shadow-[2px_2px_0px_#000] hover:bg-[var(--ocms-yellow)] hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
                                     >
                                         {isScanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                                        {isScanning ? "Scanning..." : "Rescan (AI)"}
+                                        {isScanning ? "Scanning..." : "Rescan Preview"}
                                     </button>
                                     <button
                                         type="button"
@@ -901,7 +962,7 @@ export default function ContentEditor({
                                         className="flex-1 py-2 bg-white text-black font-black uppercase tracking-wider text-[10px] border-[3px] border-black rounded-md shadow-[2px_2px_0px_#000] hover:bg-[var(--ocms-green)] hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
                                     >
                                         {isScanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Code2 className="w-3.5 h-3.5" />}
-                                        {isScanning ? "Scanning..." : "Rescan (No AI)"}
+                                        {isScanning ? "Scanning..." : "Fetch & Scan"}
                                     </button>
                                 </div>
 
@@ -1416,11 +1477,14 @@ export default function ContentEditor({
                     </div>
                     <div className="flex gap-2 mt-3">
                         {currentColors.map((c, idx) => (
-                            <div key={`${c}-${idx}`}
+                            <button
+                                key={`${c}-${idx}`}
+                                type="button"
                                 onClick={() => handleCopyColor(c)}
                                 className="relative w-7 h-7 rounded-md border-[3px] border-black cursor-pointer hover:scale-110 transition-transform shadow-[2px_2px_0px_#000] group"
                                 style={{ background: c }}
-                                title={`Click to copy ${c}`}
+                                title={`Copy ${c}`}
+                                aria-label={`Copy ${c} to clipboard`}
                             >
                                 {copiedColor === c ? (
                                     <>
@@ -1430,7 +1494,7 @@ export default function ContentEditor({
                                 ) : (
                                     <Clipboard className="w-2.5 h-2.5 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white opacity-0 group-hover:opacity-80 transition-opacity drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]" />
                                 )}
-                            </div>
+                            </button>
                         ))}
                         <span className="text-[9px] text-slate-800 self-center ml-1 font-black uppercase">Current</span>
                     </div>
@@ -1609,18 +1673,14 @@ export default function ContentEditor({
                 <FeaturePanel icon={<Zap className="w-3.5 h-3.5" />} title="Scroll Animations" tag="New" accentColor="yellow">
                     <p className="text-[10px] text-slate-800 mb-2.5 font-bold">Visually connect blocks to scroll depth for entrance animations.</p>
                     <div className="space-y-2">
-                        {[
-                            { el: "Hero Title", trigger: "0%", anim: "Fade Up" },
-                            { el: "CTA Button", trigger: "15%", anim: "Slide Right" },
-                            { el: "Feature Grid", trigger: "30%", anim: "Scale In" },
-                        ].map((rule) => (
-                            <div key={rule.el} className="flex items-center gap-2 bg-white border-[3px] border-black rounded-md px-3 py-2 shadow-[2px_2px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0px_#000] transition-all">
+                        {animationRules.map((rule) => (
+                            <div key={rule.id} className="flex items-center gap-2 bg-white border-[3px] border-black rounded-md px-3 py-2 shadow-[2px_2px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0px_#000] transition-all">
                                 <span className="text-[9px] text-black font-bold flex-1">{rule.el}</span>
                                 <span className="text-[8px] font-[family-name:var(--font-jetbrains-mono)] text-black bg-[var(--ocms-blue)] px-2 py-0.5 rounded-md font-black border-2 border-black shadow-[1px_1px_0px_#000]">{rule.trigger}</span>
                                 <span className="text-[8px] font-[family-name:var(--font-jetbrains-mono)] text-black bg-[var(--ocms-orange)] px-2 py-0.5 rounded-md font-black border-2 border-black shadow-[1px_1px_0px_#000]">{rule.anim}</span>
                             </div>
                         ))}
-                        <button className="w-full text-xs bg-white border-[3px] border-black rounded-md py-2.5 text-black hover:bg-[var(--ocms-orange)] hover:text-white hover:shadow-[3px_3px_0px_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] transition-all flex items-center justify-center gap-1.5 font-black uppercase">
+                        <button type="button" onClick={handleAddAnimationRule} className="w-full text-xs bg-white border-[3px] border-black rounded-md py-2.5 text-black hover:bg-[var(--ocms-orange)] hover:text-white hover:shadow-[3px_3px_0px_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] transition-all flex items-center justify-center gap-1.5 font-black uppercase">
                             + Add Animation Rule
                         </button>
                     </div>

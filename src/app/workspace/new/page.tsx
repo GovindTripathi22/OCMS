@@ -99,7 +99,12 @@ export default function NewWorkspacePage() {
                 body: JSON.stringify({ url, name: "New Scraped Site" }),
             });
 
-            if (!response.ok) throw new Error("Failed to create project");
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                const errMsg = errData.error || (response.status === 401 ? "Please sign in with GitHub to create a project." : "Failed to create project");
+                appendLog(`[ERROR] (${response.status}) ${errMsg}`);
+                throw new Error(errMsg);
+            }
 
             setStep("validating");
             setProgress(88);
@@ -117,7 +122,8 @@ export default function NewWorkspacePage() {
             router.push(`/workspace/${project.id}?target=${encodeURIComponent(url)}`);
         } catch (error) {
             console.error("Error creating project:", error);
-            alert("Failed to initialize workspace. Please check the console.");
+            const message = error instanceof Error ? error.message : "Failed to initialize workspace.";
+            alert(message);
             setIsGenerating(false);
             setStep("idle");
         }

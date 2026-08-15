@@ -11,6 +11,10 @@ import dynamic from "next/dynamic";
 import ModelDropzone from "./ModelDropzone";
 import type { SchemaField } from "@/types/schema";
 import { PBR_PRESETS } from "@/lib/pbr-presets";
+import type { BuilderMode } from "@/types/builder-mode";
+import BuilderModeSwitcher from "./BuilderModeSwitcher";
+import ObsidianContentEditor from "./ObsidianContentEditor";
+import ShopifyStoreEditor from "./ShopifyStoreEditor";
 
 
 const ModelViewer = dynamic(() => import("./ModelViewer"), {
@@ -452,6 +456,7 @@ export default function ContentEditor({
     const [typedPrompt, setTypedPrompt] = useState("");
     const [isExecutingPrompt, setIsExecutingPrompt] = useState(false);
     const [loadingFieldAction, setLoadingFieldAction] = useState<{ fieldId: string; action: string } | null>(null);
+    const [builderMode, setBuilderMode] = useState<BuilderMode>("obsidian");
 
     useEffect(() => {
         const iframe = document.querySelector('iframe');
@@ -972,8 +977,35 @@ export default function ContentEditor({
                 </p>
             </div>
 
-            {/* ─── Scrollable Content ─── */}
-            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-[var(--ocms-bg)]">
+            {/* ─── Mode Switcher Bar ─── */}
+            <BuilderModeSwitcher currentMode={builderMode} onModeChange={setBuilderMode} />
+
+            {/* ─── Dynamic Builder Workspace Content ─── */}
+            {builderMode === "obsidian" ? (
+                <div className="flex-1 min-h-0 overflow-hidden">
+                    <ObsidianContentEditor
+                        schema={schema}
+                        onFieldChange={onFieldChange}
+                        onFieldUpdate={onFieldUpdate}
+                        isGhostModeActive={isGhostModeActive}
+                        broadcastGhostEvent={broadcastGhostEvent}
+                    />
+                </div>
+            ) : builderMode === "shopify" ? (
+                <div className="flex-1 min-h-0 overflow-hidden">
+                    <ShopifyStoreEditor
+                        projectId={projectId}
+                        schema={schema}
+                        onFieldChange={onFieldChange}
+                        onFieldUpdate={onFieldUpdate}
+                        onModelInjected={onModelInjected}
+                        isGhostModeActive={isGhostModeActive}
+                        broadcastGhostEvent={broadcastGhostEvent}
+                    />
+                </div>
+            ) : (
+                /* ─── Studio Developer Controls ─── */
+                <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-[var(--ocms-bg)]">
 
                 {/* ════ SCHEMA FIELDS ════ */}
                 <FeaturePanel icon={<Type className="w-3.5 h-3.5" />} title="Content Fields" tag="Live" accentColor="yellow" defaultOpen>
@@ -1844,7 +1876,8 @@ export default function ContentEditor({
                         </button>
                     </div>
                 </FeaturePanel>
-            </div>
+                </div>
+            )}
 
             {/* ─── Footer Action — Rainbow Glow Button ─── */}
             <div className="px-4 py-4 border-t-[3px] border-black bg-white space-y-2.5">

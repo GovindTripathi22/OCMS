@@ -449,6 +449,9 @@ export default function ContentEditor({
     const [metalness, setMetalness] = useState(1.0);
     const [textureUrl, setTextureUrl] = useState("");
     const [textureApplyStatus, setTextureApplyStatus] = useState<"idle" | "checking" | "success" | "error">("idle");
+    const [typedPrompt, setTypedPrompt] = useState("");
+    const [isExecutingPrompt, setIsExecutingPrompt] = useState(false);
+    const [loadingFieldAction, setLoadingFieldAction] = useState<{ fieldId: string; action: string } | null>(null);
 
     useEffect(() => {
         const iframe = document.querySelector('iframe');
@@ -801,6 +804,75 @@ export default function ContentEditor({
         }
     };
 
+    const handleExecuteTypedPrompt = async () => {
+        if (!typedPrompt.trim() || isExecutingPrompt) return;
+        setIsExecutingPrompt(true);
+        setSyncStatus("syncing");
+        setErrorMessage("");
+        try {
+            const res = await fetch("/api/parse-voice-command", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt: typedPrompt.trim(), schema }),
+            });
+            const data = await res.json();
+            if (data.fieldId && data.newValue) {
+                if (isGhostModeActive && broadcastGhostEvent) {
+                    const field = schema.find(f => f.id === data.fieldId);
+                    if (field?.selector) {
+                        broadcastGhostEvent("AI_EDIT_START", field.selector, "AI Copilot");
+                    }
+                }
+                onFieldChange(data.fieldId, data.newValue);
+                setSyncStatus("success");
+                setTypedPrompt("");
+                if (isGhostModeActive && broadcastGhostEvent) {
+                    setTimeout(() => broadcastGhostEvent("AI_EDIT_END"), 2000);
+                }
+            } else {
+                throw new Error(data.error || "AI could not identify which field to change.");
+            }
+        } catch (err: unknown) {
+            setErrorMessage(err instanceof Error ? err.message : "AI command failed");
+            setSyncStatus("error");
+        } finally {
+            setIsExecutingPrompt(false);
+            setTimeout(() => setSyncStatus("idle"), 3000);
+        }
+    };
+
+    const handleInlineAction = async (
+        fieldId: string,
+        currentValue: string,
+        action: "summarize" | "change-tone" | "expand" | "fix-grammar" | "shorten",
+        tone?: string
+    ) => {
+        if (!currentValue || !currentValue.trim()) return;
+        setLoadingFieldAction({ fieldId, action });
+        try {
+            const res = await fetch("/api/inline-text-action", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ value: currentValue, action, tone }),
+            });
+            const data = await res.json();
+            if (data.value) {
+                onFieldChange(fieldId, data.value);
+                if (isGhostModeActive && broadcastGhostEvent) {
+                    const field = schema.find(f => f.id === fieldId);
+                    if (field?.selector) {
+                        broadcastGhostEvent("AI_EDIT_START", field.selector, "AI Action");
+                        setTimeout(() => broadcastGhostEvent("AI_EDIT_END"), 1500);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("Inline action error:", err);
+        } finally {
+            setLoadingFieldAction(null);
+        }
+    };
+
 
 
     const handleStealComponent = async () => {
@@ -1040,6 +1112,44 @@ export default function ContentEditor({
                                                         rows={Math.min(6, Math.max(2, Math.ceil(field.value.length / 40)))}
                                                         className="w-full bg-white border-[3px] border-black rounded-md px-3.5 py-2.5 text-xs text-black placeholder-slate-500 outline-none focus:shadow-[3px_3px_0px_var(--ocms-yellow)] transition-all font-bold"
                                                         placeholder={`Enter ${fieldLabel.toLowerCase()}...`} />
+                                                    <div className="flex flex-wrap gap-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleInlineAction(field.id, field.value, "fix-grammar")}
+                                                            disabled={loadingFieldAction?.fieldId === field.id}
+                                                            className="text-[8px] font-black uppercase px-2 py-0.5 bg-white hover:bg-[var(--ocms-yellow)] border border-black rounded shadow-[1px_1px_0px_#000] flex items-center gap-1 transition-all disabled:opacity-50"
+                                                        >
+                                                            {loadingFieldAction?.fieldId === field.id && loadingFieldAction.action === "fix-grammar" ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Sparkles className="w-2.5 h-2.5 text-yellow-600" />}
+                                                            Polish
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleInlineAction(field.id, field.value, "change-tone", "casual")}
+                                                            disabled={loadingFieldAction?.fieldId === field.id}
+                                                            className="text-[8px] font-black uppercase px-2 py-0.5 bg-white hover:bg-[var(--ocms-green)] border border-black rounded shadow-[1px_1px_0px_#000] flex items-center gap-1 transition-all disabled:opacity-50"
+                                                        >
+                                                            {loadingFieldAction?.fieldId === field.id && loadingFieldAction.action === "change-tone" ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Zap className="w-2.5 h-2.5 text-green-600" />}
+                                                            Tone
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleInlineAction(field.id, field.value, "summarize")}
+                                                            disabled={loadingFieldAction?.fieldId === field.id}
+                                                            className="text-[8px] font-black uppercase px-2 py-0.5 bg-white hover:bg-[var(--ocms-blue)] border border-black rounded shadow-[1px_1px_0px_#000] flex items-center gap-1 transition-all disabled:opacity-50"
+                                                        >
+                                                            {loadingFieldAction?.fieldId === field.id && loadingFieldAction.action === "summarize" ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5 text-blue-600" />}
+                                                            Shorten
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleInlineAction(field.id, field.value, "expand")}
+                                                            disabled={loadingFieldAction?.fieldId === field.id}
+                                                            className="text-[8px] font-black uppercase px-2 py-0.5 bg-white hover:bg-[var(--ocms-pink)] hover:text-white border border-black rounded shadow-[1px_1px_0px_#000] flex items-center gap-1 transition-all disabled:opacity-50"
+                                                        >
+                                                            {loadingFieldAction?.fieldId === field.id && loadingFieldAction.action === "expand" ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : "+"}
+                                                            Expand
+                                                        </button>
+                                                    </div>
                                                     <select
                                                         onChange={(e) => {
                                                             if (e.target.value) {
@@ -1060,6 +1170,35 @@ export default function ContentEditor({
                                                         onChange={(e) => onFieldChange(field.id, e.target.value)}
                                                         className="w-full bg-white border-[3px] border-black rounded-md px-3.5 py-2.5 text-xs text-black placeholder-slate-500 outline-none focus:shadow-[3px_3px_0px_var(--ocms-yellow)] transition-all font-bold"
                                                         placeholder={`Enter ${fieldLabel.toLowerCase()}...`} />
+                                                    <div className="flex flex-wrap gap-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleInlineAction(field.id, field.value, "fix-grammar")}
+                                                            disabled={loadingFieldAction?.fieldId === field.id}
+                                                            className="text-[8px] font-black uppercase px-2 py-0.5 bg-white hover:bg-[var(--ocms-yellow)] border border-black rounded shadow-[1px_1px_0px_#000] flex items-center gap-1 transition-all disabled:opacity-50"
+                                                        >
+                                                            {loadingFieldAction?.fieldId === field.id && loadingFieldAction.action === "fix-grammar" ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Sparkles className="w-2.5 h-2.5 text-yellow-600" />}
+                                                            Polish
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleInlineAction(field.id, field.value, "change-tone", "casual")}
+                                                            disabled={loadingFieldAction?.fieldId === field.id}
+                                                            className="text-[8px] font-black uppercase px-2 py-0.5 bg-white hover:bg-[var(--ocms-green)] border border-black rounded shadow-[1px_1px_0px_#000] flex items-center gap-1 transition-all disabled:opacity-50"
+                                                        >
+                                                            {loadingFieldAction?.fieldId === field.id && loadingFieldAction.action === "change-tone" ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Zap className="w-2.5 h-2.5 text-green-600" />}
+                                                            Tone
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleInlineAction(field.id, field.value, "summarize")}
+                                                            disabled={loadingFieldAction?.fieldId === field.id}
+                                                            className="text-[8px] font-black uppercase px-2 py-0.5 bg-white hover:bg-[var(--ocms-blue)] border border-black rounded shadow-[1px_1px_0px_#000] flex items-center gap-1 transition-all disabled:opacity-50"
+                                                        >
+                                                            {loadingFieldAction?.fieldId === field.id && loadingFieldAction.action === "summarize" ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5 text-blue-600" />}
+                                                            Shorten
+                                                        </button>
+                                                    </div>
                                                     <select
                                                         onChange={(e) => {
                                                             if (e.target.value) {
@@ -1574,6 +1713,26 @@ export default function ContentEditor({
                             {voiceText}
                         </div>
                     )}
+                    {/* Typed AI Prompt Input */}
+                    <div className="flex gap-1.5 mt-2.5">
+                        <input
+                            type="text"
+                            value={typedPrompt}
+                            onChange={(e) => setTypedPrompt(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") handleExecuteTypedPrompt(); }}
+                            placeholder="Type prompt (e.g. Change hero to Modern SaaS)..."
+                            className="flex-1 bg-white border-[2.5px] border-black rounded-md px-2.5 py-1.5 text-xs text-black placeholder-slate-500 outline-none focus:shadow-[2px_2px_0px_var(--ocms-orange)] font-bold"
+                        />
+                        <button
+                            type="button"
+                            onClick={handleExecuteTypedPrompt}
+                            disabled={!typedPrompt.trim() || isExecutingPrompt}
+                            className="px-3 py-1.5 bg-[var(--ocms-orange)] text-white text-xs font-black uppercase border-[2.5px] border-black rounded-md shadow-[2px_2px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px] transition-all disabled:opacity-50 flex items-center gap-1 shrink-0"
+                        >
+                            {isExecutingPrompt ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                            Run
+                        </button>
+                    </div>
                 </FeaturePanel>
 
                 {/* ════ COMPONENT STEALER ════ */}

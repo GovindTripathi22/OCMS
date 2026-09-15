@@ -81,19 +81,46 @@ export async function POST(req: NextRequest) {
             where: { userId, provider: "github" },
         });
 
-        if (!account || !account.access_token) {
-            return NextResponse.json({
-                success: true,
-                message: "[DEMO MODE] Color palette saved locally. Login with GitHub to push to the live site.",
-                colors,
-                commitUrl: "#",
-            });
+        const targetPath = cssFilePath || "src/app/globals.css";
+
+        if (!account || !account.access_token || account.access_token === "mock_token") {
+            try {
+                const fs = await import("fs/promises");
+                const path = await import("path");
+                const localWorkspacePath = process.env.LOCAL_WORKSPACE_PATH || process.cwd();
+                const localCssPath = path.resolve(localWorkspacePath, targetPath);
+
+                try {
+                    const currentCss = await fs.readFile(localCssPath, "utf-8");
+                    const updatedCss = patchCssWithThemeColors(currentCss, colors);
+                    await fs.writeFile(localCssPath, updatedCss, "utf-8");
+                    return NextResponse.json({
+                        success: true,
+                        message: `[LOCAL MOCK MODE] Theme colors updated in local ${targetPath}`,
+                        colors,
+                        commitUrl: "#",
+                    });
+                } catch {
+                    return NextResponse.json({
+                        success: true,
+                        message: "[DEMO MODE] Color palette saved locally. Login with GitHub to push to the live site.",
+                        colors,
+                        commitUrl: "#",
+                    });
+                }
+            } catch {
+                return NextResponse.json({
+                    success: true,
+                    message: "[DEMO MODE] Color palette saved locally.",
+                    colors,
+                    commitUrl: "#",
+                });
+            }
         }
 
         const octokit = new Octokit({ auth: account.access_token });
 
         // 4. Fetch current globals.css from the repo
-        const targetPath = cssFilePath || "src/app/globals.css";
         let fileData;
         try {
             const { data } = await octokit.repos.getContent({

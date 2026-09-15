@@ -135,7 +135,12 @@ export async function getAuthorizedUser(): Promise<string | null> {
 
         // Fallback to Guest user (development + explicit ALLOW_GUEST_ACCESS=true only)
         let guestUser = await prisma.user.findFirst({
-            where: { email: "guest@ocms.dev" }
+            where: {
+                OR: [
+                    { email: "guest@ocms.ai" },
+                    { email: "guest@ocms.dev" }
+                ]
+            }
         });
         if (!guestUser) {
             guestUser = await prisma.user.create({

@@ -109,12 +109,7 @@ export async function POST(req: NextRequest) {
                 }, { status: 403 });
             }
 
-            const localWorkspacePath = process.env.LOCAL_WORKSPACE_PATH;
-            if (!localWorkspacePath) {
-                return patchJson({
-                    error: "LOCAL_WORKSPACE_PATH is not set. Set it in your .env.local to enable local file sync.",
-                }, { status: 400 });
-            }
+            const localWorkspacePath = process.env.LOCAL_WORKSPACE_PATH || process.cwd();
 
             try {
                 const localRoot = path.resolve(localWorkspacePath);

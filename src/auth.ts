@@ -20,6 +20,7 @@ const baseAdapter = PrismaAdapter(prisma);
 type CreateUserParam = Parameters<NonNullable<typeof baseAdapter.createUser>>[0];
 type GetAccountParam = Parameters<NonNullable<typeof baseAdapter.getUserByAccount>>[0];
 type LinkAccountParam = Parameters<NonNullable<typeof baseAdapter.linkAccount>>[0];
+type UpdateUserParam = Parameters<NonNullable<typeof baseAdapter.updateUser>>[0];
 
 const resilientAdapter = {
     ...baseAdapter,
@@ -52,6 +53,14 @@ const resilientAdapter = {
             return null;
         }
     },
+    updateUser: async (data: UpdateUserParam) => {
+        try {
+            return await baseAdapter.updateUser!(data);
+        } catch (e) {
+            console.warn("[Auth] DB updateUser bypassed (No active DB):", e);
+            return data as unknown as ReturnType<NonNullable<typeof baseAdapter.updateUser>>;
+        }
+    },
     linkAccount: async (data: LinkAccountParam) => {
         try {
             return await baseAdapter.linkAccount!(data);
@@ -64,6 +73,7 @@ const resilientAdapter = {
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
     adapter: resilientAdapter as unknown as import("next-auth/adapters").Adapter,
+    trustHost: true,
     secret: process.env.AUTH_SECRET || "ocms_dev_fallback_secret_key_12345",
     session: {
         strategy: "jwt",

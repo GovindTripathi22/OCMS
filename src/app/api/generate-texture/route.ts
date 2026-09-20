@@ -1,14 +1,55 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuthenticatedUser } from "@/lib/auth-guards";
+import { withRateLimit } from "@/lib/ratelimit";
+import { createErrorResponse, parseJsonSafely } from "@/lib/validation";
 
 function generateProceduralSvgTexture(prompt: string): string {
     const p = prompt.toLowerCase();
     let svg = "";
 
-    if (p.includes("wood")) {
+    if (p.includes("wood") || p.includes("pine") || p.includes("timber")) {
         svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
             <rect width="256" height="256" fill="#8B5A2B"/>
             <path d="M 0 40 Q 64 20 128 40 T 256 40 M 0 100 Q 80 120 160 100 T 256 100 M 0 180 Q 50 160 128 180 T 256 180" stroke="#5C3A21" stroke-width="4" fill="none" opacity="0.6"/>
             <path d="M 0 70 Q 120 90 200 70 T 256 70 M 0 140 Q 60 120 140 140 T 256 140 M 0 220 Q 90 240 180 220 T 256 220" stroke="#3D2314" stroke-width="2" fill="none" opacity="0.4"/>
+        </svg>`;
+    } else if (p.includes("chrome") || p.includes("silver") || p.includes("mirror")) {
+        svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <linearGradient id="cr" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#e2e8f0"/>
+                    <stop offset="30%" stop-color="#94a3b8"/>
+                    <stop offset="50%" stop-color="#f8fafc"/>
+                    <stop offset="70%" stop-color="#64748b"/>
+                    <stop offset="100%" stop-color="#cbd5e1"/>
+                </linearGradient>
+            </defs>
+            <rect width="256" height="256" fill="url(#cr)"/>
+            <line x1="0" y1="0" x2="256" y2="256" stroke="#ffffff" stroke-width="1.5" opacity="0.4"/>
+        </svg>`;
+    } else if (p.includes("gold") || p.includes("brass") || p.includes("bronze")) {
+        svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <linearGradient id="gd" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#fef08a"/>
+                    <stop offset="50%" stop-color="#eab308"/>
+                    <stop offset="100%" stop-color="#ca8a04"/>
+                </linearGradient>
+            </defs>
+            <rect width="256" height="256" fill="url(#gd)"/>
+            <circle cx="128" cy="128" r="80" fill="none" stroke="#fef9c3" stroke-width="2" opacity="0.3"/>
+        </svg>`;
+    } else if (p.includes("carbon") || p.includes("fiber")) {
+        svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
+            <rect width="256" height="256" fill="#111827"/>
+            <defs>
+                <pattern id="cf" width="16" height="16" patternUnits="userSpaceOnUse">
+                    <rect width="8" height="8" fill="#1f2937"/>
+                    <rect x="8" y="8" width="8" height="8" fill="#1f2937"/>
+                    <line x1="0" y1="0" x2="16" y2="16" stroke="#374151" stroke-width="1" opacity="0.4"/>
+                </pattern>
+            </defs>
+            <rect width="256" height="256" fill="url(#cf)"/>
         </svg>`;
     } else if (p.includes("metal") || p.includes("steel") || p.includes("iron")) {
         svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
@@ -50,14 +91,9 @@ function generateProceduralSvgTexture(prompt: string): string {
                 <circle cx="70" cy="110" r="1.5" fill="none"/>
                 <circle cx="110" cy="90" r="2.5" fill="none"/>
                 <circle cx="160" cy="120" r="1.8" fill="none"/>
-                <circle cx="200" cy="85" r="2" fill="none"/>
-                <circle cx="240" cy="105" r="1.2" fill="none"/>
                 <circle cx="20" cy="160" r="2" fill="none"/>
                 <circle cx="60" cy="190" r="1.5" fill="none"/>
                 <circle cx="100" cy="170" r="2.5" fill="none"/>
-                <circle cx="150" cy="200" r="1.8" fill="none"/>
-                <circle cx="180" cy="165" r="2" fill="none"/>
-                <circle cx="220" cy="185" r="1.2" fill="none"/>
             </g>
         </svg>`;
     } else if (p.includes("brick") || p.includes("wall")) {
@@ -100,72 +136,32 @@ function generateProceduralSvgTexture(prompt: string): string {
 }
 
 export async function POST(req: NextRequest) {
-    try {
-        const { prompt } = await req.json();
-        if (!prompt) {
-            return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
-        }
+    const rateLimited = await withRateLimit("generate-texture", req, { limit: 20, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
 
-        const replicateToken = process.env.REPLICATE_API_TOKEN;
-
-        if (replicateToken) {
-            console.log(`[Texture Generator] Using Replicate to generate texture for prompt: "${prompt}"`);
-            
-            const response = await fetch("https://api.replicate.com/v1/predictions", {
-                method: "POST",
-                headers: {
-                    "Authorization": `Token ${replicateToken}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    version: process.env.REPLICATE_MODEL_VERSION || "7762fd07cf82c09fd0b1ad0910abc5e7d6940416972008442e222aace21213d8", // SDXL version hash
-                    input: {
-                        prompt: `${prompt}, seamless texture, tileable, PBR texture mapping, high-resolution`,
-                        negative_prompt: "seams, borders, cutouts, text, watermarks",
-                        width: 512,
-                        height: 512,
-                    }
-                })
-            });
-
-            if (response.ok) {
-                let prediction = await response.json();
-                const predictionId = prediction.id;
-                
-                let completed = false;
-                let attempts = 0;
-                while (!completed && attempts < 15) {
-                    await new Promise(r => setTimeout(r, 800));
-                    const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predictionId}`, {
-                        headers: {
-                            "Authorization": `Token ${replicateToken}`,
-                        }
-                    });
-                    
-                    if (pollRes.ok) {
-                        prediction = await pollRes.json();
-                        if (prediction.status === "succeeded") {
-                            completed = true;
-                            const imageUrl = prediction.output?.[0] || prediction.output;
-                            if (imageUrl) {
-                                return NextResponse.json({ textureUrl: imageUrl });
-                            }
-                        } else if (prediction.status === "failed" || prediction.status === "canceled") {
-                            break;
-                        }
-                    }
-                    attempts++;
-                }
-            }
-            console.warn("[Texture Generator] Replicate failed or timed out. Falling back to procedural generation.");
-        }
-
-        const textureUrl = generateProceduralSvgTexture(prompt);
-        return NextResponse.json({ textureUrl, isFallback: true });
-
-    } catch (err: unknown) {
-        console.error("Texture generation error:", err);
-        const errMsg = err instanceof Error ? err.message : String(err);
-        return NextResponse.json({ error: errMsg }, { status: 500 });
+    const authCheck = await requireAuthenticatedUser();
+    if (authCheck.error) {
+        return createErrorResponse(authCheck.error.code, authCheck.error.message, authCheck.error.status);
     }
+
+    const { data, error: jsonError } = await parseJsonSafely<{ prompt?: string }>(req, 10 * 1024);
+    if (jsonError) return jsonError;
+
+    const prompt = data?.prompt;
+    if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+        return createErrorResponse("INVALID_PROMPT", "Prompt is required", 400);
+    }
+
+    if (prompt.length > 200) {
+        return createErrorResponse("PROMPT_TOO_LONG", "Prompt cannot exceed 200 characters", 400);
+    }
+
+    // 100% Deterministic local procedural texture generation (zero AI runtime dependencies)
+    const textureUrl = generateProceduralSvgTexture(prompt.trim());
+
+    return NextResponse.json({
+        success: true,
+        textureUrl,
+        mode: "procedural-local",
+    });
 }

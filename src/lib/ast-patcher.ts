@@ -5,6 +5,7 @@ import {
     normalizeText,
     parseTSX,
     readJSXElementValue,
+    readStaticJSXAttribute,
     writeJSXElementValue,
     writeStaticMappedExpressionValue,
 } from "@/lib/jsx-ast-helpers";
@@ -14,6 +15,7 @@ export interface ASTChange {
     selector: string;
     newValue: string;
     oldValue?: string;
+    fieldId?: string;
     alt?: string;
     objectFit?: string;
     borderRadius?: string;
@@ -44,7 +46,19 @@ export function patchJSXWithReport(sourceCode: string, changes: ASTChange[]): Pa
     for (const change of changes) {
         if (!change.selector || change.newValue === undefined || change.newValue === null) continue;
 
-        const candidates = findJSXElements(ast, change.selector);
+        // Primary: If fieldId is provided, try finding directly by data-ocms-field
+        let candidates: ReturnType<typeof findJSXElements> = [];
+        if (change.fieldId) {
+            candidates = findJSXElements(ast, `[data-ocms-field="${change.fieldId}"]`);
+            if (!candidates.length) {
+                candidates = findJSXElements(ast, `[data-ocms-field-id="${change.fieldId}"]`);
+            }
+        }
+
+        if (!candidates.length) {
+            candidates = findJSXElements(ast, change.selector);
+        }
+
         const choice = chooseTarget(candidates, change);
         const target = choice.target;
         if (!target) {
@@ -94,6 +108,16 @@ function chooseTarget(
     change: ASTChange
 ): TargetChoice {
     if (!candidates.length) return { target: null };
+
+    // Priority 1: Check for explicit data-ocms-field binding
+    if (change.fieldId) {
+        const fieldMatch = candidates.find((candidate) => {
+            const fieldAttr = readStaticJSXAttribute(candidate.node, "data-ocms-field") ||
+                              readStaticJSXAttribute(candidate.node, "data-ocms-field-id");
+            return fieldAttr === change.fieldId;
+        });
+        if (fieldMatch) return { target: fieldMatch };
+    }
 
     if (change.oldValue) {
         const normalizedOld = normalizeText(change.oldValue);

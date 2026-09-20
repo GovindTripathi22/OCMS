@@ -1,15 +1,11 @@
 import * as cheerio from "cheerio";
 import type { SchemaField } from "@/types/schema";
-
-
 /**
  * Rigorous HTML cleaning utility for OCMS.
  *
- * Strips all non-structural elements to minimize token count before
- * sending to Gemini for schema generation.
+ * Strips all non-structural elements to create clean markup
+ * for deterministic schema generation.
  */
-
-/** Tags that contribute zero semantic value and waste tokens */
 const STRIP_TAGS = [
     "script",
     "style",
@@ -215,7 +211,7 @@ function findElementByValue($: CheerioRoot, field: SchemaField, baseUrl?: string
 }
 
 /**
- * Validates and repairs AI-generated selectors against the fetched HTML.
+ * Validates and repairs scanned selectors against the fetched HTML.
  * Invalid selectors are discarded unless the same value can be found in the DOM.
  */
 export function validateSchemaFields(

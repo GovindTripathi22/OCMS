@@ -10,6 +10,7 @@
     "test": "jest --config jest.config.js",
     "test:coverage": "jest --config jest.config.js --coverage",
     "test:patchers": "node scripts/run-patcher-smoke-tests.mjs",
+    "test:e2e": "playwright test",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -36,6 +37,7 @@
     "undici": "^7.22.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^20",
     "@types/react": "^18",

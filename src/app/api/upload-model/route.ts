@@ -1,21 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, mkdir } from "fs/promises";
+import { writeFile, mkdir, rm } from "fs/promises";
 import path from "path";
 import { prisma } from "@/lib/prisma";
-import { getAuthorizedUser } from "@/auth";
+import { requireAuthenticatedUser, requireOwnedProject } from "@/lib/auth-guards";
 import { Document, NodeIO } from "@gltf-transform/core";
 import { weld, dedup, prune, quantize } from "@gltf-transform/functions";
 import { withRateLimit } from "@/lib/ratelimit";
+import { validateMutationOrigin } from "@/lib/csrf";
+import { createErrorResponse, LIMITS } from "@/lib/validation";
 
 const ALLOWED_EXTENSIONS = [".glb", ".gltf"];
 const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 
-/**
- * Optimizes a GLB buffer to a target LOD level.
- *
- * - "medium": weld + dedup (moderate optimization, ~60-80% original quality)
- * - "low": weld + dedup + prune + quantize (aggressive optimization, ~30-50% original quality)
- */
 async function optimizeGlb(
     buffer: Uint8Array,
     level: "medium" | "low"
@@ -23,17 +19,15 @@ async function optimizeGlb(
     const io = new NodeIO();
     const document: Document = await io.readBinary(buffer);
 
-    // Medium: weld (merge identical vertices) + dedup (merge duplicate accessors)
     await document.transform(
         weld({ overwrite: true }),
-        dedup(),
+        dedup()
     );
 
     if (level === "low") {
-        // Additional aggressive optimizations for low-poly
         await document.transform(
             prune(),
-            quantize(),
+            quantize()
         );
     }
 
@@ -41,73 +35,85 @@ async function optimizeGlb(
 }
 
 export async function POST(req: NextRequest) {
+    const csrfError = validateMutationOrigin(req);
+    if (csrfError) return csrfError;
+
     const rateLimited = await withRateLimit("upload-model", req, { limit: 10, windowMs: 60_000 });
     if (rateLimited) return rateLimited;
 
-    // Local dev only. For production, replace with S3/Cloudflare R2/Supabase Storage and return a CDN URL.
-    if (process.env.VERCEL || process.env.NODE_ENV === "production") {
-        return NextResponse.json(
-            { error: "Local filesystem storage is blocked in production. Configure cloud storage (e.g. S3, Cloudflare R2, Supabase) to save 3D models." },
-            { status: 403 }
+    // In production, local storage is only allowed if STORAGE_MODE === "local"
+    const storageMode = process.env.STORAGE_MODE || (process.env.NODE_ENV === "production" ? "cloud" : "local");
+    if (storageMode !== "local" && (process.env.VERCEL || process.env.NODE_ENV === "production")) {
+        return createErrorResponse(
+            "STORAGE_UNCONFIGURED",
+            "Local filesystem storage is blocked in production. Configure cloud object storage (S3/R2) or set STORAGE_MODE=local.",
+            403
         );
     }
 
+    const authCheck = await requireAuthenticatedUser();
+    if (authCheck.error) {
+        return createErrorResponse(authCheck.error.code, authCheck.error.message, authCheck.error.status);
+    }
+    const userId = authCheck.userId;
+
+    let formData: FormData;
     try {
-        const userId = await getAuthorizedUser();
+        formData = await req.formData();
+    } catch {
+        return createErrorResponse("INVALID_FORM_DATA", "Malformed multipart form data", 400);
+    }
 
-        if (!userId) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+    const file = formData.get("model") as File | null;
+    const projectId = formData.get("projectId") as string | null;
+    const rawModelName = (formData.get("name") as string | null)?.trim() || "Untitled Model";
 
-        const formData = await req.formData();
-        const file = formData.get("model") as File | null;
-        const projectId = formData.get("projectId") as string | null;
-        const modelName = formData.get("name") as string | "Untitled Model";
+    if (!file || !projectId) {
+        return createErrorResponse("MISSING_FIELDS", "Missing file or projectId", 400);
+    }
 
-        if (!file || !projectId) {
-            return NextResponse.json(
-                { error: "Missing file or projectId" },
-                { status: 400 }
-            );
-        }
+    // Strict Tenant Isolation: Project must exist and belong to the authenticated user
+    const projectCheck = await requireOwnedProject(projectId, userId);
+    if (projectCheck.error) {
+        return createErrorResponse(projectCheck.error.code, projectCheck.error.message, projectCheck.error.status);
+    }
 
-        // Validate extension
-        const ext = path.extname(file.name).toLowerCase();
-        if (!ALLOWED_EXTENSIONS.includes(ext)) {
-            return NextResponse.json(
-                { error: "Invalid file type. Only .glb and .gltf are allowed." },
-                { status: 400 }
-            );
-        }
+    const ext = path.extname(file.name).toLowerCase();
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+        return createErrorResponse("INVALID_FILE_TYPE", "Invalid file type. Only .glb and .gltf are allowed.", 400);
+    }
 
-        // Validate size
-        if (file.size > MAX_SIZE_BYTES) {
-            return NextResponse.json(
-                { error: "File exceeds 50MB limit." },
-                { status: 400 }
-            );
-        }
+    if (file.size > MAX_SIZE_BYTES) {
+        return createErrorResponse("FILE_TOO_LARGE", "File exceeds 50MB limit.", 400);
+    }
 
-        // 1. Create Asset3D record in DB first to get ID
-        const dbAsset = await prisma.asset3D.create({
+    const modelName = rawModelName.slice(0, LIMITS.MODEL_NAME_MAX_LENGTH);
+
+    // Create DB Asset record with mandatory owned project ID
+    let dbAsset;
+    try {
+        dbAsset = await prisma.asset3D.create({
             data: {
                 name: modelName,
                 projectId: projectId,
             },
         });
+    } catch (dbErr) {
+        console.error("[Asset3D DB Create Error]:", dbErr);
+        return createErrorResponse("DB_ERROR", "Failed to initialize 3D asset record", 500);
+    }
 
-        // 2. Setup Storage
-        const uploadDir = path.join(process.cwd(), "public", "models", dbAsset.id);
+    const uploadDir = path.join(process.cwd(), "public", "models", dbAsset.id);
+
+    try {
         await mkdir(uploadDir, { recursive: true });
 
-        // 3. Save High Poly (Original)
         const buffer = Buffer.from(await file.arrayBuffer());
         const timestamp = Date.now();
         const highPolyFilename = `high_${timestamp}${ext}`;
         const highPolyPath = path.join(uploadDir, highPolyFilename);
         await writeFile(highPolyPath, buffer);
 
-        // 4. LOD Pipeline — Actual mesh optimization with fallback
         const medPolyFilename = `medium_${timestamp}${ext}`;
         const lowPolyFilename = `low_${timestamp}${ext}`;
         const medPath = path.join(uploadDir, medPolyFilename);
@@ -117,35 +123,24 @@ export async function POST(req: NextRequest) {
 
         if (ext === ".glb") {
             try {
-                // Generate medium-poly version (weld + dedup)
-                console.log(`[LOD] Generating medium-poly for asset ${dbAsset.id}...`);
                 const medBuffer = await optimizeGlb(new Uint8Array(buffer), "medium");
                 await writeFile(medPath, Buffer.from(medBuffer));
 
-                // Generate low-poly version (weld + dedup + prune + quantize)
-                console.log(`[LOD] Generating low-poly for asset ${dbAsset.id}...`);
                 const lowBuffer = await optimizeGlb(new Uint8Array(buffer), "low");
                 await writeFile(lowPath, Buffer.from(lowBuffer));
 
                 lodSuccess = true;
-                console.log(`[LOD] ✓ Pipeline complete for asset ${dbAsset.id}`);
-                console.log(`[LOD]   High: ${buffer.length} bytes`);
-                console.log(`[LOD]   Medium: ${medBuffer.length} bytes (${Math.round((medBuffer.length / buffer.length) * 100)}%)`);
-                console.log(`[LOD]   Low: ${lowBuffer.length} bytes (${Math.round((lowBuffer.length / buffer.length) * 100)}%)`);
             } catch (lodError) {
-                console.warn(`[LOD] Mesh optimization failed, falling back to copy:`, lodError);
+                console.warn("[LOD] Mesh optimization failed, using copy fallback:", lodError);
             }
         }
 
-        // Fallback: copy original if optimization failed or file is .gltf
         if (!lodSuccess) {
             const { copyFile } = await import("fs/promises");
             await copyFile(highPolyPath, medPath);
             await copyFile(highPolyPath, lowPath);
-            console.log(`[LOD] Used copy fallback for asset ${dbAsset.id} (${ext} format or optimizer error)`);
         }
 
-        // 5. Update DB with URLs
         const baseUrl = `/models/${dbAsset.id}`;
         const updatedAsset = await prisma.asset3D.update({
             where: { id: dbAsset.id },
@@ -158,6 +153,7 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json(
             {
+                success: true,
                 ...updatedAsset,
                 path: updatedAsset.urlHighPoly,
                 lodOptimized: lodSuccess,
@@ -165,10 +161,21 @@ export async function POST(req: NextRequest) {
             { status: 201 }
         );
     } catch (err) {
-        console.error("Model upload error:", err);
-        return NextResponse.json(
-            { error: "Internal server error during 3D model processing." },
-            { status: 500 }
-        );
+        console.error("Model upload processing error, rolling back partial data:", err);
+
+        // Robust cleanup of partial filesystem and database data
+        try {
+            await rm(uploadDir, { recursive: true, force: true });
+        } catch (cleanupErr) {
+            console.error("[Cleanup Error] Failed to delete upload directory:", cleanupErr);
+        }
+
+        try {
+            await prisma.asset3D.delete({ where: { id: dbAsset.id } });
+        } catch (dbDeleteErr) {
+            console.error("[Cleanup Error] Failed to delete orphan Asset3D:", dbDeleteErr);
+        }
+
+        return createErrorResponse("PROCESSING_FAILED", "Failed to process 3D model asset", 500);
     }
 }

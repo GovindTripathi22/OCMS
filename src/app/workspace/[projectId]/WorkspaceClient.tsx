@@ -17,6 +17,7 @@ interface WorkspaceClientProps {
         githubBranch: string;
         targetFilePath: string | null;
         sourceUrl: string | null;
+        schemaRevision?: number;
     };
     initialSchema: SchemaField[];
 }
@@ -50,7 +51,6 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
     const [showPermissionWizard, setShowPermissionWizard] = useState(false);
 
     const iframeRef = useRef<HTMLIFrameElement>(null);
-    const inlineEditRef = useRef(false);
     const previewNonceRef = useRef<string>("");
     if (!previewNonceRef.current) {
         previewNonceRef.current =
@@ -81,6 +81,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
     // Refs for performance optimizations
     const historyIndexRef = useRef(0);
     const isDirtyRef = useRef(false);
+    const lastEditRef = useRef<{ fieldId: string; timestamp: number } | null>(null);
 
     // Shared postMessage payload builder
     const buildChangesPayload = useCallback((fields: SchemaField[]) => {
@@ -100,13 +101,36 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
             }));
     }, []);
 
-    const pushHistory = useCallback((next: SchemaField[]) => {
-        const nextIndex = historyIndexRef.current + 1;
-        historyIndexRef.current = nextIndex;
-        setHistoryIndex(nextIndex);
-        setHistory((currentHistory) => {
-            return [...currentHistory.slice(0, nextIndex), next];
-        });
+    const pushHistory = useCallback((next: SchemaField[], fieldId?: string) => {
+        const now = Date.now();
+        const lastEdit = lastEditRef.current;
+        const canCoalesce =
+            Boolean(fieldId) &&
+            lastEdit !== null &&
+            lastEdit.fieldId === fieldId &&
+            now - lastEdit.timestamp < 500 &&
+            historyIndexRef.current > 0;
+
+        if (fieldId) {
+            lastEditRef.current = { fieldId, timestamp: now };
+        } else {
+            lastEditRef.current = null;
+        }
+
+        if (canCoalesce) {
+            setHistory((currentHistory) => {
+                const updated = [...currentHistory];
+                updated[historyIndexRef.current] = next;
+                return updated;
+            });
+        } else {
+            const nextIndex = historyIndexRef.current + 1;
+            historyIndexRef.current = nextIndex;
+            setHistoryIndex(nextIndex);
+            setHistory((currentHistory) => {
+                return [...currentHistory.slice(0, nextIndex), next];
+            });
+        }
         isDirtyRef.current = true;
     }, []);
 
@@ -194,8 +218,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
             if (!currentField || currentField.value === newValue) return prev;
 
             const next = prev.map((f) => (f.id === fieldId ? { ...f, value: newValue } : f));
-            if (!inlineEditRef.current) pushHistory(next);
-            else isDirtyRef.current = true;
+            pushHistory(next, fieldId);
             return next;
         });
     }, [pushHistory]);
@@ -224,6 +247,10 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         );
     }, [schema, iframeLoaded, buildChangesPayload, previewNonce]);
 
+    const schemaRevisionRef = useRef<number>(project.schemaRevision ?? 0);
+    const [hasConflict, setHasConflict] = useState(false);
+    const [pendingRecovery, setPendingRecovery] = useState<SchemaField[] | null>(null);
+
     // Debounced autosave effect for persisting schema edits to database
     useEffect(() => {
         if (!isDirtyRef.current) return;
@@ -233,10 +260,33 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                 const response = await fetch(`/api/projects/${project.id}/schema`, {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ schema }),
+                    body: JSON.stringify({
+                        schema,
+                        clientRevision: schemaRevisionRef.current,
+                    }),
                 });
                 if (response.ok) {
+                    const data = await response.json();
+                    if (data.schemaRevision !== undefined) {
+                        schemaRevisionRef.current = data.schemaRevision;
+                    }
                     isDirtyRef.current = false;
+                    setHasConflict(false);
+                    if (typeof window !== "undefined") {
+                        try {
+                            localStorage.removeItem(`ocms_backup_${project.id}`);
+                        } catch {
+                            // ignore
+                        }
+                    }
+                } else if (response.status === 409) {
+                    const errData = await response.json().catch(() => ({}));
+                    console.warn("[Autosave] Conflict detected:", errData.message);
+                    setHasConflict(true);
+                    showToast(
+                        `Conflict: Project schema was modified in another session (rev ${errData.serverRevision ?? "new"}). Local edits kept.`,
+                        "error"
+                    );
                 } else {
                     console.error("[Autosave] Failed to update project schema");
                 }
@@ -246,7 +296,65 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         }, 1500);
 
         return () => clearTimeout(timer);
+    }, [schema, project.id, showToast]);
+
+    // Local storage backup effect
+    useEffect(() => {
+        if (typeof window === "undefined" || !isDirtyRef.current) return;
+        try {
+            localStorage.setItem(
+                `ocms_backup_${project.id}`,
+                JSON.stringify({
+                    schema,
+                    timestamp: Date.now(),
+                    revision: schemaRevisionRef.current,
+                })
+            );
+        } catch {
+            // ignore storage full or unavailable
+        }
     }, [schema, project.id]);
+
+    // Check for local storage backup on mount
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        try {
+            const rawBackup = localStorage.getItem(`ocms_backup_${project.id}`);
+            if (rawBackup) {
+                const parsed = JSON.parse(rawBackup);
+                if (parsed?.schema && Array.isArray(parsed.schema) && parsed.schema.length > 0) {
+                    const currentSig = JSON.stringify(initialSchema);
+                    const backupSig = JSON.stringify(parsed.schema);
+                    if (currentSig !== backupSig) {
+                        setPendingRecovery(parsed.schema);
+                    }
+                }
+            }
+        } catch {
+            // ignore corrupt backup
+        }
+    }, [project.id, initialSchema]);
+
+    const handleRestoreBackup = useCallback(() => {
+        if (!pendingRecovery) return;
+        setSchema(pendingRecovery);
+        pushHistory(pendingRecovery);
+        isDirtyRef.current = true;
+        setPendingRecovery(null);
+        showToast("Restored unsaved changes from previous session.");
+    }, [pendingRecovery, pushHistory, showToast]);
+
+    const handleDiscardBackup = useCallback(() => {
+        if (typeof window !== "undefined") {
+            try {
+                localStorage.removeItem(`ocms_backup_${project.id}`);
+            } catch {
+                // ignore
+            }
+        }
+        setPendingRecovery(null);
+        showToast("Discarded saved session backup.");
+    }, [project.id, showToast]);
 
     const broadcastGhostEvent = useCallback((type: "AI_EDIT_START" | "AI_EDIT_END", selector?: string, text?: string) => {
         const iframe = iframeRef.current;
@@ -296,18 +404,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                 }
 
                 if (source === "ocms-inline-edit") {
-                    inlineEditRef.current = true;
                     handleFieldChange(fieldId, newValue);
-                    inlineEditRef.current = false;
-                    const nextIndex = historyIndexRef.current + 1;
-                    historyIndexRef.current = nextIndex;
-                    setHistoryIndex(nextIndex);
-                    setHistory((currentHistory) => {
-                        const idx = historyIndexRef.current;
-                        const base = currentHistory[idx - 1] ?? schema;
-                        const next = base.map((f) => (f.id === fieldId ? { ...f, value: newValue } : f));
-                        return [...currentHistory.slice(0, nextIndex), next];
-                    });
                 }
 
                 if (source === "ocms-inline-add-field" && event.data.field) {
@@ -413,6 +510,46 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
     return (
         <div className="fixed inset-0 pt-16 flex flex-col bg-[var(--ocms-bg)] overflow-hidden">
+            {/* Session Recovery Banner */}
+            {pendingRecovery && (
+                <div className="bg-[var(--ocms-yellow)] text-black border-b-[3px] border-black px-4 py-2 flex items-center justify-between text-xs font-bold z-40">
+                    <span className="flex items-center gap-2">
+                        <span>⚠️</span>
+                        <span>Unsaved edits found from a previous session ({pendingRecovery.length} field{pendingRecovery.length === 1 ? "" : "s"}).</span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={handleRestoreBackup}
+                            className="bg-black text-white px-3 py-1 rounded text-xs font-black uppercase hover:bg-slate-800 shadow-[2px_2px_0px_#000]"
+                        >
+                            Restore Edits
+                        </button>
+                        <button
+                            onClick={handleDiscardBackup}
+                            className="bg-white text-black border border-black px-3 py-1 rounded text-xs font-bold uppercase hover:bg-slate-100"
+                        >
+                            Discard
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Revision Conflict Banner */}
+            {hasConflict && (
+                <div className="bg-[var(--ocms-rose)] text-black border-b-[3px] border-black px-4 py-2 flex items-center justify-between text-xs font-bold z-40">
+                    <span className="flex items-center gap-2">
+                        <span>🚨</span>
+                        <span>Revision conflict: Server schema was modified in another session. Local edits are held safely in your browser.</span>
+                    </span>
+                    <button
+                        onClick={() => window.location.reload()}
+                        className="bg-black text-white px-3 py-1 rounded text-xs font-black uppercase hover:bg-slate-800 shadow-[2px_2px_0px_#000]"
+                    >
+                        Reload Page
+                    </button>
+                </div>
+            )}
+
             <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 lg:p-4 lg:gap-4 min-h-0">
                 {/* ─── Sidebar Editor Panel ─── */}
                 <div className="w-full lg:w-[340px] xl:w-[380px] h-[45vh] lg:h-full min-h-0 border-[3px] border-black lg:rounded-md lg:shadow-[5px_5px_0px_#000] bg-white flex flex-col transition-all duration-300 hover:shadow-[6px_6px_0px_var(--ocms-orange)] hover:translate-x-[-2px] hover:translate-y-[-2px]">

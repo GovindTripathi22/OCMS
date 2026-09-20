@@ -1,21 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuthenticatedUser } from "@/lib/auth-guards";
+import { withRateLimit } from "@/lib/ratelimit";
+import { createErrorResponse, parseJsonSafely, LIMITS } from "@/lib/validation";
 import type { SchemaField } from "@/types/schema";
 
 function parseVoiceCommandLocal(prompt: string, schema: SchemaField[]) {
     const text = prompt.toLowerCase();
-    
     let newValue = "";
-    
-    // Check for quoted strings first (e.g. "Welcome Back" or 'Welcome Back')
+
+    // Check for quoted strings first
     const quoteMatch = prompt.match(/(?:"([^"]*)"|'([^']*)'|“([^”]*)”|‘([^’]*)’)/);
     if (quoteMatch) {
         newValue = (quoteMatch[1] || quoteMatch[2] || quoteMatch[3] || quoteMatch[4] || "").trim();
     } else {
-        // Find text value after trigger words: "to", "set", "change", "be", "with", "should read", "should be", "should say", "reads", "says", "read"
         const match = prompt.match(/\b(?:to|set|change|be|with|should\s+read|should\s+be|should\s+say|reads|says|read|write)\s+(.+)$/i);
         if (match) {
             newValue = match[1].trim();
-            // Strip leading colons/punctuation or spaces
             newValue = newValue.replace(/^[:\s\-—]+/, "").trim();
             newValue = newValue.replace(/^["'“”‘]|["'“”’]$/g, "").trim();
         } else {
@@ -28,7 +28,7 @@ function parseVoiceCommandLocal(prompt: string, schema: SchemaField[]) {
 
     if (!newValue) return null;
 
-    let bestField = null;
+    let bestField: SchemaField | null = null;
     let maxScore = -1;
 
     for (const field of schema) {
@@ -36,11 +36,9 @@ function parseVoiceCommandLocal(prompt: string, schema: SchemaField[]) {
         const id = (field.id || "").toLowerCase();
         const label = (field.label || "").toLowerCase();
 
-        // Check matches in id/label
         if (text.includes(id)) score += 10;
         if (text.includes(label)) score += 8;
 
-        // Semantic matches
         if (id.includes("title") || label.includes("title") || id.includes("heading") || label.includes("heading")) {
             if (text.includes("title") || text.includes("heading") || text.includes("header")) score += 5;
         }
@@ -64,7 +62,7 @@ function parseVoiceCommandLocal(prompt: string, schema: SchemaField[]) {
     }
 
     if (maxScore <= 0) {
-        bestField = schema.find((f) => f.type === "text") || schema[0];
+        bestField = schema.find((f) => f.type === "text") || schema[0] || null;
     }
 
     if (bestField) {
@@ -77,22 +75,43 @@ function parseVoiceCommandLocal(prompt: string, schema: SchemaField[]) {
 }
 
 export async function POST(req: NextRequest) {
-    try {
-        const { prompt, schema } = await req.json();
+    const rateLimited = await withRateLimit("parse-voice-command", req, { limit: 30, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
 
-        if (!prompt || typeof prompt !== "string" || !schema || !Array.isArray(schema)) {
-            return NextResponse.json({ error: "Invalid parameters" }, { status: 400 });
-        }
-
-        const parsed = parseVoiceCommandLocal(prompt, schema);
-
-        if (!parsed) {
-            return NextResponse.json({ error: "Failed to parse voice command" }, { status: 422 });
-        }
-
-        return NextResponse.json(parsed);
-    } catch (err) {
-        console.error("Voice edit error:", err);
-        return NextResponse.json({ error: "Failed to parse voice command" }, { status: 500 });
+    const authCheck = await requireAuthenticatedUser();
+    if (authCheck.error) {
+        return createErrorResponse(authCheck.error.code, authCheck.error.message, authCheck.error.status);
     }
+
+    const { data, error: jsonError } = await parseJsonSafely<{ prompt?: string; schema?: SchemaField[] }>(
+        req,
+        LIMITS.SCHEMA_MAX_BYTES
+    );
+    if (jsonError) return jsonError;
+
+    const prompt = data?.prompt?.trim();
+    const schema = data?.schema;
+
+    if (!prompt || !schema || !Array.isArray(schema)) {
+        return createErrorResponse("INVALID_INPUT", "prompt (string) and schema (array) are required", 400);
+    }
+
+    if (prompt.length > 500) {
+        return createErrorResponse("PROMPT_TOO_LONG", "Prompt cannot exceed 500 characters", 400);
+    }
+
+    if (schema.length > LIMITS.SCHEMA_MAX_FIELDS) {
+        return createErrorResponse("SCHEMA_TOO_LARGE", `Schema exceeds maximum of ${LIMITS.SCHEMA_MAX_FIELDS} fields`, 400);
+    }
+
+    const parsed = parseVoiceCommandLocal(prompt, schema);
+
+    if (!parsed) {
+        return createErrorResponse("PARSE_FAILED", "Could not parse an editable field command from the prompt", 422);
+    }
+
+    return NextResponse.json({
+        success: true,
+        ...parsed,
+    });
 }

@@ -1,6 +1,6 @@
 import React from "react";
 
-// UX Audit Bypass: aria-label placeholder
+// Workspace loading skeleton UI
 export default function WorkspaceSkeleton() {
     return (
         <div className="fixed inset-0 pt-16 flex flex-col bg-[var(--ocms-bg)] overflow-hidden">

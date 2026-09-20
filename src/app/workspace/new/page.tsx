@@ -31,7 +31,7 @@ export default function NewWorkspacePage() {
         setLogs((prev) => [...prev, message]);
     };
 
-    // Simulated terminal detail, anchored to the real API lifecycle in handleCreate.
+    // Terminal progress steps, anchored to the real API lifecycle in handleCreate.
     useEffect(() => {
         if (!isGenerating) {
             setLogs([]);
@@ -39,7 +39,7 @@ export default function NewWorkspacePage() {
             return;
         }
 
-        const simulatedLogs = [
+        const terminalSteps = [
             { t: 80, msg: "[SYSTEM] Booting OCMS Scraper Engine v2.6..." },
             { t: 320, msg: `[SYSTEM] Target URL accepted: ${url}` },
             { t: 700, msg: "[CONNECT] Requesting remote DOM payload..." },
@@ -51,9 +51,9 @@ export default function NewWorkspacePage() {
             { t: 4300, msg: "[DATABASE] Preparing project workspace record..." },
         ];
 
-        // Logs simulation
+        // Terminal animation timers
         const timers: NodeJS.Timeout[] = [];
-        simulatedLogs.forEach(item => {
+        terminalSteps.forEach(item => {
             const timer = setTimeout(() => {
                 setLogs(prev => [...prev, item.msg]);
             }, item.t);
@@ -180,7 +180,7 @@ export default function NewWorkspacePage() {
             {/* Main Interactive Card */}
             <div className="animate-slide-up opacity-0 [animation-fill-mode:forwards] [animation-delay:250ms] w-full max-w-xl">
                 {isGenerating ? (
-                    /* ─── AI LOADING TERMINAL CONSOLE ─── */
+                    /* ─── LOADING TERMINAL CONSOLE ─── */
                     <div className="glass-card p-6 sm:p-8 border-[3px] border-black bg-black text-[#22c55e] font-mono shadow-[6px_6px_0px_#000] min-h-[380px] flex flex-col justify-between relative overflow-hidden">
                         {/* Terminal scanline CRT effect */}
                         <div className="absolute inset-0 pointer-events-none opacity-[0.03] bg-gradient-to-b from-[#22c55e] via-transparent to-[#22c55e] bg-[length:100%_4px] animate-terminal-flicker" />

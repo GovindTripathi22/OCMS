@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuthenticatedUser } from "@/lib/auth-guards";
+import { withRateLimit } from "@/lib/ratelimit";
+import { createErrorResponse, parseJsonSafely, LIMITS } from "@/lib/validation";
 
 function localSummarize(text: string): string {
     const trimmed = text.trim();
     if (trimmed.length <= 60) return trimmed;
-    
+
     const sentences = trimmed.split(/(?<=[.!?])\s+/);
     if (sentences.length > 1) {
         const first = sentences[0];
         if (first.length >= 20) return first;
         return first + " " + sentences[1];
     }
-    
+
     const words = trimmed.split(/\s+/);
     if (words.length > 12) {
         return words.slice(0, 12).join(" ") + "...";
@@ -20,14 +23,11 @@ function localSummarize(text: string): string {
 
 function localChangeTone(text: string): string {
     const replacements: Record<string, string> = {
-        // Multi-word phrases first to prevent partial word collision
         "you can": "you are empowered to",
         "we provide": "we deliver",
         "we have": "we offer",
         "want to": "aim to",
         "need to": "aspire to",
-        
-        // Single words
         "build": "craft",
         "making": "forging",
         "make": "craft",
@@ -89,25 +89,42 @@ function localChangeTone(text: string): string {
 }
 
 export async function POST(req: NextRequest) {
-    try {
-        const { action, value } = await req.json();
+    const rateLimited = await withRateLimit("inline-text-action", req, { limit: 40, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
 
-        if (typeof value !== "string") {
-            return NextResponse.json({ error: "Invalid text value" }, { status: 400 });
-        }
-
-        let result = value;
-        if (action === "summarize") {
-            result = localSummarize(value);
-        } else if (action === "change-tone") {
-            result = localChangeTone(value);
-        } else {
-            return NextResponse.json({ error: "Invalid inline action" }, { status: 400 });
-        }
-
-        return NextResponse.json({ value: result.trim() });
-    } catch (err) {
-        console.error("Inline action error:", err);
-        return NextResponse.json({ error: "Failed to run inline action" }, { status: 500 });
+    const authCheck = await requireAuthenticatedUser();
+    if (authCheck.error) {
+        return createErrorResponse(authCheck.error.code, authCheck.error.message, authCheck.error.status);
     }
+
+    const { data, error: jsonError } = await parseJsonSafely<{ action?: string; value?: string }>(
+        req,
+        LIMITS.TEXT_VALUE_MAX_LENGTH + 1024
+    );
+    if (jsonError) return jsonError;
+
+    const action = data?.action?.trim();
+    const value = data?.value;
+
+    if (!action || typeof value !== "string") {
+        return createErrorResponse("INVALID_INPUT", "action and string value are required", 400);
+    }
+
+    if (value.length > LIMITS.TEXT_VALUE_MAX_LENGTH) {
+        return createErrorResponse("VALUE_TOO_LONG", "Text value exceeds maximum allowed length", 400);
+    }
+
+    let result = value;
+    if (action === "summarize") {
+        result = localSummarize(value);
+    } else if (action === "change-tone") {
+        result = localChangeTone(value);
+    } else {
+        return createErrorResponse("INVALID_ACTION", `Unsupported action "${action}". Allowed: summarize, change-tone`, 400);
+    }
+
+    return NextResponse.json({
+        success: true,
+        value: result.trim(),
+    });
 }

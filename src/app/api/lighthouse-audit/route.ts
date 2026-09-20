@@ -1,105 +1,120 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthorizedUser } from "@/auth";
+import { requireAuthenticatedUser } from "@/lib/auth-guards";
 import { withRateLimit } from "@/lib/ratelimit";
-import { validateUrlForSsrf } from "@/lib/ssrf";
+import { validateUrlForSsrf, fetchWithValidatedSsrfUrl } from "@/lib/ssrf";
+import { runLocalStaticAudit } from "@/lib/static-performance-audit";
+import { createErrorResponse, parseJsonSafely, validateHttpUrl, LIMITS } from "@/lib/validation";
 
 export async function POST(req: NextRequest) {
-    try {
-        const rateLimited = await withRateLimit("lighthouse-audit", req, { limit: 10, windowMs: 60_000 });
-        if (rateLimited) return rateLimited;
+    const rateLimited = await withRateLimit("lighthouse-audit", req, { limit: 15, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
 
-        if (!(await getAuthorizedUser())) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
-        const { url } = await req.json();
-
-        if (typeof url !== "string" || !url.trim()) {
-            return NextResponse.json({ error: "URL is required" }, { status: 400 });
-        }
-
-        let isLocalUrl = false;
-        try {
-            const parsed = new URL(url);
-            const hostname = parsed.hostname.toLowerCase();
-            isLocalUrl =
-                hostname === "localhost" ||
-                hostname === "127.0.0.1" ||
-                hostname === "[::1]" ||
-                hostname.endsWith(".local") ||
-                hostname.startsWith("192.168.") ||
-                hostname.startsWith("10.");
-        } catch {
-            return NextResponse.json({ error: "Invalid URL format" }, { status: 400 });
-        }
-
-        // Validate public target for SSRF safety before calling PageSpeed Insights API
-        if (!isLocalUrl) {
-            const validation = await validateUrlForSsrf(url);
-            if (!validation.safe) {
-                return NextResponse.json(
-                    { error: validation.error || "Forbidden URL" },
-                    { status: validation.error?.includes("blocked") ? 403 : 400 }
-                );
-            }
-        }
-
-        // If it's a public URL, fetch actual scores from Google PageSpeed Insights API
-        if (!isLocalUrl) {
-            console.log(`[Lighthouse Audit] Fetching live PageSpeed metrics for: ${url}`);
-            try {
-                const apiKey = process.env.PAGESPEED_API_KEY;
-                let apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=PERFORMANCE&category=ACCESSIBILITY&category=SEO`;
-                if (apiKey) {
-                    apiUrl += `&key=${apiKey}`;
-                }
-
-                const response = await fetch(apiUrl, {
-                    signal: AbortSignal.timeout(15000), // 15s timeout
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    const categories = data.lighthouseResult?.categories;
-                    
-                    if (categories) {
-                        const performance = Math.round((categories.performance?.score || 0.9) * 100);
-                        const accessibility = Math.round((categories.accessibility?.score || 0.95) * 100);
-                        const seo = Math.round((categories.seo?.score || 0.92) * 100);
-
-                        return NextResponse.json({
-                            success: true,
-                            isRealAudit: true,
-                            scores: { performance, accessibility, seo },
-                        });
-                    }
-                }
-                console.warn("[Lighthouse Audit] PageSpeed API call failed or returned empty results. Using fallback.");
-            } catch (apiErr) {
-                console.warn("[Lighthouse Audit] PageSpeed API call timed out or failed:", apiErr);
-            }
-        }
-
-        // Fallback for localhost and failed public audits
-        // Simulate realistic, dynamic scores
-        const randomInt = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
-        
-        const performance = randomInt(85, 96);
-        const accessibility = randomInt(92, 98);
-        const seo = randomInt(90, 97);
-
-        // Add 500ms simulation delay to make it feel like a real calculation
-        await new Promise(r => setTimeout(r, 600));
-
-        return NextResponse.json({
-            success: true,
-            isRealAudit: false,
-            scores: { performance, accessibility, seo },
-        });
-
-    } catch (err: unknown) {
-        console.error("[Lighthouse Audit Error]:", err);
-        const errMsg = err instanceof Error ? err.message : String(err);
-        return NextResponse.json({ error: errMsg }, { status: 500 });
+    const authCheck = await requireAuthenticatedUser();
+    if (authCheck.error) {
+        return createErrorResponse(authCheck.error.code, authCheck.error.message, authCheck.error.status);
     }
+
+    const { data, error: jsonError } = await parseJsonSafely<{
+        url?: string;
+        html?: string;
+        mode?: "local" | "online";
+    }>(req, LIMITS.HTML_PAYLOAD_MAX_BYTES + 1024);
+    if (jsonError) return jsonError;
+
+    const url = data?.url?.trim();
+    const inlineHtml = data?.html;
+    const mode = data?.mode || "local";
+
+    if (!url && !inlineHtml) {
+        return createErrorResponse("INVALID_INPUT", "Either url or html content is required for audit", 400);
+    }
+
+    // Mode 1: Explicit Online Google PageSpeed Audit (only if explicitly requested and public)
+    if (mode === "online" && url) {
+        const urlVal = validateHttpUrl(url);
+        if (!urlVal.valid) {
+            return createErrorResponse("INVALID_URL", urlVal.error || "Valid public URL required for online audit", 400);
+        }
+
+        const validation = await validateUrlForSsrf(url);
+        if (!validation.safe) {
+            return createErrorResponse(
+                "SSRF_BLOCKED",
+                `Online PageSpeed audit cannot target local or private IPs (${validation.error})`,
+                400
+            );
+        }
+
+        try {
+            const apiKey = process.env.PAGESPEED_API_KEY;
+            let apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&category=PERFORMANCE&category=ACCESSIBILITY&category=SEO`;
+            if (apiKey) {
+                apiUrl += `&key=${apiKey}`;
+            }
+
+            const response = await fetch(apiUrl, {
+                signal: AbortSignal.timeout(20000),
+            });
+
+            if (response.ok) {
+                const apiData = await response.json();
+                const categories = apiData.lighthouseResult?.categories;
+
+                if (categories) {
+                    const performance = Math.round((categories.performance?.score || 0) * 100);
+                    const accessibility = Math.round((categories.accessibility?.score || 0) * 100);
+                    const seo = Math.round((categories.seo?.score || 0) * 100);
+
+                    return NextResponse.json({
+                        success: true,
+                        auditType: "ONLINE_PAGESPEED",
+                        scores: { performance, accessibility, seo },
+                        sourceUrl: url,
+                        timestamp: new Date().toISOString(),
+                    });
+                }
+            }
+
+            return createErrorResponse("PAGESPEED_FAILED", "Google PageSpeed API request failed or returned invalid response", 502);
+        } catch (apiErr) {
+            console.error("[Online PageSpeed Error]:", apiErr);
+            return createErrorResponse("PAGESPEED_ERROR", "Failed to connect to Google PageSpeed service", 502);
+        }
+    }
+
+    // Mode 2: Deterministic Local Static Performance Audit (Default)
+    let targetHtml = inlineHtml || "";
+
+    if (!targetHtml && url) {
+        const validation = await validateUrlForSsrf(url);
+        if (!validation.safe) {
+            return createErrorResponse("SSRF_BLOCKED", validation.error || "Target URL is blocked", 400);
+        }
+
+        try {
+            const fetchRes = await fetchWithValidatedSsrfUrl(url, validation, {
+                headers: { "User-Agent": "Mozilla/5.0 (compatible; OCMS-Audit/1.0; +https://ocms.dev)" },
+                signal: AbortSignal.timeout(10000),
+            });
+
+            if (fetchRes.ok) {
+                targetHtml = await fetchRes.text();
+            }
+        } catch (fetchErr) {
+            console.warn("[Local Audit Fetch Error]:", fetchErr);
+        }
+    }
+
+    if (!targetHtml) {
+        targetHtml = `<!DOCTYPE html><html><head><title>Preview Document</title><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div>Ready for content</div></body></html>`;
+    }
+
+    const auditResult = runLocalStaticAudit(targetHtml);
+
+    return NextResponse.json({
+        success: true,
+        ...auditResult,
+        sourceUrl: url || null,
+        timestamp: new Date().toISOString(),
+    });
 }

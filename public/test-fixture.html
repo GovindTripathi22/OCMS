@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OCMS Test Fixture</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 2rem; background: #fafafa; color: #111; }
+    .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 2rem; border: 3px solid #000; box-shadow: 4px 4px 0 #000; }
+    h1 { font-size: 2.5rem; margin-top: 0; }
+    p { font-size: 1.1rem; line-height: 1.6; }
+    .cta { display: inline-block; padding: 0.75rem 1.5rem; background: #ffff00; color: #000; border: 2px solid #000; font-weight: bold; text-decoration: none; box-shadow: 2px 2px 0 #000; }
+    img { max-width: 100%; height: auto; border: 2px solid #000; margin: 1rem 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 id="hero-title" data-ocms-field="hero-title">Deterministic Headless CMS</h1>
+    <p id="hero-desc" data-ocms-field="hero-desc">Edit static sites visually with <strong>guaranteed AST safety</strong> and zero external AI dependencies.</p>
+    <img id="hero-img" data-ocms-field="hero-img" src="/globe.svg" alt="Test Globe Graphic" width="200" height="200" />
+    <br/>
+    <a id="hero-cta" data-ocms-field="hero-cta" href="https://example.com" class="cta">Launch Workspace</a>
+  </div>
+  <script src="/ocms-receiver.js" data-allowed-origin="*"></script>
+</body>
+</html>

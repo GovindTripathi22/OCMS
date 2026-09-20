@@ -1,5 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuthenticatedUser } from "@/lib/auth-guards";
+import { withRateLimit } from "@/lib/ratelimit";
+import { createErrorResponse, parseJsonSafely, LIMITS } from "@/lib/validation";
 import type { SchemaField } from "@/types/schema";
+
+const SUPPORTED_TONES = new Set([
+    "gen-z",
+    "corporate",
+    "casual",
+    "luxury",
+    "minimalist",
+    "playful",
+    "technical",
+]);
 
 function localAbRewrite(schema: SchemaField[], target: string): SchemaField[] {
     const tones: Record<string, {
@@ -9,26 +22,26 @@ function localAbRewrite(schema: SchemaField[], target: string): SchemaField[] {
         general: (val: string) => string;
     }> = {
         "gen-z": {
-            headline: "No cap, the next-gen web platform is here. It's bussin'.",
-            subtitle: "Main character energy for your content. Edit directly in the page without boomer lag. 100% free.",
-            button: "LAUNCH INSTANTLY 🚀",
-            general: (val) => val + " (fr fr, no cap)"
+            headline: "The next-gen web platform is live and verified.",
+            subtitle: "Direct local-first visual editing with zero lag. Free and open source.",
+            button: "LAUNCH INSTANTLY",
+            general: (val) => val
         },
         "corporate": {
             headline: "Optimize your enterprise digital value chain.",
-            subtitle: "Achieve operational excellence and synergistic workflows with our industry-leading headless experience platform.",
+            subtitle: "Achieve operational excellence and synergistic workflows with our headless platform.",
             button: "SCHEDULE DEMO",
-            general: (val) => "Leveraging " + val
+            general: (val) => "Enterprise " + val
         },
         "casual": {
-            headline: "Hey there! We make editing websites super easy.",
-            subtitle: "No complicated systems, no headaches. Just click and edit whatever you want, right in place.",
-            button: "Let's Get Started!",
-            general: (val) => val + " - simple as that!"
+            headline: "Editing websites is simple and fast.",
+            subtitle: "No complicated systems or headaches. Just click and edit whatever you want.",
+            button: "Get Started",
+            general: (val) => val
         },
         "luxury": {
             headline: "Exquisite digital experiences. Curated for you.",
-            subtitle: "Indulge in premium content orchestration. Tailored craftsmanship meets ultimate performance.",
+            subtitle: "Indulge in premium content orchestration. Tailored craftsmanship meets performance.",
             button: "ENTER EXPERIENCE",
             general: (val) => "Bespoke " + val
         },
@@ -39,16 +52,16 @@ function localAbRewrite(schema: SchemaField[], target: string): SchemaField[] {
             general: (val) => val
         },
         "playful": {
-            headline: "A site so fine, you'll want to edit all the time! 🥳",
-            subtitle: "Wrangling content doesn't have to be a drag. Click anything, swap in a cool 3D model, and let's play!",
-            button: "GIVE IT A SPIN! ✨",
-            general: (val) => val + " 🎉"
+            headline: "Delightful content editing made effortless!",
+            subtitle: "Click anything, swap in a 3D model, and see updates instantly.",
+            button: "EXPLORE NOW",
+            general: (val) => val
         },
         "technical": {
             headline: "A local-first, zero-dependency content runtime.",
-            subtitle: "Zero API latency, AST-driven JSX code patching, and custom PBR model variant pipeline.",
+            subtitle: "Zero API latency, AST-driven JSX code patching, and deterministic PBR model pipelines.",
             button: "INITIALIZE CLIENT",
-            general: (val) => "Compile-time " + val.charAt(0).toLowerCase() + val.slice(1)
+            general: (val) => "Deterministic " + val.charAt(0).toLowerCase() + val.slice(1)
         }
     };
 
@@ -56,11 +69,11 @@ function localAbRewrite(schema: SchemaField[], target: string): SchemaField[] {
 
     return schema.map((field) => {
         if (field.type !== "text" && field.type !== "link") return field;
-        if (!field.value || field.value.trim().length < 10) return field;
-        
+        if (!field.value || field.value.trim().length < 5) return field;
+
         let newValue = field.value;
         const id = (field.id || "").toLowerCase();
-        
+
         if (id.includes("title") || id.includes("headline") || id.includes("main")) {
             newValue = tone.headline;
         } else if (id.includes("subtitle") || id.includes("description") || id.includes("desc") || id.includes("para")) {
@@ -76,18 +89,43 @@ function localAbRewrite(schema: SchemaField[], target: string): SchemaField[] {
 }
 
 export async function POST(req: NextRequest) {
-    try {
-        const { schema, targetAudience } = await req.json();
+    const rateLimited = await withRateLimit("generate-ab-variant", req, { limit: 20, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
 
-        if (!schema || !targetAudience) {
-            return NextResponse.json({ error: "schema and targetAudience are required" }, { status: 400 });
-        }
-
-        const newSchema = localAbRewrite(schema, targetAudience);
-
-        return NextResponse.json({ schema: newSchema });
-    } catch (err) {
-        console.error("A/B Variant generation error:", err);
-        return NextResponse.json({ error: "Failed to generate variant" }, { status: 500 });
+    const authCheck = await requireAuthenticatedUser();
+    if (authCheck.error) {
+        return createErrorResponse(authCheck.error.code, authCheck.error.message, authCheck.error.status);
     }
+
+    const { data, error: jsonError } = await parseJsonSafely<{ schema?: SchemaField[]; targetAudience?: string }>(
+        req,
+        LIMITS.SCHEMA_MAX_BYTES
+    );
+    if (jsonError) return jsonError;
+
+    const schema = data?.schema;
+    const targetAudience = data?.targetAudience?.trim().toLowerCase();
+
+    if (!schema || !Array.isArray(schema) || !targetAudience) {
+        return createErrorResponse("INVALID_INPUT", "schema (array) and targetAudience (string) are required", 400);
+    }
+
+    if (schema.length > LIMITS.SCHEMA_MAX_FIELDS) {
+        return createErrorResponse("SCHEMA_TOO_LARGE", `Schema exceeds maximum of ${LIMITS.SCHEMA_MAX_FIELDS} fields`, 400);
+    }
+
+    if (!SUPPORTED_TONES.has(targetAudience)) {
+        return createErrorResponse(
+            "UNSUPPORTED_TONE",
+            `targetAudience must be one of: ${Array.from(SUPPORTED_TONES).join(", ")}`,
+            400
+        );
+    }
+
+    const newSchema = localAbRewrite(schema, targetAudience);
+
+    return NextResponse.json({
+        success: true,
+        schema: newSchema,
+    });
 }

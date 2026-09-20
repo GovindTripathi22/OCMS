@@ -69,6 +69,7 @@ export default async function WorkspacePage({
         githubBranch: project.githubBranch || "main",
         targetFilePath: project.targetFilePath ?? null,
         sourceUrl: project.sourceUrl ?? null,
+        schemaRevision: project.schemaRevision ?? 0,
     };
 
     return (

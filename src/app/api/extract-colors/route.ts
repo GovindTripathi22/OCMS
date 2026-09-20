@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuthenticatedUser } from "@/lib/auth-guards";
+import { withRateLimit } from "@/lib/ratelimit";
+import { createErrorResponse, parseJsonSafely } from "@/lib/validation";
 
 // ---------------------------------------------------------------------------
 // Curated palette map – ~12 keyword themes, each mapping to a 5-color palette
@@ -75,20 +78,14 @@ const CURATED_PALETTES: Record<string, string[]> = {
     party:         ["#0D0D0D", "#FF00FF", "#00FF41", "#FFD700", "#FFFFFF"],
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Simple deterministic string hash (djb2). */
 function hashString(str: string): number {
     let hash = 5381;
     for (let i = 0; i < str.length; i++) {
         hash = (hash * 33) ^ str.charCodeAt(i);
     }
-    return hash >>> 0; // ensure unsigned 32-bit
+    return hash >>> 0;
 }
 
-/** Convert an HSL color (h: 0-360, s/l: 0-100) to a hex string. */
 function hslToHex(h: number, s: number, l: number): string {
     const sNorm = s / 100;
     const lNorm = l / 100;
@@ -112,39 +109,23 @@ function hslToHex(h: number, s: number, l: number): string {
     return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
 }
 
-/**
- * Generate a 5-color harmonious palette from an HSL base hue.
- * Produces: background, primary, secondary, accent, text.
- */
 function generateHarmonyPalette(hue: number): string[] {
     return [
-        hslToHex(hue, 10, 96),          // very light background
-        hslToHex(hue, 70, 45),          // saturated primary
-        hslToHex((hue + 30) % 360, 50, 60),  // analogous secondary
-        hslToHex((hue + 180) % 360, 65, 50), // complementary accent
-        hslToHex(hue, 15, 15),          // dark text
+        hslToHex(hue, 10, 96),
+        hslToHex(hue, 70, 45),
+        hslToHex((hue + 30) % 360, 50, 60),
+        hslToHex((hue + 180) % 360, 65, 50),
+        hslToHex(hue, 15, 15),
     ];
 }
 
-// ---------------------------------------------------------------------------
-// Palette matcher
-// ---------------------------------------------------------------------------
-
-/**
- * Score each curated palette keyword against the description and return the
- * best match.  Falls back to an HSL color-harmony generator seeded by the
- * description hash when no keyword matches at all.
- */
 function matchPalette(description: string): string[] {
     const lower = description.toLowerCase();
-
-    // Track the best matching palette and its score (unique palette identity)
     const paletteScores = new Map<string, number>();
     let bestKey = "";
     let bestScore = 0;
 
     for (const keyword of Object.keys(CURATED_PALETTES)) {
-        // Check whether the keyword appears as a whole word (or substring) in the description
         const regex = new RegExp(`\\b${keyword}\\b`, "i");
         const exactMatch = regex.test(lower);
         const substringMatch = lower.includes(keyword);
@@ -152,8 +133,6 @@ function matchPalette(description: string): string[] {
         const score = exactMatch ? 2 : substringMatch ? 1 : 0;
 
         if (score > 0) {
-            // Accumulate scores per palette identity (the palette array ref is
-            // the same for synonyms, so we use the stringified value as key).
             const paletteKey = CURATED_PALETTES[keyword].join(",");
             const current = (paletteScores.get(paletteKey) ?? 0) + score;
             paletteScores.set(paletteKey, current);
@@ -169,39 +148,35 @@ function matchPalette(description: string): string[] {
         return CURATED_PALETTES[bestKey];
     }
 
-    // Ultimate fallback – derive a hue from the description hash and build a
-    // harmonious 5-color palette.
     const hue = hashString(lower) % 360;
     return generateHarmonyPalette(hue);
 }
 
-// ---------------------------------------------------------------------------
-// Route handler
-// ---------------------------------------------------------------------------
-
-/**
- * POST /api/extract-colors
- *
- * Generates a 5-color palette based on a brand name or description using
- * deterministic local keyword matching and HSL color-harmony generation.
- */
 export async function POST(req: NextRequest) {
-    try {
-        const { brandDescription } = await req.json();
+    const rateLimited = await withRateLimit("extract-colors", req, { limit: 30, windowMs: 60_000 });
+    if (rateLimited) return rateLimited;
 
-        if (!brandDescription) {
-            return NextResponse.json({ error: "brandDescription is required" }, { status: 400 });
-        }
-
-        const colors = matchPalette(brandDescription);
-
-        if (!Array.isArray(colors) || colors.length !== 5) {
-            throw new Error("Invalid color array produced by palette matcher.");
-        }
-
-        return NextResponse.json({ colors });
-    } catch (err) {
-        console.error("Color extraction error:", err);
-        return NextResponse.json({ error: "Failed to extract colors" }, { status: 500 });
+    const authCheck = await requireAuthenticatedUser();
+    if (authCheck.error) {
+        return createErrorResponse(authCheck.error.code, authCheck.error.message, authCheck.error.status);
     }
+
+    const { data, error: jsonError } = await parseJsonSafely<{ brandDescription?: string }>(req, 10 * 1024);
+    if (jsonError) return jsonError;
+
+    const brandDescription = data?.brandDescription?.trim();
+    if (!brandDescription) {
+        return createErrorResponse("INVALID_INPUT", "brandDescription is required", 400);
+    }
+
+    if (brandDescription.length > 500) {
+        return createErrorResponse("INPUT_TOO_LONG", "brandDescription cannot exceed 500 characters", 400);
+    }
+
+    const colors = matchPalette(brandDescription);
+
+    return NextResponse.json({
+        success: true,
+        colors,
+    });
 }

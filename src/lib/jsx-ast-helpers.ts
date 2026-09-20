@@ -10,10 +10,17 @@ export interface JSXWriteOptions {
     borderRadius?: string;
 }
 
+export interface AttributeSelector {
+    name: string;
+    value?: string;
+    operator?: string;
+}
+
 interface SelectorPart {
     tag?: string;
     id?: string;
     classes: string[];
+    attributes: AttributeSelector[];
     nthOfType?: number;
     combinator?: "child" | "descendant";
 }
@@ -295,7 +302,7 @@ function parseSelector(selector: string): SelectorPart[] {
 }
 
 function parseSimpleSelector(raw: string, combinator?: SelectorPart["combinator"]): SelectorPart {
-    const part: SelectorPart = { classes: [], combinator };
+    const part: SelectorPart = { classes: [], attributes: [], combinator };
     let index = 0;
 
     const readIdentifier = () => {
@@ -349,21 +356,33 @@ function parseSimpleSelector(raw: string, combinator?: SelectorPart["combinator"
 }
 
 function applyAttributeSelector(rawAttribute: string, part: SelectorPart): void {
-    const operatorIndex = rawAttribute.includes("~=") ? rawAttribute.indexOf("~=") : rawAttribute.indexOf("=");
-    if (operatorIndex === -1) return;
+    const trimmed = rawAttribute.trim();
+    if (!trimmed) return;
 
-    const attrName = rawAttribute.slice(0, operatorIndex).trim();
-    const rawValue = rawAttribute.slice(operatorIndex + (rawAttribute.includes("~=") ? 2 : 1)).trim();
-    const value = stripQuotes(rawValue);
-
-    if (attrName === "id") {
-        part.id = value;
+    const match = trimmed.match(/^([a-zA-Z0-9_\-:]+)(?:([~|^$*]?=)(.*))?$/);
+    if (!match) {
+        part.attributes.push({ name: trimmed });
         return;
     }
 
-    if (attrName === "class" || attrName === "className") {
+    const attrName = match[1].trim();
+    const operator = match[2];
+    const rawValue = match[3];
+
+    if (!operator || rawValue === undefined) {
+        part.attributes.push({ name: attrName });
+        return;
+    }
+
+    const value = stripQuotes(rawValue.trim());
+
+    if (attrName === "id" && operator === "=") {
+        part.id = value;
+    } else if ((attrName === "class" || attrName === "className") && (operator === "=" || operator === "~=")) {
         part.classes.push(...value.split(/\s+/).filter(Boolean));
     }
+
+    part.attributes.push({ name: attrName, value, operator });
 }
 
 function matchesSelector(path: NodePath<t.JSXElement>, parts: SelectorPart[], partIndex: number): boolean {
@@ -399,6 +418,20 @@ function matchesSimpleSelector(path: NodePath<t.JSXElement>, part: SelectorPart)
         const className = readStaticJSXAttribute(path.node, "className") ?? readStaticJSXAttribute(path.node, "class") ?? "";
         const classSet = new Set(className.split(/\s+/).filter(Boolean));
         if (part.classes.some((classNamePart) => !classSet.has(classNamePart))) return false;
+    }
+
+    if (part.attributes.length) {
+        for (const attr of part.attributes) {
+            const actualValue = readStaticJSXAttribute(path.node, attr.name);
+            if (actualValue === null) return false;
+            if (attr.value !== undefined) {
+                if (attr.operator === "=" && actualValue !== attr.value) return false;
+                if (attr.operator === "~=" && !actualValue.split(/\s+/).includes(attr.value)) return false;
+                if (attr.operator === "^=" && !actualValue.startsWith(attr.value)) return false;
+                if (attr.operator === "$=" && !actualValue.endsWith(attr.value)) return false;
+                if (attr.operator === "*=" && !actualValue.includes(attr.value)) return false;
+            }
+        }
     }
 
     if (part.nthOfType !== undefined && nthOfType(path) !== part.nthOfType && !isInsideMappedExpression(path)) return false;
@@ -625,12 +658,140 @@ function readTextContent(node: t.JSXElement | t.JSXFragment): string {
     return value;
 }
 
+export function parseJSXFragmentOrChildren(markup: string): (t.JSXElement | t.JSXText | t.JSXExpressionContainer | t.JSXFragment)[] | null {
+    try {
+        const wrapped = `<root>${markup}</root>`;
+        const ast = parseTSX(wrapped);
+        let result: (t.JSXElement | t.JSXText | t.JSXExpressionContainer | t.JSXFragment)[] | null = null;
+        traverse(ast, {
+            JSXElement(path) {
+                if (getJSXTagName(path.node) === "root" && !result) {
+                    result = path.node.children.filter((c): c is t.JSXElement | t.JSXText | t.JSXExpressionContainer | t.JSXFragment => !t.isJSXSpreadChild(c));
+                    path.stop();
+                }
+            },
+        });
+        return result;
+    } catch {
+        return null;
+    }
+}
+
+function preserveRichTextChildren(
+    children: (t.JSXElement | t.JSXText | t.JSXExpressionContainer | t.JSXFragment | t.JSXSpreadChild)[],
+    newValue: string
+): (t.JSXElement | t.JSXText | t.JSXExpressionContainer | t.JSXFragment | t.JSXSpreadChild)[] | null {
+    const elementIndex = children.findIndex((c) => t.isJSXElement(c));
+    if (elementIndex === -1) return null;
+
+    const targetElement = children[elementIndex] as t.JSXElement;
+    const clonedChildren = children.map((c) => t.cloneNode(c, true));
+    const clonedElement = clonedChildren[elementIndex] as t.JSXElement;
+
+    // Slices before and after
+    const beforeText = children.slice(0, elementIndex).map((c) => {
+        if (t.isJSXText(c)) return c.value;
+        if (t.isJSXElement(c) || t.isJSXFragment(c)) return readTextContent(c);
+        return "";
+    }).join("");
+
+    const afterText = children.slice(elementIndex + 1).map((c) => {
+        if (t.isJSXText(c)) return c.value;
+        if (t.isJSXElement(c) || t.isJSXFragment(c)) return readTextContent(c);
+        return "";
+    }).join("");
+
+    const elementOldText = readTextContent(targetElement);
+
+    // Case 1: newValue starts with beforeText
+    if (beforeText && newValue.startsWith(beforeText)) {
+        const remainder = newValue.slice(beforeText.length);
+        if (afterText && remainder.endsWith(afterText)) {
+            const inner = remainder.slice(0, remainder.length - afterText.length);
+            replaceElementText(clonedElement, inner);
+            return clonedChildren;
+        } else if (!afterText) {
+            replaceElementText(clonedElement, remainder);
+            return clonedChildren;
+        }
+    }
+
+    // Case 2: newValue ends with afterText
+    if (afterText && newValue.endsWith(afterText)) {
+        const remainder = newValue.slice(0, newValue.length - afterText.length);
+        if (beforeText && remainder.startsWith(beforeText)) {
+            const inner = remainder.slice(beforeText.length);
+            replaceElementText(clonedElement, inner);
+            return clonedChildren;
+        } else if (!beforeText) {
+            replaceElementText(clonedElement, remainder);
+            return clonedChildren;
+        }
+    }
+
+    // Case 3: elementOldText is still present in newValue
+    if (elementOldText && newValue.includes(elementOldText)) {
+        const idx = newValue.indexOf(elementOldText);
+        const newBefore = newValue.slice(0, idx);
+        const newAfter = newValue.slice(idx + elementOldText.length);
+
+        const result: typeof children = [];
+        if (newBefore) result.push(t.jsxText(newBefore));
+        result.push(clonedElement);
+        if (newAfter) result.push(t.jsxText(newAfter));
+        return result;
+    }
+
+    // Case 4: General proportional preservation: keep formatting element around remaining words
+    if (beforeText) {
+        const words = newValue.split(/\s+/);
+        const beforeWords = beforeText.trim().split(/\s+/);
+        if (words.length > beforeWords.length) {
+            const preservedBefore = words.slice(0, beforeWords.length).join(" ") + " ";
+            const inner = words.slice(beforeWords.length).join(" ");
+            const result: typeof children = [];
+            result.push(t.jsxText(preservedBefore));
+            replaceElementText(clonedElement, inner);
+            result.push(clonedElement);
+            return result;
+        }
+    }
+
+    replaceElementText(clonedElement, newValue);
+    return [clonedElement];
+}
+
 function replaceElementText(node: t.JSXElement, newValue: string): void {
     node.openingElement.selfClosing = false;
     if (!node.closingElement) {
         node.closingElement = t.jsxClosingElement(t.cloneNode(node.openingElement.name));
     }
-    node.children = [t.jsxExpressionContainer(t.stringLiteral(newValue))];
+
+    // 1. If newValue contains markup tags, parse into real JSX nodes
+    if (/<[a-zA-Z][^>]*>/i.test(newValue)) {
+        const parsed = parseJSXFragmentOrChildren(newValue);
+        if (parsed && parsed.length > 0) {
+            node.children = parsed;
+            return;
+        }
+    }
+
+    // 2. If node has child JSX elements, preserve rich formatting structure
+    const hasChildElements = node.children.some((c) => t.isJSXElement(c));
+    if (hasChildElements) {
+        const preserved = preserveRichTextChildren(node.children, newValue);
+        if (preserved && preserved.length > 0) {
+            node.children = preserved;
+            return;
+        }
+    }
+
+    // 3. Fallback plain text replacement
+    node.children = [
+        !/[{}]/.test(newValue)
+            ? t.jsxText(newValue)
+            : t.jsxExpressionContainer(t.stringLiteral(newValue))
+    ];
 }
 
 function findFirstElementNode(

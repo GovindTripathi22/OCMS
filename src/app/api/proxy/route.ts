@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthorizedUser } from "@/auth";
-import { prisma } from "@/lib/prisma";
 import * as cheerio from "cheerio";
 import { fetchWithValidatedSsrfUrl, validateUrlForSsrf } from "@/lib/ssrf";
 import { withRateLimit } from "@/lib/ratelimit";
+import { requireOwnedProject } from "@/lib/auth-guards";
 
 interface SchemaField {
     id: string;
@@ -14,12 +14,79 @@ interface SchemaField {
     originalHtmlTag?: string;
 }
 
+const MAX_HTML_BYTES = 5 * 1024 * 1024; // 5MB
+const MAX_CSS_BYTES = 2 * 1024 * 1024;  // 2MB
+const MAX_ASSET_BYTES = 10 * 1024 * 1024; // 10MB
+
+async function readBoundedBody(response: Response, maxBytes: number): Promise<{ buffer: Buffer | null; exceeded: boolean }> {
+    const contentLength = parseInt(response.headers.get("content-length") || "0", 10);
+    if (contentLength > maxBytes) {
+        return { buffer: null, exceeded: true };
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+        const arrayBuf = await response.arrayBuffer();
+        if (arrayBuf.byteLength > maxBytes) {
+            return { buffer: null, exceeded: true };
+        }
+        return { buffer: Buffer.from(arrayBuf), exceeded: false };
+    }
+
+    const chunks: Uint8Array[] = [];
+    let receivedBytes = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+            receivedBytes += value.length;
+            if (receivedBytes > maxBytes) {
+                try {
+                    await reader.cancel();
+                } catch {}
+                return { buffer: null, exceeded: true };
+            }
+            chunks.push(value);
+        }
+    }
+    return { buffer: Buffer.concat(chunks), exceeded: false };
+}
+
 const PROXY_PATH = "/api/proxy?url=";
 type ScriptMode = "static" | "dynamic";
 
 function corsHeaders(req: NextRequest): Record<string, string> {
     const origin = req.headers.get("origin");
-    return origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {};
+    if (!origin) return {};
+
+    const host = req.headers.get("host");
+    const appUrl = process.env.NEXTAUTH_URL || process.env.APP_URL;
+    const allowedHosts = new Set<string>();
+
+    if (host) allowedHosts.add(host.toLowerCase());
+    if (appUrl) {
+        try {
+            allowedHosts.add(new URL(appUrl).host.toLowerCase());
+        } catch {}
+    }
+    if (process.env.NODE_ENV !== "production") {
+        allowedHosts.add("localhost:3000");
+        allowedHosts.add("127.0.0.1:3000");
+    }
+
+    try {
+        const parsed = new URL(origin);
+        if (allowedHosts.has(parsed.host.toLowerCase())) {
+            return {
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+                Vary: "Origin",
+            };
+        }
+    } catch {}
+
+    return {};
 }
 
 function isSkippableUrl(value: string) {
@@ -103,7 +170,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
 
     // Inject meta referrer and CSS overrides inside <head> if present
     const referrerMeta = `
-<meta name="referrer" content="unsafe-url">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <script id="ocms-history-guard">
 (function() {
   try {
@@ -156,6 +223,10 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
     };
 
     window.addEventListener('beforeunload', function(event) { event.preventDefault(); });
+    window.addEventListener('submit', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }, true);
   } catch (e) {}
 })();
 </script>
@@ -201,12 +272,17 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
     }
 
     rewritten = rewritten.replace(
-        /\s(src|href|data-src|poster|action)=("([^"]*)"|'([^']*)')/gi,
+        /\s(src|href|data-src|poster)=("([^"]*)"|'([^']*)')/gi,
         (match, attr, _quoted, doubleValue, singleValue) => {
             const value = doubleValue ?? singleValue ?? "";
             const quote = doubleValue === undefined ? "'" : '"';
             return ` ${attr}=${quote}${toProxyUrl(value, baseUrl, projectId, scriptMode, nonce)}${quote}`;
         }
+    );
+
+    rewritten = rewritten.replace(
+        /\saction=("([^"]*)"|'([^']*)')/gi,
+        ' action="#"'
     );
 
     rewritten = rewritten.replace(
@@ -274,6 +350,15 @@ export async function GET(req: NextRequest) {
     }
 
     const projectId = req.nextUrl.searchParams.get("projectId") || "";
+    let ownedProject: import("@prisma/client").Project | null = null;
+    if (projectId) {
+        const ownership = await requireOwnedProject(projectId, userId);
+        if (ownership.error) {
+            return NextResponse.json({ error: ownership.error.message }, { status: ownership.error.status });
+        }
+        ownedProject = ownership.project;
+    }
+
     const scriptMode: ScriptMode = req.nextUrl.searchParams.get("scriptMode") === "dynamic" ? "dynamic" : "static";
     const bridgeNonce = req.nextUrl.searchParams.get("nonce") || "";
 
@@ -296,56 +381,57 @@ export async function GET(req: NextRequest) {
                     ? { 
                         Location: toProxyUrl(location, baseUrl, projectId, scriptMode, bridgeNonce), 
                         ...corsHeaders(req),
-                        "Referrer-Policy": "unsafe-url"
+                        "Referrer-Policy": "strict-origin-when-cross-origin"
                       }
                     : { 
                         ...corsHeaders(req),
-                        "Referrer-Policy": "unsafe-url"
+                        "Referrer-Policy": "strict-origin-when-cross-origin"
                       },
             });
         }
 
         if (!contentType.includes("text/html")) {
             if (contentType.includes("text/css")) {
-                const css = rewriteCssUrls(await response.text(), baseUrl, projectId, scriptMode, bridgeNonce);
+                const readResult = await readBoundedBody(response, MAX_CSS_BYTES);
+                if (readResult.exceeded || !readResult.buffer) {
+                    return NextResponse.json({ error: "CSS payload exceeds size limit (2MB)" }, { status: 413 });
+                }
+                const css = rewriteCssUrls(readResult.buffer.toString("utf8"), baseUrl, projectId, scriptMode, bridgeNonce);
                 return new NextResponse(css, {
                     status: response.status,
                     headers: {
                         "Content-Type": contentType,
                         ...corsHeaders(req),
                         "Cache-Control": "public, max-age=31536000",
-                        "Referrer-Policy": "unsafe-url",
+                        "Referrer-Policy": "strict-origin-when-cross-origin",
                     },
                 });
             }
 
-            const buffer = await response.arrayBuffer();
-            return new NextResponse(buffer, {
+            const readResult = await readBoundedBody(response, MAX_ASSET_BYTES);
+            if (readResult.exceeded || !readResult.buffer) {
+                return NextResponse.json({ error: "Asset payload exceeds size limit (10MB)" }, { status: 413 });
+            }
+            return new NextResponse(new Uint8Array(readResult.buffer), {
                 status: response.status,
                 headers: {
                     "Content-Type": contentType,
                     ...corsHeaders(req),
                     "Cache-Control": "public, max-age=31536000",
-                    "Referrer-Policy": "unsafe-url",
+                    "Referrer-Policy": "strict-origin-when-cross-origin",
                 },
             });
         }
 
-        let html = await response.text();
+        const readResult = await readBoundedBody(response, MAX_HTML_BYTES);
+        if (readResult.exceeded || !readResult.buffer) {
+            return NextResponse.json({ error: "HTML payload exceeds size limit (5MB)" }, { status: 413 });
+        }
+        let html = readResult.buffer.toString("utf8");
 
         let schemaFields: SchemaField[] = [];
-        if (projectId) {
-            try {
-                const project = await prisma.project.findUnique({
-                    where: { id: projectId },
-                    select: { generatedSchema: true },
-                });
-                if (project && project.generatedSchema) {
-                    schemaFields = project.generatedSchema as unknown as SchemaField[];
-                }
-            } catch (dbErr) {
-                console.error("[Proxy DB Schema Fetch Error]:", dbErr);
-            }
+        if (ownedProject && ownedProject.generatedSchema) {
+            schemaFields = ownedProject.generatedSchema as unknown as SchemaField[];
         }
 
         if (schemaFields && schemaFields.length > 0) {
@@ -1656,7 +1742,7 @@ ${modelViewerScript}
                 "Content-Type": "text/html; charset=utf-8",
                 ...corsHeaders(req),
                 "Content-Security-Policy": "frame-ancestors *",
-                "Referrer-Policy": "unsafe-url",
+                "Referrer-Policy": "strict-origin-when-cross-origin",
             },
         });
     } catch (err: unknown) {

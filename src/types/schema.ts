@@ -12,5 +12,6 @@ export interface SchemaField {
     roughness?: number;
     metalness?: number;
     textureUrl?: string;
+    sourceBinding?: string;
 }
 

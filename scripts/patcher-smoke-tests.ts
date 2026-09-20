@@ -190,4 +190,67 @@ assert.equal(publicReport.appliedCount, 2, "public/test-target.html fixture shou
 assert.match(publicReport.code, /Welcome to Hardened Patching/);
 assert.match(publicReport.code, /href="\/start"/);
 
+// ─── Test data-ocms-field primary target selector ───
+const ocmsBindingFixture = `
+export default function Page() {
+    return (
+        <section>
+            <h1 className="title" data-ocms-field="hero-heading">Original Heading</h1>
+            <p data-ocms-field="hero-subheading">Original Subheading</p>
+            <div className="title">Unrelated element with same class</div>
+        </section>
+    );
+}
+`;
+
+const ocmsBindingReport = patchJSXWithReport(ocmsBindingFixture, [
+    {
+        type: "text",
+        selector: ".title", // Ambiguous CSS class, but fieldId binds to hero-heading
+        fieldId: "hero-heading",
+        newValue: "Bound Heading Updated",
+    },
+    {
+        type: "text",
+        selector: '[data-ocms-field="hero-subheading"]',
+        newValue: "Subheading via Attribute Selector",
+    }
+]);
+
+assert.equal(ocmsBindingReport.appliedCount, 2, "data-ocms-field bound elements should be patched");
+assert.match(ocmsBindingReport.code, /Bound Heading Updated/);
+assert.match(ocmsBindingReport.code, /Subheading via Attribute Selector/);
+assert.match(ocmsBindingReport.code, /Unrelated element with same class/, "unrelated element should remain untouched");
+
+// ─── Test Rich Text Preservation (do NOT flatten <p>Hello <strong>world</strong></p>) ───
+const richTextFixture = `
+export default function RichPage() {
+    return (
+        <div>
+            <p className="intro">Hello <strong>world</strong></p>
+            <p className="outro">Visit our <em>awesome</em> <a href="/blog">community</a> today</p>
+        </div>
+    );
+}
+`;
+
+const richTextReport = patchJSXWithReport(richTextFixture, [
+    {
+        type: "text",
+        selector: "p.intro",
+        oldValue: "Hello world",
+        newValue: "Hello friends", // Plain text edit: should preserve <strong> wrapper!
+    },
+    {
+        type: "text",
+        selector: "p.outro",
+        newValue: "Visit our <strong>stellar</strong> <a href=\"/blog\">community</a> today", // Rich markup edit
+    }
+]);
+
+assert.equal(richTextReport.appliedCount, 2, "rich text elements should be patched");
+assert.match(richTextReport.code, /Hello\s*<strong>friends<\/strong>/, "strong tag must be preserved when plain text is edited");
+assert.doesNotMatch(richTextReport.code, /<p className="intro">\{"Hello friends"\}<\/p>/, "intro must not be flattened to string literal");
+assert.match(richTextReport.code, /Visit our\s*<strong>stellar<\/strong>\s*<a href="\/blog">community<\/a>\s*today/, "rich HTML markup must be parsed as real JSX nodes");
+
 console.log("patcher smoke tests passed");

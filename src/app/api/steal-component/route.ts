@@ -42,26 +42,37 @@ const SAFE_TAGS = new Set([
     "span", "strong", "em", "small", "ul", "video",
 ]);
 
+import { requireAuthenticatedUser } from "@/lib/auth-guards";
+import { createErrorResponse, parseJsonSafely, validateHttpUrl } from "@/lib/validation";
+
 export async function POST(req: NextRequest) {
     try {
         const rateLimited = await withRateLimit("steal-component", req, { limit: 20, windowMs: 60_000 });
         if (rateLimited) return rateLimited;
 
-        const { url } = await req.json();
+        const authCheck = await requireAuthenticatedUser();
+        if (authCheck.error) {
+            return createErrorResponse(authCheck.error.code, authCheck.error.message, authCheck.error.status);
+        }
 
-        if (!url || typeof url !== "string") {
-            return NextResponse.json({ error: "URL is required" }, { status: 400 });
+        const { data, error: jsonError } = await parseJsonSafely<{ url?: string }>(req, 10 * 1024);
+        if (jsonError) return jsonError;
+
+        const rawUrl = data?.url?.trim();
+        const urlValidation = validateHttpUrl(rawUrl);
+        if (!urlValidation.valid || !rawUrl) {
+            return createErrorResponse("INVALID_URL", urlValidation.error || "A valid http/https URL is required", 400);
         }
 
         let targetUrl: URL;
         try {
-            targetUrl = new URL(url);
+            targetUrl = new URL(rawUrl);
         } catch {
-            return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+            return createErrorResponse("INVALID_URL", "Invalid URL format", 400);
         }
 
         // Validate URL format and security via shared SSRF utility
-        const validation = await validateUrlForSsrf(url);
+        const validation = await validateUrlForSsrf(targetUrl.href);
         if (!validation.safe) {
             return NextResponse.json(
                 { error: validation.error || "Forbidden URL" },
@@ -812,7 +823,7 @@ function dedupe(values: string[]): string[] {
 function buildComponentCode(markup: string): string {
     return `import React from "react";
 
-export default function StolenComponent() {
+export default function ImportedComponent() {
     return (
 ${markup}
     );

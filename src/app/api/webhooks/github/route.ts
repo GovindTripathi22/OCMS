@@ -15,7 +15,7 @@ interface SchemaField {
     [key: string]: unknown;
 }
 
-// ---------- Deterministic schema sync (replaces Gemini) ----------
+// ---------- Deterministic schema sync ----------
 
 /**
  * Extracts updated values for each schema field from the React/JSX source code.
@@ -182,6 +182,9 @@ function verifySignature(payload: string, signature: string, secret: string): bo
 export async function POST(req: NextRequest) {
     try {
         const payloadText = await req.text();
+        if (payloadText.length > 5 * 1024 * 1024) {
+            return NextResponse.json({ error: "Payload exceeds maximum limit (5MB)" }, { status: 413 });
+        }
         const signature = req.headers.get("x-hub-signature-256") || "";
         const event = req.headers.get("x-github-event") || "";
 
@@ -293,6 +296,7 @@ export async function POST(req: NextRequest) {
                     where: { id: project.id },
                     data: {
                         generatedSchema: updatedSchema as unknown as Prisma.InputJsonValue,
+                        schemaRevision: { increment: 1 },
                     },
                 });
 

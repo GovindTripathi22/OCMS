@@ -1,43 +1,108 @@
 /**
  * OCMS Live Preview Receiver Script
  * ==================================
- * Paste this into the <head> of the target website being edited inside OCMS.
- * It listens for postMessage events from the OCMS Live Workspace and updates
- * the DOM in real-time as the user types into the Content Editor.
+ * Hardened DOM receiver for live preview synchronization.
+ * Validates message source, origin, nonce, and bounded payload sizes.
  *
  * Usage:
- *   <script src="https://your-ocms-host.com/ocms-receiver.js"></script>
- *   OR copy-paste the contents into a <script> tag in the target page's <head>.
+ *   <script src="/ocms-receiver.js" data-allowed-origin="*" data-nonce="YOUR_NONCE"></script>
  */
 (function () {
-    window.addEventListener("message", function (event) {
-        // Only accept messages from OCMS
-        if (!event.data || event.data.source !== "ocms-live-bridge") return;
+    // Determine configuration from current script tag or globals
+    var currentScript = document.currentScript;
+    var configuredOrigin = (currentScript && currentScript.getAttribute("data-allowed-origin")) || window.__OCMS_ALLOWED_ORIGIN__ || "";
+    var configuredNonce = (currentScript && currentScript.getAttribute("data-nonce")) || window.__OCMS_NONCE__ || "";
 
-        var changes = event.data.changes;
-        if (!Array.isArray(changes)) return;
+    var MAX_CHANGES = 100;
+    var MAX_SELECTOR_LENGTH = 500;
+    var MAX_VALUE_LENGTH = 50000;
+
+    window.addEventListener("message", function (event) {
+        // 1. Source verification: must originate from parent iframe or opener
+        if (event.source !== window.parent && event.source !== window.opener) {
+            return;
+        }
+
+        // 2. Origin verification if configured
+        if (configuredOrigin && configuredOrigin !== "*") {
+            if (event.origin !== configuredOrigin) {
+                console.warn("[OCMS Receiver] Origin rejected:", event.origin);
+                return;
+            }
+        }
+
+        // 3. Payload sanity check
+        var data = event.data;
+        if (!data || typeof data !== "object" || data.source !== "ocms-live-bridge") {
+            return;
+        }
+
+        // 4. Nonce verification if configured
+        if (configuredNonce && data.nonce !== configuredNonce) {
+            console.warn("[OCMS Receiver] Nonce mismatch rejected");
+            return;
+        }
+
+        var changes = data.changes;
+        if (!Array.isArray(changes) || changes.length > MAX_CHANGES) {
+            console.warn("[OCMS Receiver] Invalid or oversized changes array");
+            return;
+        }
 
         changes.forEach(function (change) {
-            if (!change.selector) return;
+            if (!change || typeof change !== "object") return;
+            var selector = change.selector;
+            var value = change.value;
 
-            var el = document.querySelector(change.selector);
+            if (typeof value !== "string" || value.length > MAX_VALUE_LENGTH) return;
+            if (selector && (typeof selector !== "string" || selector.length > MAX_SELECTOR_LENGTH)) return;
+
+            var el = null;
+            if (selector) {
+                try {
+                    el = document.querySelector(selector);
+                } catch (e) {}
+            }
+
+            // Fallback: data-ocms-field attribute binding
+            if (!el && change.fieldId && typeof change.fieldId === "string") {
+                try {
+                    el = document.querySelector('[data-ocms-field="' + CSS.escape(change.fieldId) + '"]') ||
+                         document.querySelector('[data-ocms-field-id="' + CSS.escape(change.fieldId) + '"]');
+                } catch (e) {}
+            }
+
             if (!el) return;
 
             if (change.type === "image") {
-                // Update image src
                 if (el.tagName === "IMG") {
-                    el.src = change.value;
+                    el.src = value;
+                    if (change.alt !== undefined) el.alt = change.alt;
                 } else {
-                    el.style.backgroundImage = "url(" + change.value + ")";
+                    el.style.backgroundImage = "url(" + value + ")";
                 }
+                if (change.objectFit) el.style.objectFit = change.objectFit;
+                if (change.borderRadius) el.style.borderRadius = change.borderRadius;
             } else if (change.type === "link") {
-                // Update href
                 if (el.tagName === "A") {
-                    el.href = change.value;
+                    el.href = value;
+                }
+            } else if (change.type === "3d-model") {
+                if (el.tagName.toLowerCase() === "model-viewer") {
+                    el.setAttribute("src", value);
+                    if (change.roughness !== undefined) el.setAttribute("roughness", String(change.roughness));
+                    if (change.metalness !== undefined) el.setAttribute("metalness", String(change.metalness));
                 }
             } else {
-                // Update text content
-                el.textContent = change.value;
+                // Text updates with rich text preservation
+                if (/<[a-zA-Z][^>]*>/i.test(value)) {
+                    el.innerHTML = value;
+                } else if (el.children.length === 1) {
+                    var child = el.children[0];
+                    child.textContent = value;
+                } else {
+                    el.textContent = value;
+                }
             }
         });
     });

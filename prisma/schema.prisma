@@ -103,7 +103,15 @@ model Project {
   // Format: [{ id, type, value, originalHtmlTag, selector }]
   generatedSchema Json?
 
-  // Brand guidelines for AI context
+  // Monotonically increasing schema revision for autosave consistency & stale write rejection
+  schemaRevision  Int      @default(0)
+
+  // Dedicated GSD Planning states (decoupled from brandGuidelines)
+  gsdState        Json?
+  gsdContext      Json?
+  gsdPlan         Json?
+
+  // Brand guidelines for project styling
   // Format: { colors, fonts, tone, ... }
   brandGuidelines Json?
 
@@ -115,6 +123,8 @@ model Project {
 
   // 3D Engine Assets
   assets    Asset3D[]
+
+  @@index([userId])
 }
 
 // ─────────────────────────────────────────────────
@@ -134,9 +144,9 @@ model Asset3D {
   variants        ModelVariant[]
   sceneGraphs     SceneGraph[]   @relation("SceneGraphAssets")
   
-  // CMS context
-  projectId       String?
-  project         Project?       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // Mandatory CMS context ownership
+  projectId       String
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt

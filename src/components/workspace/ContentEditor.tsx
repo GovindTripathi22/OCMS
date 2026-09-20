@@ -127,14 +127,16 @@ function FeaturePanel({ icon, title, tag, children, defaultOpen = false, accentC
 
     const c = FEATURE_PANEL_COLOR_MAP[accentColor] || FEATURE_PANEL_COLOR_MAP.yellow;
 
-    const tagStyles = tag === "AI"
+    const tagStyles = (tag === "Import")
         ? "bg-[var(--ocms-pink)] border-2 border-black text-black shadow-[2px_2px_0px_#000]"
-        : tag === "New"
+        : (tag === "New" || tag === "Ghost")
         ? "bg-[var(--ocms-green)] border-2 border-black text-black shadow-[2px_2px_0px_#000]"
         : tag === "PBR"
         ? "bg-[var(--ocms-orange)] border-2 border-black text-black shadow-[2px_2px_0px_#000]"
         : tag === "Pro"
         ? "bg-[var(--ocms-cyan)] border-2 border-black text-black shadow-[2px_2px_0px_#000]"
+        : tag === "Rules"
+        ? "bg-[var(--ocms-yellow)] border-2 border-black text-black shadow-[2px_2px_0px_#000]"
         : "bg-[var(--ocms-blue)] border-2 border-black text-black shadow-[2px_2px_0px_#000]";
 
     return (
@@ -329,6 +331,7 @@ export default function ContentEditor({
     // Feature States
     const [componentUrl, setComponentUrl] = useState("");
     const [isStealing, setIsStealing] = useState(false);
+    const [importedCode, setImportedCode] = useState("");
     const [abTarget, setAbTarget] = useState("gen-z");
     const [isGeneratingVariant, setIsGeneratingVariant] = useState(false);
     const [currentColors, setCurrentColors] = useState(["#fbbf24", "#22c55e", "#3b82f6", "#f97316", "#ec4899"]);
@@ -751,7 +754,7 @@ export default function ContentEditor({
                         if (isGhostModeActive && broadcastGhostEvent) {
                             const field = schema.find(f => f.id === data.fieldId);
                             if (field?.selector) {
-                                broadcastGhostEvent("AI_EDIT_START", field.selector, "Voice AI");
+                                broadcastGhostEvent("AI_EDIT_START", field.selector, "Deterministic Voice Command");
                             }
                         }
 
@@ -762,7 +765,7 @@ export default function ContentEditor({
                             setTimeout(() => broadcastGhostEvent("AI_EDIT_END"), 2000);
                         }
                     } else {
-                        throw new Error("AI couldn't understand the command");
+                        throw new Error("Could not understand voice command");
                     }
                 } catch {
                     setErrorMessage("Voice edit failed");
@@ -814,12 +817,15 @@ export default function ContentEditor({
                 body: JSON.stringify({ url: componentUrl }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Failed to steal component");
-        setSyncStatus("success");
+            if (!res.ok) throw new Error(data.error || "Failed to import component");
+            if (typeof navigator !== "undefined" && navigator.clipboard && data.code) {
+                await navigator.clipboard.writeText(data.code).catch(() => {});
+            }
+            setImportedCode(data.code || "");
+            setSyncStatus("success");
             setTimeout(() => setSyncStatus("idle"), 3000);
-            console.log("STOLEN COMPONENT CODE:\n", data.code);
         } catch (err: unknown) {
-            setErrorMessage(err instanceof Error ? err.message : "Failed to steal component");
+            setErrorMessage(err instanceof Error ? err.message : "Failed to import component");
         } finally {
             setIsStealing(false);
             setComponentUrl("");
@@ -852,9 +858,11 @@ export default function ContentEditor({
         console.error("Failed to parse current path:", e);
     }
 
-    const filteredSchema = schema.filter((field) => {
+    const matchingSchema = schema.filter((field) => {
+        if (!field.path) return true;
         return normalizePath(field.path) === normalizePath(currentPath);
     });
+    const filteredSchema = matchingSchema.length > 0 ? matchingSchema : schema;
 
     const displayFields = filteredSchema.filter((field) => {
         if (!filterQuery) return true;
@@ -1251,7 +1259,7 @@ export default function ContentEditor({
                     ) : !gsdState ? (
                         <div className="space-y-3">
                             <p className="text-[10px] text-slate-800 font-bold">
-                                Integrate GSD Core spec-driven planning and sub-agent workflows in your target GitHub repository.
+                                Integrate GSD Core spec-driven planning and sub-task workflows in your target GitHub repository.
                             </p>
                             <button
                                 onClick={() => runGsdAction("init")}
@@ -1417,7 +1425,7 @@ export default function ContentEditor({
                                             className="w-full text-[10px] bg-[var(--ocms-orange)] border-2 border-black rounded py-1 text-black font-bold uppercase disabled:opacity-50 flex items-center justify-center gap-1.5"
                                         >
                                             {gsdActionLoading === "execute" && <Loader2 className="w-3 h-3 animate-spin" />}
-                                            Run AI Sub-Agents
+                                            Run Sub-Tasks
                                         </button>
                                     </div>
 
@@ -1529,8 +1537,8 @@ export default function ContentEditor({
                 </FeaturePanel>
 
                 {/* ════ GHOST CO-PILOT CURSOR ════ */}
-                <FeaturePanel icon={<MousePointer2 className="w-3.5 h-3.5" />} title="Ghost Co-Pilot" tag="AI" accentColor="green">
-                    <p className="text-[10px] text-slate-800 mb-2.5 font-bold">When AI edits code, a ghost cursor appears in the live preview showing what it touches.</p>
+                <FeaturePanel icon={<MousePointer2 className="w-3.5 h-3.5" />} title="Ghost Co-Pilot" tag="Ghost" accentColor="green">
+                    <p className="text-[10px] text-slate-800 mb-2.5 font-bold">When local tools edit code, a ghost cursor appears in the live preview showing what it touches.</p>
                     <div className="flex items-center gap-2.5">
                         <div className="w-3 h-3 rounded-full bg-[var(--ocms-green)] border-2 border-black animate-pulse shadow-[1px_1px_0px_#000]" />
                         <span className="text-[10px] text-black font-[family-name:var(--font-jetbrains-mono)] font-black uppercase">
@@ -1544,7 +1552,7 @@ export default function ContentEditor({
                 </FeaturePanel>
 
                 {/* ════ AUTO A/B TESTING SPAWNER ════ */}
-                <FeaturePanel icon={<Copy className="w-3.5 h-3.5" />} title="A/B Variant Spawner" tag="AI" accentColor="blue">
+                <FeaturePanel icon={<Copy className="w-3.5 h-3.5" />} title="A/B Variant Spawner" tag="Rules" accentColor="blue">
                     <p className="text-[10px] text-slate-800 mb-2.5 font-bold">Generate alternate copy for a different audience and push both to GitHub.</p>
                     <select value={abTarget} onChange={(e) => setAbTarget(e.target.value)}
                         className="w-full bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs text-black outline-none focus:shadow-[3px_3px_0px_var(--ocms-blue)] mb-2.5 font-[family-name:var(--font-jetbrains-mono)] font-bold">
@@ -1576,17 +1584,26 @@ export default function ContentEditor({
                     )}
                 </FeaturePanel>
 
-                {/* ════ COMPONENT STEALER ════ */}
-                <FeaturePanel icon={<Wand2 className="w-3.5 h-3.5" />} title="Component Stealer" tag="AI" accentColor="pink">
-                    <p className="text-[10px] text-slate-800 mb-2.5 font-bold">Paste any URL. The AI replicates the component and injects it into your workspace.</p>
+                {/* ════ COMPONENT IMPORTER ════ */}
+                <FeaturePanel icon={<Wand2 className="w-3.5 h-3.5" />} title="Component Importer" tag="Import" accentColor="pink">
+                    <p className="text-[10px] text-slate-800 mb-2.5 font-bold">Paste any URL. The importer extracts and sanitizes HTML components into your workspace.</p>
                     <div className="flex gap-2">
                         <input type="text" value={componentUrl} onChange={(e) => setComponentUrl(e.target.value)}
                             className="flex-1 bg-white border-[3px] border-black rounded-md px-3 py-2 text-xs text-black placeholder-slate-500 outline-none focus:shadow-[3px_3px_0px_var(--ocms-pink)] font-[family-name:var(--font-jetbrains-mono)]"
                             placeholder="https://stripe.com" />
                         <button onClick={handleStealComponent} disabled={isStealing || !componentUrl} className="px-4 rounded-md bg-[var(--ocms-pink)] border-[3px] border-black text-black text-xs font-black uppercase hover:bg-[var(--ocms-orange)] hover:text-white shadow-[3px_3px_0px_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] transition-all disabled:opacity-50">
-                            {isStealing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Steal"}
+                            {isStealing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Import"}
                         </button>
                     </div>
+                    {importedCode && (
+                        <div className="mt-2.5 bg-white border-[3px] border-black rounded-md p-2 font-[family-name:var(--font-jetbrains-mono)] text-[10px] text-black shadow-[2px_2px_0px_#000] max-h-36 overflow-y-auto">
+                            <div className="flex items-center justify-between pb-1 border-b border-black/10 mb-1">
+                                <span className="font-bold text-[9px] uppercase text-emerald-700">Copied to Clipboard</span>
+                                <button onClick={() => setImportedCode("")} className="text-[9px] text-slate-500 hover:text-black font-bold">✕</button>
+                            </div>
+                            <pre className="whitespace-pre-wrap font-mono text-[9px] text-slate-800">{importedCode}</pre>
+                        </div>
+                    )}
                 </FeaturePanel>
 
                 {/* ════ CODE SANDBOX ════ */}

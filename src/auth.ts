@@ -15,66 +15,31 @@ declare module "next-auth" {
     }
 }
 
-const baseAdapter = PrismaAdapter(prisma);
+function resolveAuthSecret(): string {
+    const secret = process.env.AUTH_SECRET;
+    if (!secret || secret.trim() === "") {
+        if (process.env.NODE_ENV === "production") {
+            throw new Error(
+                "[OCMS Auth Security] FATAL: AUTH_SECRET must be configured in production. Failing closed."
+            );
+        }
+        if (process.env.NODE_ENV === "test") {
+            return "ocms_test_only_auth_secret_do_not_use_in_production_32_chars";
+        }
+        throw new Error(
+            "[OCMS Auth Security] AUTH_SECRET is not configured in your environment. Please set AUTH_SECRET in .env.local."
+        );
+    }
+    return secret;
+}
 
-type CreateUserParam = Parameters<NonNullable<typeof baseAdapter.createUser>>[0];
-type GetAccountParam = Parameters<NonNullable<typeof baseAdapter.getUserByAccount>>[0];
-type LinkAccountParam = Parameters<NonNullable<typeof baseAdapter.linkAccount>>[0];
-type UpdateUserParam = Parameters<NonNullable<typeof baseAdapter.updateUser>>[0];
-
-const resilientAdapter = {
-    ...baseAdapter,
-    createUser: async (data: CreateUserParam) => {
-        try {
-            return await baseAdapter.createUser!(data);
-        } catch (e) {
-            console.warn("[Auth] DB createUser bypassed (No active DB):", e);
-            return { ...data, id: data.id || data.email || "jwt-user-id" };
-        }
-    },
-    getUser: async (id: string) => {
-        try {
-            return await baseAdapter.getUser!(id);
-        } catch {
-            return null;
-        }
-    },
-    getUserByEmail: async (email: string) => {
-        try {
-            return await baseAdapter.getUserByEmail!(email);
-        } catch {
-            return null;
-        }
-    },
-    getUserByAccount: async (provider_providerAccountId: GetAccountParam) => {
-        try {
-            return await baseAdapter.getUserByAccount!(provider_providerAccountId);
-        } catch {
-            return null;
-        }
-    },
-    updateUser: async (data: UpdateUserParam) => {
-        try {
-            return await baseAdapter.updateUser!(data);
-        } catch (e) {
-            console.warn("[Auth] DB updateUser bypassed (No active DB):", e);
-            return data as unknown as ReturnType<NonNullable<typeof baseAdapter.updateUser>>;
-        }
-    },
-    linkAccount: async (data: LinkAccountParam) => {
-        try {
-            return await baseAdapter.linkAccount!(data);
-        } catch (e) {
-            console.warn("[Auth] DB linkAccount bypassed (No active DB):", e);
-            return;
-        }
-    },
-};
+// Canonical Prisma Adapter: database failures must remain real failures
+const adapter = PrismaAdapter(prisma);
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-    adapter: resilientAdapter as unknown as import("next-auth/adapters").Adapter,
+    adapter,
     trustHost: true,
-    secret: process.env.AUTH_SECRET || "ocms_dev_fallback_secret_key_12345",
+    secret: resolveAuthSecret(),
     session: {
         strategy: "jwt",
     },
@@ -82,7 +47,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         GitHub({
             clientId: process.env.GITHUB_CLIENT_ID ?? "",
             clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
-            // Request `repo` scope for full read/write access to user repositories
             authorization: {
                 params: {
                     scope: "read:user user:email repo",
@@ -114,41 +78,40 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
  * Returns the authenticated user ID.
  *
  * Guest fallback is ONLY allowed when ALL of the following are true:
- *   1. NODE_ENV is "development" (never in production)
+ *   1. NODE_ENV is NOT "production"
  *   2. ALLOW_GUEST_ACCESS === "true" (explicit opt-in)
  *
- * This prevents accidental guest access in production deployments.
+ * This guarantees that guest access can NEVER bypass authentication in production.
  */
 export async function getAuthorizedUser(): Promise<string | null> {
-    const session = await auth();
-    let userId = session?.user?.id;
-
-    if (!userId) {
-        const isProduction = process.env.NODE_ENV === "production";
-        const allowGuest = process.env.ALLOW_GUEST_ACCESS === "true";
-
-        // Hard block: guest access is never allowed in production
-        if (isProduction) {
-            return null;
+    try {
+        const session = await auth();
+        if (session?.user?.id) {
+            return session.user.id;
         }
+    } catch (err) {
+        console.error("[Auth] Session validation error:", err);
+        return null;
+    }
 
-        // Require explicit opt-in even in development
-        if (!allowGuest) {
-            return null;
-        }
+    const isProduction = process.env.NODE_ENV === "production";
+    const allowGuest = process.env.ALLOW_GUEST_ACCESS === "true";
 
-        console.warn(
-            "[OCMS] Guest fallback activated. " +
-            "Set ALLOW_GUEST_ACCESS=false to disable. " +
-            "This will NOT work in production."
-        );
+    // Hard block: guest access is never allowed in production
+    if (isProduction || !allowGuest) {
+        return null;
+    }
 
-        // Fallback to Guest user (development + explicit ALLOW_GUEST_ACCESS=true only)
+    console.warn(
+        "[OCMS Auth] Guest fallback activated (development/test mode with ALLOW_GUEST_ACCESS=true)."
+    );
+
+    try {
         let guestUser = await prisma.user.findFirst({
             where: {
                 OR: [
-                    { email: "guest@ocms.ai" },
-                    { email: "guest@ocms.dev" }
+                    { email: "guest@ocms.dev" },
+                    { email: "guest@ocms.ai" }
                 ]
             }
         });
@@ -160,7 +123,9 @@ export async function getAuthorizedUser(): Promise<string | null> {
                 }
             });
         }
-        userId = guestUser.id;
+        return guestUser.id;
+    } catch (dbErr) {
+        console.error("[Auth] Failed to resolve guest user in database:", dbErr);
+        return null;
     }
-    return userId;
 }

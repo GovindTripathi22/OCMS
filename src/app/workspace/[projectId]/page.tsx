@@ -8,10 +8,8 @@ import type { SchemaField } from "@/types/schema";
 
 export default async function WorkspacePage({ 
     params,
-    searchParams 
 }: { 
-    params: { projectId: string },
-    searchParams: { target?: string }
+    params: { projectId: string }
 }) {
     const currentUserId = await getAuthorizedUser();
 
@@ -19,26 +17,13 @@ export default async function WorkspacePage({
         redirect("/");
     }
 
-    let project = await prisma.project.findUnique({
+    const project = await prisma.project.findUnique({
         where: { id: params.projectId }
     });
 
     // IDOR Protection: If project exists but belongs to a different user, deny access (404)
     if (project && project.userId !== currentUserId) {
         notFound();
-    }
-
-    const targetUrl = searchParams.target;
-
-    if (!project && targetUrl) {
-        project = await prisma.project.create({
-            data: {
-                id: params.projectId, 
-                name: "Auto-Recovered Project",
-                sourceUrl: targetUrl,
-                userId: currentUserId
-            }
-        });
     }
 
     if (!project) {

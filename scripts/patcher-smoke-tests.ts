@@ -253,4 +253,44 @@ assert.match(richTextReport.code, /Hello\s*<strong>friends<\/strong>/, "strong t
 assert.doesNotMatch(richTextReport.code, /<p className="intro">\{"Hello friends"\}<\/p>/, "intro must not be flattened to string literal");
 assert.match(richTextReport.code, /Visit our\s*<strong>stellar<\/strong>\s*<a href="\/blog">community<\/a>\s*today/, "rich HTML markup must be parsed as real JSX nodes");
 
+// ─── Test JSX Patcher Safety against < delimiter syntax error ───
+const jsxSpecialCharReport = patchJSXWithReport(jsxFixture, [
+    { type: "text", selector: "h1.title", newValue: "price < $10" },
+]);
+assert.equal(jsxSpecialCharReport.appliedCount, 1, "text containing < must be patched");
+assert.match(jsxSpecialCharReport.code, /price < \$10/, "code must contain escaped/safe price < $10");
+
+// ─── Test JSX Alt Attribute Quote Escaping ───
+const jsxAltQuoteReport = patchJSXWithReport(jsxFixture, [
+    { type: "image", selector: "img.hero-img", newValue: "/new.png", alt: 'a "great" photo' },
+]);
+assert.equal(jsxAltQuoteReport.appliedCount, 1, "alt text containing quotes must be patched");
+assert.match(jsxAltQuoteReport.code, /\\"great\\"/, "alt text quotes must be safely enclosed");
+
+// ─── Test Live Expression / Code Injection Prevention ───
+const jsxSecretReport = patchJSXWithReport(jsxFixture, [
+    { type: "text", selector: "h1.title", newValue: "{process.env.SECRET_KEY}" },
+]);
+assert.equal(jsxSecretReport.appliedCount, 1);
+assert.match(jsxSecretReport.code, /"\{process\.env\.SECRET_KEY\}"/, "secrets must be string literals, not raw expressions");
+
+const jsxDangerousTagReport = patchJSXWithReport(jsxFixture, [
+    { type: "text", selector: "h1.title", newValue: '<button onClick={() => alert("xss")}>Click</button>' },
+]);
+assert.equal(jsxDangerousTagReport.appliedCount, 1);
+assert.doesNotMatch(jsxDangerousTagReport.code, /<h1[^>]*>\s*<button/, "dangerous tags must not be parsed into executable JSX child elements");
+assert.match(jsxDangerousTagReport.code, /\{"<button onClick=/, "dangerous tags must be safely enclosed as string literals");
+
+// ─── Test Full HTML Document DOCTYPE / html / head / body Preservation ───
+const fullDocHtml = '<!DOCTYPE html><html lang="en"><head><title>Title</title></head><body><h1>Old</h1></body></html>';
+const fullDocReport = patchHTMLWithReport(fullDocHtml, [
+    { type: "text", selector: "h1", newValue: "New Headline" },
+]);
+assert.equal(fullDocReport.appliedCount, 1);
+assert.match(fullDocReport.code, /<!DOCTYPE\s+html>/i, "DOCTYPE must be preserved");
+assert.match(fullDocReport.code, /<html/i, "html tag must be preserved");
+assert.match(fullDocReport.code, /<head>/i, "head tag must be preserved");
+assert.match(fullDocReport.code, /<body/i, "body tag must be preserved");
+assert.match(fullDocReport.code, /New Headline/);
+
 console.log("patcher smoke tests passed");

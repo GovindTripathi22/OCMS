@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { extractFallbackSchemaFields } from "@/lib/scraper";
 import { getAuthorizedUser } from "@/auth";
-import { checkAndIncrementQuota } from "@/lib/ratelimit";
+import { withRateLimit } from "@/lib/ratelimit";
 
 /**
  * POST /api/generate-schema
@@ -20,24 +20,8 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
         
-        const subscription = "free";
-
-        const id = userId;
-
-        // ── Rate Limit Check ─────────────────────────────────
-        const quota = await checkAndIncrementQuota(id, subscription);
-
-        if (!quota.allowed) {
-            return NextResponse.json(
-                {
-                    error: `Rate limit exceeded (${quota.limit} generations per cycle). Upgrade to PRO for more.`,
-                    limit: quota.limit,
-                    remaining: 0,
-                    resetsAt: quota.resetsAt.toISOString(),
-                },
-                { status: 429 }
-            );
-        }
+        const rateLimited = await withRateLimit("generate-schema", request as unknown as NextRequest, { limit: 30, windowMs: 60_000 });
+        if (rateLimited) return rateLimited;
 
         // ── Parse Request ────────────────────────────────────
         const body = await request.json();
@@ -58,11 +42,6 @@ export async function POST(request: Request) {
                 schema,
                 sourceUrl: url ?? null,
                 generatedAt: new Date().toISOString(),
-                quota: {
-                    remaining: quota.remaining,
-                    limit: quota.limit,
-                    resetsAt: quota.resetsAt.toISOString(),
-                },
             },
             {
                 headers: {

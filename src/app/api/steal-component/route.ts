@@ -781,11 +781,19 @@ function extractCssUrl(value: string): string | null {
 }
 
 function resolveUrl(value: string, baseUrl: URL): string {
-    if (!value || value.startsWith("#") || value.startsWith("mailto:") || value.startsWith("tel:")) return value || "#";
+    const trimmed = (value || "").trim().toLowerCase();
+    if (!trimmed || trimmed.startsWith("javascript:") || trimmed.startsWith("data:") || trimmed.startsWith("vbscript:")) {
+        return "#";
+    }
+    if (trimmed.startsWith("#") || trimmed.startsWith("mailto:") || trimmed.startsWith("tel:")) return value || "#";
     try {
-        return new URL(value, baseUrl).href;
+        const resolved = new URL(value, baseUrl);
+        if (resolved.protocol !== "http:" && resolved.protocol !== "https:" && resolved.protocol !== "mailto:" && resolved.protocol !== "tel:") {
+            return "#";
+        }
+        return resolved.href;
     } catch {
-        return value;
+        return "#";
     }
 }
 

@@ -101,7 +101,7 @@ export default function NewWorkspacePage() {
 
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
-                const errMsg = errData.error || (response.status === 401 ? "Please sign in with GitHub to create a project." : "Failed to create project");
+                const errMsg = errData.message || errData.error || (response.status === 401 ? "Please sign in with GitHub to create a project." : "Failed to create project");
                 appendLog(`[ERROR] (${response.status}) ${errMsg}`);
                 throw new Error(errMsg);
             }
@@ -119,7 +119,7 @@ export default function NewWorkspacePage() {
             appendLog("[SUCCESS] Project registered and workspace session initiated.");
             setProgress(100);
             await new Promise(r => setTimeout(r, 200));
-            router.push(`/workspace/${project.id}?target=${encodeURIComponent(url)}`);
+            router.push(`/workspace/${project.id}`);
         } catch (error) {
             console.error("Error creating project:", error);
             const message = error instanceof Error ? error.message : "Failed to initialize workspace.";

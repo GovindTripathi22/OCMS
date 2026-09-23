@@ -52,7 +52,7 @@ export default function ModelDropzone({
 
                 if (!res.ok) {
                     const data = await res.json();
-                    throw new Error(data.error || "Upload failed");
+                    throw new Error(data.message || data.error || "Upload failed");
                 }
 
                 const { path } = await res.json();

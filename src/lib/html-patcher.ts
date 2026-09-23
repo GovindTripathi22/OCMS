@@ -85,8 +85,8 @@ export function patchHTML(sourceCode: string, changes: ASTChange[]): string {
 }
 
 export function patchHTMLWithReport(sourceCode: string, changes: ASTChange[]): PatchReport {
-    // Load with xmlMode: false to ensure we parse standard HTML correctly
-    const $ = cheerio.load(sourceCode, { xmlMode: false }, false);
+    const isFullDoc = /<!doctype\b|<html\b/i.test(sourceCode);
+    const $ = cheerio.load(sourceCode, { xmlMode: false }, isFullDoc);
     let modified = false;
     let appliedCount = 0;
     const matchedSelectors = new Set<string>();

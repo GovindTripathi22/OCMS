@@ -3,17 +3,22 @@ import { requireAuthenticatedUser } from "@/lib/auth-guards";
 import { withRateLimit } from "@/lib/ratelimit";
 import { createErrorResponse, parseJsonSafely } from "@/lib/validation";
 
+function hasWord(text: string, words: string[]): boolean {
+    const pattern = new RegExp(`\\b(${words.join("|")})\\b`, "i");
+    return pattern.test(text);
+}
+
 function generateProceduralSvgTexture(prompt: string): string {
     const p = prompt.toLowerCase();
     let svg = "";
 
-    if (p.includes("wood") || p.includes("pine") || p.includes("timber")) {
+    if (hasWord(p, ["wood", "pine", "timber"])) {
         svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
             <rect width="256" height="256" fill="#8B5A2B"/>
             <path d="M 0 40 Q 64 20 128 40 T 256 40 M 0 100 Q 80 120 160 100 T 256 100 M 0 180 Q 50 160 128 180 T 256 180" stroke="#5C3A21" stroke-width="4" fill="none" opacity="0.6"/>
             <path d="M 0 70 Q 120 90 200 70 T 256 70 M 0 140 Q 60 120 140 140 T 256 140 M 0 220 Q 90 240 180 220 T 256 220" stroke="#3D2314" stroke-width="2" fill="none" opacity="0.4"/>
         </svg>`;
-    } else if (p.includes("chrome") || p.includes("silver") || p.includes("mirror")) {
+    } else if (hasWord(p, ["chrome", "silver", "mirror"])) {
         svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
             <defs>
                 <linearGradient id="cr" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -27,7 +32,7 @@ function generateProceduralSvgTexture(prompt: string): string {
             <rect width="256" height="256" fill="url(#cr)"/>
             <line x1="0" y1="0" x2="256" y2="256" stroke="#ffffff" stroke-width="1.5" opacity="0.4"/>
         </svg>`;
-    } else if (p.includes("gold") || p.includes("brass") || p.includes("bronze")) {
+    } else if (hasWord(p, ["gold", "brass", "bronze"])) {
         svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
             <defs>
                 <linearGradient id="gd" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -39,7 +44,7 @@ function generateProceduralSvgTexture(prompt: string): string {
             <rect width="256" height="256" fill="url(#gd)"/>
             <circle cx="128" cy="128" r="80" fill="none" stroke="#fef9c3" stroke-width="2" opacity="0.3"/>
         </svg>`;
-    } else if (p.includes("carbon") || p.includes("fiber")) {
+    } else if (hasWord(p, ["carbon", "fiber"])) {
         svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
             <rect width="256" height="256" fill="#111827"/>
             <defs>
@@ -51,7 +56,7 @@ function generateProceduralSvgTexture(prompt: string): string {
             </defs>
             <rect width="256" height="256" fill="url(#cf)"/>
         </svg>`;
-    } else if (p.includes("metal") || p.includes("steel") || p.includes("iron")) {
+    } else if (hasWord(p, ["metal", "steel", "iron"])) {
         svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
             <defs>
                 <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -67,7 +72,7 @@ function generateProceduralSvgTexture(prompt: string): string {
             <line x1="0" y1="185" x2="256" y2="185" stroke="#000" stroke-width="1.5" opacity="0.2"/>
             <line x1="0" y1="230" x2="256" y2="230" stroke="#fff" stroke-width="1" opacity="0.15"/>
         </svg>`;
-    } else if (p.includes("rust") || p.includes("corrode")) {
+    } else if (hasWord(p, ["rust", "corrode", "corrosion"])) {
         svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
             <rect width="256" height="256" fill="#4A3B32"/>
             <circle cx="40" cy="50" r="25" fill="#B85A1C" opacity="0.7"/>
@@ -77,7 +82,7 @@ function generateProceduralSvgTexture(prompt: string): string {
             <path d="M 0 0 L 256 256" stroke="#5C2E0B" stroke-width="8" opacity="0.3" stroke-dasharray="10, 15"/>
             <path d="M 256 0 L 0 256" stroke="#5C2E0B" stroke-width="6" opacity="0.3" stroke-dasharray="5, 20"/>
         </svg>`;
-    } else if (p.includes("leather") || p.includes("skin")) {
+    } else if (hasWord(p, ["leather", "skin"])) {
         svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
             <rect width="256" height="256" fill="#3D2314"/>
             <g opacity="0.15" stroke="#fff" stroke-width="0.5">
@@ -96,7 +101,7 @@ function generateProceduralSvgTexture(prompt: string): string {
                 <circle cx="100" cy="170" r="2.5" fill="none"/>
             </g>
         </svg>`;
-    } else if (p.includes("brick") || p.includes("wall")) {
+    } else if (hasWord(p, ["brick", "wall"])) {
         svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
             <rect width="256" height="256" fill="#A52A2A"/>
             <line x1="0" y1="64" x2="256" y2="64" stroke="#e2e8f0" stroke-width="4"/>
@@ -110,7 +115,7 @@ function generateProceduralSvgTexture(prompt: string): string {
             <line x1="192" y1="128" x2="192" y2="192" stroke="#e2e8f0" stroke-width="4"/>
             <line x1="128" y1="192" x2="128" y2="256" stroke="#e2e8f0" stroke-width="4"/>
         </svg>`;
-    } else if (p.includes("checker") || p.includes("chess") || p.includes("grid")) {
+    } else if (hasWord(p, ["checker", "chess", "grid"])) {
         svg = `<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
             <rect width="256" height="256" fill="#fff"/>
             <rect x="0" y="0" width="128" height="128" fill="#000"/>

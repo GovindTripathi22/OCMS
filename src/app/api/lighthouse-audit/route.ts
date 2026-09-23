@@ -106,7 +106,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (!targetHtml) {
-        targetHtml = `<!DOCTYPE html><html><head><title>Preview Document</title><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div>Ready for content</div></body></html>`;
+        return createErrorResponse(
+            "FETCH_FAILED",
+            "Could not fetch target page content to perform audit. Verify that the URL is reachable.",
+            502
+        );
     }
 
     const auditResult = runLocalStaticAudit(targetHtml);

@@ -127,14 +127,9 @@ function matchPalette(description: string): string[] {
 
     for (const keyword of Object.keys(CURATED_PALETTES)) {
         const regex = new RegExp(`\\b${keyword}\\b`, "i");
-        const exactMatch = regex.test(lower);
-        const substringMatch = lower.includes(keyword);
-
-        const score = exactMatch ? 2 : substringMatch ? 1 : 0;
-
-        if (score > 0) {
+        if (regex.test(lower)) {
             const paletteKey = CURATED_PALETTES[keyword].join(",");
-            const current = (paletteScores.get(paletteKey) ?? 0) + score;
+            const current = (paletteScores.get(paletteKey) ?? 0) + 1;
             paletteScores.set(paletteKey, current);
 
             if (current > bestScore) {

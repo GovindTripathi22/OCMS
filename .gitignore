@@ -38,6 +38,8 @@ next-env.d.ts
 
 .env
 prisma/dev.db
+*.db
+*.db-journal
 scratch/
 test-results/
 playwright-report/

@@ -101,26 +101,38 @@ export function safePathInsideRoot(rootPath: string, relativePath: string): stri
     // Reject null bytes
     if (relativePath.includes("\0")) return null;
 
-    // Quick checks for obvious traversals
-    const decoded = decodeURIComponent(relativePath);
+    // Safely decode URI component — catch malformed % sequences
+    let decoded: string;
+    try {
+        decoded = decodeURIComponent(relativePath);
+    } catch {
+        return null; // malformed % sequence → reject
+    }
+
+    // Reject traversal in both raw and decoded forms
     if (decoded.includes("..") || relativePath.includes("..")) {
-        // Additional strict checks
+        return null;
     }
 
     const resolvedRoot = path.resolve(rootPath);
     const resolvedTarget = path.resolve(resolvedRoot, relativePath);
 
-    // Normalize slashes for comparison
-    const normRoot = path.normalize(resolvedRoot).toLowerCase();
-    const normTarget = path.normalize(resolvedTarget).toLowerCase();
+    // Use platform-appropriate comparison
+    // On Windows (case-insensitive fs), toLowerCase is acceptable
+    // On Linux/Mac (case-sensitive fs), use exact comparison
+    const isWindows = process.platform === "win32";
+    const normRoot = path.normalize(resolvedRoot);
+    const normTarget = path.normalize(resolvedTarget);
 
-    // Must be exactly the root or inside the root directory
-    if (normTarget === normRoot) {
+    const compareRoot = isWindows ? normRoot.toLowerCase() : normRoot;
+    const compareTarget = isWindows ? normTarget.toLowerCase() : normTarget;
+
+    if (compareTarget === compareRoot) {
         return resolvedTarget;
     }
 
-    const prefix = normRoot.endsWith(path.sep) ? normRoot : normRoot + path.sep;
-    if (normTarget.startsWith(prefix)) {
+    const prefix = compareRoot.endsWith(path.sep) ? compareRoot : compareRoot + path.sep;
+    if (compareTarget.startsWith(prefix)) {
         return resolvedTarget;
     }
 

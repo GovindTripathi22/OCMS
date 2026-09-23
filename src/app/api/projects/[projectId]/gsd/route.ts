@@ -76,49 +76,11 @@ async function commitFile(
     });
 }
 
-interface ProjectForGsd {
-    id: string;
-    githubOwner: string | null;
-    githubRepo: string | null;
-    githubBranch: string;
-    gsdState: unknown;
-    gsdContext: unknown;
-    gsdPlan: unknown;
-}
-
 async function saveGsdFiles(
     projectId: string,
-    project: ProjectForGsd,
-    octokit: Octokit | null,
-    files: Partial<GsdFiles>,
-    branch: string,
-    message: string
+    files: Partial<GsdFiles>
 ) {
-    const isGithub = octokit && project.githubOwner && project.githubRepo;
-    if (isGithub) {
-        try {
-            if (files.projectMd) {
-                const current = await getFile(octokit, project.githubOwner!, project.githubRepo!, ".planning/PROJECT.md", branch);
-                await commitFile(octokit, project.githubOwner!, project.githubRepo!, ".planning/PROJECT.md", files.projectMd, message, branch, current?.sha);
-            }
-            if (files.requirementsMd) {
-                const current = await getFile(octokit, project.githubOwner!, project.githubRepo!, ".planning/REQUIREMENTS.md", branch);
-                await commitFile(octokit, project.githubOwner!, project.githubRepo!, ".planning/REQUIREMENTS.md", files.requirementsMd, message, branch, current?.sha);
-            }
-            if (files.roadmapMd) {
-                const current = await getFile(octokit, project.githubOwner!, project.githubRepo!, ".planning/ROADMAP.md", branch);
-                await commitFile(octokit, project.githubOwner!, project.githubRepo!, ".planning/ROADMAP.md", files.roadmapMd, message, branch, current?.sha);
-            }
-            if (files.stateMd) {
-                const current = await getFile(octokit, project.githubOwner!, project.githubRepo!, ".planning/STATE.md", branch);
-                await commitFile(octokit, project.githubOwner!, project.githubRepo!, ".planning/STATE.md", files.stateMd, message, branch, current?.sha);
-            }
-        } catch (gitErr) {
-            console.warn("[GSD GitHub Commit Warning]:", gitErr);
-        }
-    }
-
-    // Persist to dedicated database columns
+    // Persist GSD planning files to dedicated database columns only (do not pollute user repository)
     const updateData: Prisma.ProjectUpdateInput = {};
     if (files.stateMd !== undefined) {
         updateData.gsdState = { stateMd: files.stateMd };
@@ -260,7 +222,7 @@ export async function POST(
             stateMd: `---\ngsd_state_version: '1.0'\nstatus: planning\nprogress:\n  total_phases: 3\n  completed_phases: 0\n  total_plans: 4\n  completed_plans: 0\n  percent: 0\n---\n# Project State\n## Current Position\nPhase: 1 of 3 (Foundation)\nPlan: 0 of 4 in current phase\nStatus: Planning\nLast activity: Initialized project`
         };
 
-        await saveGsdFiles(params.projectId, project, octokit, initialFiles, branch, "chore(gsd): initialize GSD planning files");
+        await saveGsdFiles(params.projectId, initialFiles);
         return NextResponse.json({ success: true, message: "GSD Core planning initialized successfully" });
     }
 
@@ -329,10 +291,10 @@ export async function POST(
         state.phaseStatus = "Ready to plan";
         state.lastActivity = `Captured user design preference: "${userMsg.length > 40 ? userMsg.substring(0, 40) + "..." : userMsg}"`;
 
-        await saveGsdFiles(params.projectId, project, octokit, {
+        await saveGsdFiles(params.projectId, {
             contextMd: newContext,
             stateMd: serializeState(state)
-        }, branch, `chore(gsd): capture user decisions for phase ${state.currentPhaseNum}`);
+        });
 
         if (isGithub) {
             const contextPath = `${phaseDir}/${phaseNumString}-CONTEXT.md`;
@@ -353,10 +315,10 @@ export async function POST(
         state.phaseStatus = "Ready to execute";
         state.lastActivity = `Generated execution plan for phase ${state.currentPhaseNum}`;
 
-        await saveGsdFiles(params.projectId, project, octokit, {
+        await saveGsdFiles(params.projectId, {
             planMd: newPlanMd,
             stateMd: serializeState(state)
-        }, branch, `chore(gsd): create plan for phase ${state.currentPhaseNum}`);
+        });
 
         if (isGithub) {
             const planPath = `${phaseDir}/${phaseNumString}-01-PLAN.md`;
@@ -411,16 +373,11 @@ export async function POST(
         state.phaseStatus = errors.length > 0 ? "Execution issues found" : "Phase complete";
         state.lastActivity = `Executed plan 01 for phase ${state.currentPhaseNum} (${executionTasks.filter(t => t.status === "PASS").length}/${executionTasks.length} checks passed)`;
 
-        await saveGsdFiles(params.projectId, project, octokit, {
+        await saveGsdFiles(params.projectId, {
             stateMd: serializeState(state)
-        }, branch, `chore(gsd): execute plan 01 for phase ${state.currentPhaseNum}`);
+        });
 
         const summaryText = `# Plan 01 Execution Summary\n\nDate: ${new Date().toISOString()}\nPhase: ${state.currentPhaseNum}\n\n## Tasks Executed\n${executionTasks.map(t => `- [${t.status === "PASS" ? "x" : " "}] **${t.name}**: ${t.status} — ${t.details}`).join("\n")}\n\n## Outcome\n- Errors: ${errors.length}\n- Warnings: ${warnings.length}\n`;
-
-        if (isGithub) {
-            const summaryPath = `${phaseDir}/${phaseNumString}-01-SUMMARY.md`;
-            await commitFile(octokit, project.githubOwner!, project.githubRepo!, summaryPath, summaryText, `chore(gsd): log summary for phase ${state.currentPhaseNum}`, branch);
-        }
 
         return NextResponse.json({
             success: errors.length === 0,
@@ -459,34 +416,27 @@ export async function POST(
             state.lastActivity = `Completed and verified entire project milestones!`;
         }
 
-        await saveGsdFiles(params.projectId, project, octokit, {
+        await saveGsdFiles(params.projectId, {
             stateMd: serializeState(state),
             contextMd: "",
             planMd: ""
-        }, branch, `chore(gsd): verify phase ${completedPhaseNum}`);
-
-        if (isGithub) {
-            const uatPath = `${phaseDir}/${phaseNumString}-UAT.md`;
-            const uatContent = `# User Acceptance Testing — Phase ${completedPhaseNum}\n\n- [x] Schema integrity: PASSED\n- [x] Link security: PASSED\n- [x] Code checks: OK\n\nVerified at ${new Date().toISOString()}`;
-            await commitFile(octokit, project.githubOwner!, project.githubRepo!, uatPath, uatContent, `chore(gsd): verify phase ${completedPhaseNum}`, branch);
-        }
+        });
 
         return NextResponse.json({
             success: true,
             status: "VERIFIED",
-            message: `Phase ${completedPhaseNum} work verified successfully`,
+            message: `Phase ${completedPhaseNum} verified successfully!`,
+            state,
         });
     }
 
     if (action === "ship") {
         if (!isGithub) {
-            return NextResponse.json({
-                success: true,
-                status: "LOCAL_SHIP_COMPLETE",
-                message: "[LOCAL MODE] Project phase successfully shipped to local workspace & database.",
-                localSynced: true,
-                githubSynced: false,
-            });
+            return createErrorResponse(
+                "GITHUB_REQUIRED",
+                "Shipping a release requires a connected GitHub repository with write permissions.",
+                400
+            );
         }
 
         try {

@@ -11,6 +11,7 @@
     "test:coverage": "jest --config jest.config.js --coverage",
     "test:patchers": "node scripts/run-patcher-smoke-tests.mjs",
     "test:e2e": "playwright test",
+    "type-check": "tsc --noEmit",
     "postinstall": "prisma generate"
   },
   "dependencies": {

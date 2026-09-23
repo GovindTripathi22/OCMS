@@ -191,7 +191,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
             });
 
             const data = await response.json();
-            if (!response.ok) throw new Error(data.error || "Failed to scan page");
+            if (!response.ok) throw new Error(data.message || data.error || "Failed to scan page");
 
             if (data.schema) {
                 setSchema(data.schema);
@@ -458,7 +458,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
                     if (!response.ok) {
                         const errData = await response.json().catch(() => ({}));
-                        throw new Error(errData.error || `Upload failed with status ${response.status}`);
+                        throw new Error(errData.message || errData.error || `Upload failed with status ${response.status}`);
                     }
                     const asset = await response.json();
                     handleModelInjected(targetFieldId, asset.path || asset.urlHighPoly);
@@ -474,7 +474,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
                     if (!response.ok) {
                         const errData = await response.json().catch(() => ({}));
-                        throw new Error(errData.error || `Text formatting failed with status ${response.status}`);
+                        throw new Error(errData.message || errData.error || `Text formatting failed with status ${response.status}`);
                     }
                     const data = await response.json();
                     if (data.value) {

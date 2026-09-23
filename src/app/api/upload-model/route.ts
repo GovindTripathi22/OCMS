@@ -41,9 +41,18 @@ export async function POST(req: NextRequest) {
     const rateLimited = await withRateLimit("upload-model", req, { limit: 10, windowMs: 60_000 });
     if (rateLimited) return rateLimited;
 
+    // In serverless (Vercel, AWS Lambda), local disk is read-only
+    if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+        return createErrorResponse(
+            "SERVERLESS_STORAGE_UNSUPPORTED",
+            "3D model file uploads require cloud object storage (S3/R2) in serverless deployments.",
+            501
+        );
+    }
+
     // In production, local storage is only allowed if STORAGE_MODE === "local"
     const storageMode = process.env.STORAGE_MODE || (process.env.NODE_ENV === "production" ? "cloud" : "local");
-    if (storageMode !== "local" && (process.env.VERCEL || process.env.NODE_ENV === "production")) {
+    if (storageMode !== "local" && process.env.NODE_ENV === "production") {
         return createErrorResponse(
             "STORAGE_UNCONFIGURED",
             "Local filesystem storage is blocked in production. Configure cloud object storage (S3/R2) or set STORAGE_MODE=local.",

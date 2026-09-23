@@ -371,11 +371,7 @@ export default function LivePreview({
                         setHasError(true);
                         setErrorMessage("The preview request failed to load.");
                     }}
-                    sandbox={
-                        scriptMode === "static"
-                            ? "allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-                            : "allow-scripts allow-forms allow-popups allow-modals"
-                    }
+                    sandbox="allow-scripts allow-forms allow-popups allow-modals"
                     title="Live Website Preview"
                 />
             </div>

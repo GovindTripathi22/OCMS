@@ -63,9 +63,14 @@ export async function PATCH(
         return createErrorResponse(projectCheck.error.code, projectCheck.error.message, projectCheck.error.status);
     }
 
-    const { data, error: jsonError } = await parseJsonSafely<Record<string, unknown>>(req, 10 * 1024);
+    const { data: body, error: jsonError } = await parseJsonSafely<Record<string, unknown>>(req, 10 * 1024);
     if (jsonError) return jsonError;
 
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return createErrorResponse("INVALID_BODY", "Request body must be a JSON object", 400);
+    }
+
+    const data = body;
     const updatedData: Record<string, string> = {};
 
     if ("name" in (data || {})) {

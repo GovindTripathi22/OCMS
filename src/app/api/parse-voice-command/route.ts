@@ -13,17 +13,20 @@ function parseVoiceCommandLocal(prompt: string, schema: SchemaField[]) {
     if (quoteMatch) {
         newValue = (quoteMatch[1] || quoteMatch[2] || quoteMatch[3] || quoteMatch[4] || "").trim();
     } else {
-        const match = prompt.match(/\b(?:to|set|change|be|with|should\s+read|should\s+be|should\s+say|reads|says|read|write)\s+(.+)$/i);
-        if (match) {
-            newValue = match[1].trim();
-            newValue = newValue.replace(/^[:\s\-—]+/, "").trim();
-            newValue = newValue.replace(/^["'“”‘]|["'“”’]$/g, "").trim();
+        const toMatch = prompt.match(/\b(?:to|into|as|reads?|says?)\s+(.+)$/i);
+        if (toMatch) {
+            newValue = toMatch[1].trim();
         } else {
-            const words = prompt.trim().split(/\s+/);
-            if (words.length > 2) {
-                newValue = words.slice(-2).join(" ");
+            const match = prompt.match(/\b(?:set|change|write)\s+(.+)$/i);
+            if (match) {
+                newValue = match[1].trim();
             }
         }
+    }
+
+    if (newValue) {
+        newValue = newValue.replace(/^[:\s\-—]+/, "").trim();
+        newValue = newValue.replace(/^["'“”‘]|["'“”’]$/g, "").trim();
     }
 
     if (!newValue) return null;
@@ -61,8 +64,9 @@ function parseVoiceCommandLocal(prompt: string, schema: SchemaField[]) {
         }
     }
 
+    // Do NOT guess or default to the first field if no field was matched
     if (maxScore <= 0) {
-        bestField = schema.find((f) => f.type === "text") || schema[0] || null;
+        return null;
     }
 
     if (bestField) {

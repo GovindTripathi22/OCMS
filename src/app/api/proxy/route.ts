@@ -148,10 +148,16 @@ function isJsonDataScript(scriptTag: string) {
 }
 
 function filterScripts(html: string, scriptMode: ScriptMode) {
-    return html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, (scriptTag) => {
-        if (isJsonDataScript(scriptTag)) return scriptTag;
-        return scriptMode === "dynamic" ? scriptTag : "";
+    if (scriptMode === "dynamic") return html;
+    // Remove closed script tags (except JSON data scripts)
+    html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, (scriptTag) => {
+        return isJsonDataScript(scriptTag) ? scriptTag : "";
     });
+    // Remove unclosed or self-closing script tags
+    html = html.replace(/<script\b[^>]*\/?>/gi, (tag) => {
+        return isJsonDataScript(tag) ? tag : "";
+    });
+    return html;
 }
 
 function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, scriptMode: ScriptMode = "static", nonce?: string) {
@@ -165,7 +171,7 @@ function rewriteHtmlAssets(html: string, baseUrl: string, projectId?: string, sc
     rewritten = filterScripts(rewritten, scriptMode);
     rewritten = rewritten.replace(/\s(integrity|nonce)=("([^"]*)"|'([^']*)')/gi, "");
     if (scriptMode === "static") {
-        rewritten = rewritten.replace(/\son[a-z]+\s*=\s*("([^"]*)"|'([^']*)'|[^\s>]+)/gi, "");
+        rewritten = rewritten.replace(/[\s\/]on[a-z]+\s*=\s*("([^"]*)"|'([^']*)'|[^\s>]+)/gi, "");
     }
 
     // Inject meta referrer and CSS overrides inside <head> if present
@@ -402,7 +408,7 @@ export async function GET(req: NextRequest) {
                     headers: {
                         "Content-Type": contentType,
                         ...corsHeaders(req),
-                        "Cache-Control": "public, max-age=31536000",
+                        "Cache-Control": "private, max-age=3600",
                         "Referrer-Policy": "strict-origin-when-cross-origin",
                     },
                 });
@@ -417,7 +423,7 @@ export async function GET(req: NextRequest) {
                 headers: {
                     "Content-Type": contentType,
                     ...corsHeaders(req),
-                    "Cache-Control": "public, max-age=31536000",
+                    "Cache-Control": "private, max-age=3600",
                     "Referrer-Policy": "strict-origin-when-cross-origin",
                 },
             });
@@ -1741,7 +1747,9 @@ ${modelViewerScript}
             headers: {
                 "Content-Type": "text/html; charset=utf-8",
                 ...corsHeaders(req),
-                "Content-Security-Policy": "frame-ancestors *",
+                "Content-Security-Policy": "frame-ancestors 'self'",
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "private, no-store",
                 "Referrer-Policy": "strict-origin-when-cross-origin",
             },
         });

@@ -67,12 +67,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session: async ({ session, token }) => {
             if (session.user && token) {
                 session.user.id = (token.id as string) || (token.sub as string) || "user";
+                // Note: OCMS is 100% free and open-source; no paid tiers or paywalls exist.
                 session.user.subscription = "free";
             }
             return session;
         },
     },
 });
+
+/**
+ * SECURITY NOTE - Token Handling at Rest:
+ * GitHub OAuth tokens stored in the Account table should be encrypted using AES-256-GCM
+ * with a key derived from AUTH_SECRET when persistent production database access is shared.
+ */
 
 /**
  * Returns the authenticated user ID.

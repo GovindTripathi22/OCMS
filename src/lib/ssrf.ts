@@ -330,11 +330,16 @@ export async function fetchWithValidatedSsrfUrl(
         if (currentValidation.resolvedIp && currentValidation.family) {
             const pinnedIp = currentValidation.resolvedIp;
             const pinnedFamily = currentValidation.family;
+            const customLookup: net.LookupFunction = (_hostname, options, callback) => {
+                if (options && options.all) {
+                    callback(null, [{ address: pinnedIp, family: pinnedFamily }]);
+                } else {
+                    callback(null, pinnedIp, pinnedFamily);
+                }
+            };
             dispatcher = new Agent({
                 connect: {
-                    lookup(_hostname, _options, callback) {
-                        callback(null, pinnedIp, pinnedFamily);
-                    },
+                    lookup: customLookup,
                 },
             });
         }

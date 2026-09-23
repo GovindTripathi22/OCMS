@@ -65,6 +65,9 @@ export async function POST(req: NextRequest) {
     }
 
     const targetPath = path.normalize(rawTarget);
+    if (!targetPath.toLowerCase().endsWith(".css")) {
+        return createErrorResponse("INVALID_PATH", "Only .css files may be targeted for theme colors", 400);
+    }
     if (targetPath.startsWith("..") || path.isAbsolute(rawTarget) || rawTarget.includes("../") || rawTarget.includes("..\\")) {
         return createErrorResponse("PATH_TRAVERSAL_BLOCKED", `Access denied to path: ${rawTarget}`, 403);
     }
@@ -83,10 +86,10 @@ export async function POST(req: NextRequest) {
 
     // If GitHub is not configured or in mock/local mode, write to local workspace
     if (!isGithubConfigured) {
-        if (process.env.NODE_ENV === "production" && process.env.STORAGE_MODE !== "local") {
+        if (process.env.NODE_ENV === "production") {
             return createErrorResponse(
                 "GITHUB_REQUIRED",
-                "GitHub synchronization is required in production. Please connect a GitHub account with repo write permissions.",
+                "Local filesystem sync is not available in production. Connect a real GitHub account.",
                 403
             );
         }

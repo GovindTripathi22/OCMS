@@ -434,6 +434,29 @@ export async function POST(req: NextRequest) {
         const commitMessage = buildCommitMessage(patchResult, "", astChanges, projectName, targetPath);
         const encodedContent = Buffer.from(patchResult.code).toString("base64");
 
+        const isDefaultBranch = targetBranch === "main" || targetBranch === "master";
+        const publishBranch = isDefaultBranch ? `ocms/update-${Date.now()}` : targetBranch;
+
+        if (isDefaultBranch) {
+            try {
+                const refData = await octokit.git.getRef({
+                    owner: targetOwner,
+                    repo: targetRepo,
+                    ref: `heads/${targetBranch}`,
+                });
+                const baseSha = refData.data.object.sha;
+
+                await octokit.git.createRef({
+                    owner: targetOwner,
+                    repo: targetRepo,
+                    ref: `refs/heads/${publishBranch}`,
+                    sha: baseSha,
+                });
+            } catch (branchErr) {
+                console.warn("[GitHub Branch Create Warning]:", branchErr);
+            }
+        }
+
         let updateResult;
         try {
             const { data } = await octokit.repos.createOrUpdateFileContents({
@@ -443,7 +466,7 @@ export async function POST(req: NextRequest) {
                 message: commitMessage,
                 content: encodedContent,
                 sha: fileSha,
-                branch: targetBranch,
+                branch: publishBranch,
             });
             updateResult = data;
         } catch (err: unknown) {
@@ -473,15 +496,38 @@ export async function POST(req: NextRequest) {
             }, { status: 500 });
         }
 
+        let commitUrl = updateResult.commit.html_url;
+        if (isDefaultBranch) {
+            try {
+                const prResult = await octokit.pulls.create({
+                    owner: targetOwner,
+                    repo: targetRepo,
+                    title: commitMessage,
+                    head: publishBranch,
+                    base: targetBranch,
+                    body: "Automated content update published via OCMS.",
+                });
+                commitUrl = prResult.data.html_url;
+            } catch (prErr) {
+                console.warn("[GitHub PR Create Warning]:", prErr);
+            }
+        }
+
         return patchJson({
             success: true,
             localSynced,
             githubSynced: true,
             validationPassed: true,
-            commitUrl: updateResult.commit.html_url,
+            commitUrl,
             errors: [],
             conflicts: false,
-            message: buildCommitMessage(patchResult, `Pushed to branch "${targetBranch}" successfully.`, astChanges, projectName, targetPath),
+            message: buildCommitMessage(
+                patchResult,
+                isDefaultBranch ? `Created pull request against "${targetBranch}".` : `Pushed to branch "${targetBranch}" successfully.`,
+                astChanges,
+                projectName,
+                targetPath
+            ),
         }, { status: 200 }, patchResult);
 
     } catch (error: unknown) {

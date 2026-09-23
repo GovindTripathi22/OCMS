@@ -32,7 +32,7 @@ export function patchCssWithThemeColors(currentCss: string, colors: string[]): s
         const trimmed = innerContent.trimEnd();
         const separator = trimmed.length > 0 ? "\n\n" : "\n";
         const updatedInner = trimmed + separator + declarations + "\n";
-        return currentCss.replace(rootBlockRe, `$1${updatedInner}$3`);
+        return currentCss.replace(rootBlockRe, () => `${match[1]}${updatedInner}${match[3]}`);
     }
 
     const rootBlock = `:root {\n${declarations}\n}\n\n`;

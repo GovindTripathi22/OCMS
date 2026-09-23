@@ -611,10 +611,15 @@ function findJSXAttribute(openingElement: t.JSXOpeningElement, name: string): t.
 
 function setJSXAttribute(openingElement: t.JSXOpeningElement, name: string, value: string | number): void {
     const existing = findJSXAttribute(openingElement, name);
-    const nextValue =
-        typeof value === "number"
-            ? t.jsxExpressionContainer(t.numericLiteral(value))
-            : t.stringLiteral(value);
+    let nextValue: t.JSXAttribute["value"];
+
+    if (typeof value === "number") {
+        nextValue = t.jsxExpressionContainer(t.numericLiteral(value));
+    } else if (typeof value === "string" && (value.includes('"') || value.includes("'"))) {
+        nextValue = t.jsxExpressionContainer(t.stringLiteral(value));
+    } else {
+        nextValue = t.stringLiteral(value);
+    }
 
     if (existing) {
         existing.value = nextValue;
@@ -677,6 +682,13 @@ export function parseJSXFragmentOrChildren(markup: string): (t.JSXElement | t.JS
     }
 }
 
+function createSafeJSXTextNode(text: string): t.JSXText | t.JSXExpressionContainer {
+    if (/[<>{}]/.test(text)) {
+        return t.jsxExpressionContainer(t.stringLiteral(text));
+    }
+    return t.jsxText(text);
+}
+
 function preserveRichTextChildren(
     children: (t.JSXElement | t.JSXText | t.JSXExpressionContainer | t.JSXFragment | t.JSXSpreadChild)[],
     newValue: string
@@ -736,9 +748,9 @@ function preserveRichTextChildren(
         const newAfter = newValue.slice(idx + elementOldText.length);
 
         const result: typeof children = [];
-        if (newBefore) result.push(t.jsxText(newBefore));
+        if (newBefore) result.push(createSafeJSXTextNode(newBefore));
         result.push(clonedElement);
-        if (newAfter) result.push(t.jsxText(newAfter));
+        if (newAfter) result.push(createSafeJSXTextNode(newAfter));
         return result;
     }
 
@@ -750,7 +762,7 @@ function preserveRichTextChildren(
             const preservedBefore = words.slice(0, beforeWords.length).join(" ") + " ";
             const inner = words.slice(beforeWords.length).join(" ");
             const result: typeof children = [];
-            result.push(t.jsxText(preservedBefore));
+            result.push(createSafeJSXTextNode(preservedBefore));
             replaceElementText(clonedElement, inner);
             result.push(clonedElement);
             return result;
@@ -767,8 +779,10 @@ function replaceElementText(node: t.JSXElement, newValue: string): void {
         node.closingElement = t.jsxClosingElement(t.cloneNode(node.openingElement.name));
     }
 
-    // 1. If newValue contains markup tags, parse into real JSX nodes
-    if (/<[a-zA-Z][^>]*>/i.test(newValue)) {
+    // 1. Only parse inline HTML markup if it is safe standard formatting (b, i, em, strong, u, s, span, a)
+    // Reject dangerous tags (script, img, button, svg, input, iframe, etc.) and inline event handlers (onClick, on...)
+    const isDangerousMarkup = /<\s*(?:script|iframe|object|embed|svg|img|style|link|button|input|form)\b|[\s\/]on[a-z]+\s*=|javascript:/i.test(newValue);
+    if (!isDangerousMarkup && /<[a-zA-Z][^>]*>/i.test(newValue)) {
         const parsed = parseJSXFragmentOrChildren(newValue);
         if (parsed && parsed.length > 0) {
             node.children = parsed;
@@ -786,12 +800,8 @@ function replaceElementText(node: t.JSXElement, newValue: string): void {
         }
     }
 
-    // 3. Fallback plain text replacement
-    node.children = [
-        !/[{}]/.test(newValue)
-            ? t.jsxText(newValue)
-            : t.jsxExpressionContainer(t.stringLiteral(newValue))
-    ];
+    // 3. Fallback plain text replacement with safe JSX delimiter escaping
+    node.children = [createSafeJSXTextNode(newValue)];
 }
 
 function findFirstElementNode(

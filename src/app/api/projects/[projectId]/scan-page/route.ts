@@ -128,17 +128,20 @@ export async function POST(
     const mergedSchema = [...preservedFields, ...deduplicatedNewFields].slice(0, LIMITS.SCHEMA_MAX_FIELDS);
 
     try {
+        const updatedRevision = (existingProject.schemaRevision || 0) + 1;
+
         await prisma.project.update({
             where: { id: params.projectId },
             data: {
                 generatedSchema: mergedSchema as unknown as Prisma.InputJsonValue,
-                schemaRevision: (existingProject.schemaRevision || 0) + 1,
+                schemaRevision: updatedRevision,
             },
         });
 
         return NextResponse.json({
             success: true,
             schema: mergedSchema,
+            schemaRevision: updatedRevision,
             newFieldsCount: deduplicatedNewFields.length,
             preservedFieldsCount: preservedFields.length,
         });

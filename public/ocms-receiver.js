@@ -5,7 +5,7 @@
  * Validates message source, origin, nonce, and bounded payload sizes.
  *
  * Usage:
- *   <script src="/ocms-receiver.js" data-allowed-origin="*" data-nonce="YOUR_NONCE"></script>
+ *   <script src="/ocms-receiver.js" data-allowed-origin="https://your-app.example.com" data-nonce="YOUR_NONCE"></script>
  */
 (function () {
     // Determine configuration from current script tag or globals
@@ -85,7 +85,13 @@
                 if (change.borderRadius) el.style.borderRadius = change.borderRadius;
             } else if (change.type === "link") {
                 if (el.tagName === "A") {
-                    el.href = value;
+                    // Reject javascript: and data: protocols
+                    var lcValue = value.toLowerCase().trim();
+                    if (lcValue.indexOf("javascript:") === 0 || lcValue.indexOf("data:") === 0 || lcValue.indexOf("vbscript:") === 0) {
+                        // Dangerous protocol — do not set
+                    } else {
+                        el.href = value;
+                    }
                 }
             } else if (change.type === "3d-model") {
                 if (el.tagName.toLowerCase() === "model-viewer") {
@@ -94,15 +100,8 @@
                     if (change.metalness !== undefined) el.setAttribute("metalness", String(change.metalness));
                 }
             } else {
-                // Text updates with rich text preservation
-                if (/<[a-zA-Z][^>]*>/i.test(value)) {
-                    el.innerHTML = value;
-                } else if (el.children.length === 1) {
-                    var child = el.children[0];
-                    child.textContent = value;
-                } else {
-                    el.textContent = value;
-                }
+                // Text updates — always use textContent to prevent XSS
+                el.textContent = value;
             }
         });
     });

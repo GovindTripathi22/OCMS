@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  verify:
+    name: Lint, Test & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run TypeScript type check
+        run: npm run type-check
+
+      - name: Run unit & integration tests
+        run: npm test
+
+      - name: Run patcher smoke tests
+        run: npm run test:patchers
+
+      - name: Build Next.js application
+        run: npm run build
+        env:
+          NEXTAUTH_SECRET: ci-dummy-nextauth-secret-32-chars-long
+          AUTH_SECRET: ci-dummy-nextauth-secret-32-chars-long
+          NEXTAUTH_URL: http://localhost:3000
+          DATABASE_URL: file:./ci-dev.db

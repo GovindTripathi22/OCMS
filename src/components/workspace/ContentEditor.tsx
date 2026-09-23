@@ -309,7 +309,7 @@ export default function ContentEditor({
                 body: JSON.stringify({ url: previewUrl }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Failed to audit page");
+            if (!res.ok) throw new Error(data.message || data.error || "Failed to audit page");
             if (data.scores) {
                 setLighthouseScore(data.scores.performance);
                 setAccessibilityScore(data.scores.accessibility);
@@ -421,7 +421,7 @@ export default function ContentEditor({
                 body: JSON.stringify({ action, payload })
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Action failed");
+            if (!res.ok) throw new Error(data.message || data.error || "Action failed");
             
             await fetchGsdStatus();
             setSyncStatus("success");
@@ -495,7 +495,7 @@ export default function ContentEditor({
 
             if (!res.ok) {
                 const data = await res.json();
-                throw new Error(data.error || "Failed to save variant");
+                throw new Error(data.message || data.error || "Failed to save variant");
             }
 
             setTextureApplyStatus("success");
@@ -598,7 +598,7 @@ export default function ContentEditor({
                 }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Unknown error");
+            if (!res.ok) throw new Error(data.message || data.error || "Unknown error");
             setSyncStatus("success");
             const unmatchedSelectors = new Set(
                 Array.isArray(data.unmatchedSelectors) ? data.unmatchedSelectors : []
@@ -650,13 +650,14 @@ export default function ContentEditor({
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    projectId,
                     repoOwner: githubOwner,
                     repoName: githubRepo,
                     colors: currentColors,
                 }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Failed to apply colors");
+            if (!res.ok) throw new Error(data.message || data.error || "Failed to apply colors");
             setColorApplyStatus("success");
             setTimeout(() => setColorApplyStatus("idle"), 4000);
         } catch (err: unknown) {
@@ -793,7 +794,7 @@ export default function ContentEditor({
                 body: JSON.stringify({ schema, targetAudience: abTarget }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Failed to generate variant");
+            if (!res.ok) throw new Error(data.message || data.error || "Failed to generate variant");
             if (data.schema && onSchemaReplace) {
                 onSchemaReplace(data.schema);
             }
@@ -817,7 +818,7 @@ export default function ContentEditor({
                 body: JSON.stringify({ url: componentUrl }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Failed to import component");
+            if (!res.ok) throw new Error(data.message || data.error || "Failed to import component");
             if (typeof navigator !== "undefined" && navigator.clipboard && data.code) {
                 await navigator.clipboard.writeText(data.code).catch(() => {});
             }

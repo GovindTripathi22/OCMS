@@ -188,16 +188,15 @@ export async function POST(req: NextRequest) {
         const signature = req.headers.get("x-hub-signature-256") || "";
         const event = req.headers.get("x-github-event") || "";
 
-        // Enforce signature verification in production
+        // Enforce signature verification (fail-closed if secret is missing)
         const secret = process.env.GITHUB_WEBHOOK_SECRET;
-        const isProduction = process.env.NODE_ENV === "production";
         
-        if (isProduction && !secret) {
-            console.error("[Webhook Error]: GITHUB_WEBHOOK_SECRET is missing in production.");
+        if (!secret) {
+            console.error("[Webhook Error]: GITHUB_WEBHOOK_SECRET is not configured.");
             return NextResponse.json({ error: "Webhook secret configuration missing" }, { status: 500 });
         }
 
-        if (secret && !verifySignature(payloadText, signature, secret)) {
+        if (!verifySignature(payloadText, signature, secret)) {
             console.error("[Webhook Error]: Signature verification failed.");
             return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
         }
@@ -217,14 +216,17 @@ export async function POST(req: NextRequest) {
 
         const [repoOwner, repoName] = repoFullName.split("/");
 
-        // Find projects linked to this repo
-        const projects = await prisma.project.findMany({
+        // Find projects linked to this repo (case-insensitive)
+        const branchProjects = await prisma.project.findMany({
             where: {
-                githubOwner: { equals: repoOwner },
-                githubRepo: { equals: repoName },
                 githubBranch: { equals: branch },
             },
         });
+
+        const projects = branchProjects.filter((p) =>
+            p.githubOwner?.toLowerCase() === repoOwner.toLowerCase() &&
+            p.githubRepo?.toLowerCase() === repoName.toLowerCase()
+        );
 
         if (projects.length === 0) {
             return NextResponse.json({ message: "No matching projects found for this repository." }, { status: 200 });

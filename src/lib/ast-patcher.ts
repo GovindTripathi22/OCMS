@@ -95,6 +95,20 @@ export function patchJSXWithReport(sourceCode: string, changes: ASTChange[]): Pa
         sourceCode
     ).code;
 
+    // Validate syntax of patched output before returning
+    try {
+        parseTSX(code);
+    } catch (syntaxErr: unknown) {
+        const msg = syntaxErr instanceof Error ? syntaxErr.message : String(syntaxErr);
+        console.error("[AST Patcher] Syntax validation failed for patched code:", msg);
+        return {
+            code: sourceCode,
+            appliedCount: 0,
+            matchedSelectors: [],
+            unmatchedSelectors: Array.from(matchedSelectors).map((s) => `${s} (syntax validation failed)`),
+        };
+    }
+
     return {
         code,
         appliedCount,

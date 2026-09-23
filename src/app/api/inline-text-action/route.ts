@@ -21,73 +21,6 @@ function localSummarize(text: string): string {
     return trimmed;
 }
 
-function localChangeTone(text: string): string {
-    const replacements: Record<string, string> = {
-        "you can": "you are empowered to",
-        "we provide": "we deliver",
-        "we have": "we offer",
-        "want to": "aim to",
-        "need to": "aspire to",
-        "build": "craft",
-        "making": "forging",
-        "make": "craft",
-        "easy": "seamless",
-        "easily": "effortlessly",
-        "fast": "blazing-fast",
-        "simple": "intuitive",
-        "simply": "intuitively",
-        "help": "streamline",
-        "use": "leverage",
-        "start": "launch",
-        "good": "exceptional",
-        "better": "optimum",
-        "change": "transform",
-        "website": "platform",
-        "program": "solution",
-        "creator": "architect",
-        "nice": "refined",
-        "great": "stellar",
-        "cool": "sophisticated",
-        "awesome": "outstanding",
-        "developer": "engineer",
-        "developers": "engineers",
-        "code": "logic",
-        "run": "execute",
-        "show": "visualize",
-        "look": "observe",
-        "see": "preview",
-        "new": "novel",
-        "old": "legacy",
-        "big": "substantial",
-        "small": "granular",
-        "quick": "instant",
-        "automatically": "seamlessly",
-        "automatic": "autonomous",
-        "sync": "synchronize",
-        "free": "local-first",
-        "paid": "premium",
-        "ai": "local rules",
-        "copilot": "editor",
-        "assistant": "workspace",
-        "smart": "deterministic",
-        "smarter": "more precise"
-    };
-    let modified = text;
-    for (const [word, replacement] of Object.entries(replacements)) {
-        const regex = new RegExp(`\\b${word}\\b`, "gi");
-        modified = modified.replace(regex, (match) => {
-            if (match[0] === match[0].toUpperCase()) {
-                if (match.length > 1 && match[1] === match[1].toUpperCase()) {
-                    return replacement.toUpperCase();
-                }
-                return replacement.charAt(0).toUpperCase() + replacement.slice(1);
-            }
-            return replacement;
-        });
-    }
-    return modified;
-}
-
 export async function POST(req: NextRequest) {
     const rateLimited = await withRateLimit("inline-text-action", req, { limit: 40, windowMs: 60_000 });
     if (rateLimited) return rateLimited;
@@ -118,7 +51,11 @@ export async function POST(req: NextRequest) {
     if (action === "summarize") {
         result = localSummarize(value);
     } else if (action === "change-tone") {
-        result = localChangeTone(value);
+        return createErrorResponse(
+            "NOT_IMPLEMENTED",
+            "Tone modification requires generative AI capabilities and is disabled in AI-free mode.",
+            501
+        );
     } else {
         return createErrorResponse("INVALID_ACTION", `Unsupported action "${action}". Allowed: summarize, change-tone`, 400);
     }

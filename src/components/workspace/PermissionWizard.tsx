@@ -147,8 +147,8 @@ export default function PermissionWizard({
                             setSelectedFile(data.files[0].path);
                         }
                     }
-                } else if (data.error) {
-                    setErrorMessage(data.error);
+                } else if (data.message || data.error) {
+                    setErrorMessage(data.message || data.error);
                 }
             } catch (err) {
                 console.error("Failed to load repo files", err);
@@ -189,7 +189,7 @@ export default function PermissionWizard({
                 }
                 setStep(3);
             } else {
-                setErrorMessage(data.error || "Failed to set up offline mode.");
+                setErrorMessage(data.message || data.error || "Failed to set up offline mode.");
             }
         } catch (err) {
             console.error("Offline connect error:", err);
@@ -224,7 +224,7 @@ export default function PermissionWizard({
                 });
 
                 const data = await response.json();
-                if (!response.ok) throw new Error(data.error || "Failed to update project settings");
+                if (!response.ok) throw new Error(data.message || data.error || "Failed to update project settings");
             }
 
             // Callback to update parent client state

@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { Octokit } from "@octokit/rest";
 import * as cheerio from "cheerio";
 import crypto from "crypto";
+import { decryptToken } from "@/lib/crypto";
 
 // ---------- Types ----------
 
@@ -171,6 +172,24 @@ function extractViaRegex(
     return null;
 }
 
+// In-memory cache to prevent replay attacks / duplicate webhook delivery processing
+const processedDeliveries = new Map<string, number>();
+const DELIVERY_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+function isDuplicateDelivery(deliveryId: string): boolean {
+    const now = Date.now();
+    processedDeliveries.forEach((timestamp, id) => {
+        if (now - timestamp > DELIVERY_TTL_MS) {
+            processedDeliveries.delete(id);
+        }
+    });
+    if (processedDeliveries.has(deliveryId)) {
+        return true;
+    }
+    processedDeliveries.set(deliveryId, now);
+    return false;
+}
+
 // Verification function for GitHub Webhook Signature
 function verifySignature(payload: string, signature: string, secret: string): boolean {
     const hmac = crypto.createHmac("sha256", secret);
@@ -187,6 +206,7 @@ export async function POST(req: NextRequest) {
         }
         const signature = req.headers.get("x-hub-signature-256") || "";
         const event = req.headers.get("x-github-event") || "";
+        const deliveryId = req.headers.get("x-github-delivery");
 
         // Enforce signature verification (fail-closed if secret is missing)
         const secret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -199,6 +219,11 @@ export async function POST(req: NextRequest) {
         if (!verifySignature(payloadText, signature, secret)) {
             console.error("[Webhook Error]: Signature verification failed.");
             return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+        }
+
+        // Webhook Idempotency Check: reject duplicate deliveries
+        if (deliveryId && isDuplicateDelivery(deliveryId)) {
+            return NextResponse.json({ message: "Delivery already processed", duplicate: true }, { status: 200 });
         }
 
         if (event !== "push") {
@@ -263,7 +288,7 @@ export async function POST(req: NextRequest) {
             });
 
             // Use user's access token
-            const token = account?.access_token;
+            const token = account?.access_token ? decryptToken(account.access_token) : null;
             if (!token) {
                 console.warn(`[Webhook Sync] No GitHub token found for user ${project.userId}. Skipping.`);
                 continue;

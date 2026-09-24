@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { Octokit } from "@octokit/rest";
 import fs from "fs";
 import path from "path";
+import { decryptToken } from "@/lib/crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -22,11 +23,13 @@ export async function GET(req: NextRequest) {
             },
         });
 
-        if (!account || !account.access_token) {
+        const accessToken = account?.access_token ? decryptToken(account.access_token) : null;
+
+        if (!account || !accessToken) {
             return NextResponse.json({ authenticated: false, repos: [] });
         }
 
-        if (account.access_token === "mock_token") {
+        if (accessToken === "mock_token") {
             const searchParams = req.nextUrl.searchParams;
             const owner = searchParams.get("owner");
             const repo = searchParams.get("repo");
@@ -111,7 +114,7 @@ export async function GET(req: NextRequest) {
             });
         }
 
-        const octokit = new Octokit({ auth: account.access_token });
+        const octokit = new Octokit({ auth: accessToken });
 
         const searchParams = req.nextUrl.searchParams;
         const owner = searchParams.get("owner");

@@ -8,6 +8,7 @@ import fs from "fs/promises";
 import path from "path";
 
 import { patchCssWithThemeColors } from "@/lib/theme-css-patcher";
+import { decryptToken } from "@/lib/crypto";
 
 interface ThemeColorsRequestBody {
     projectId: string;
@@ -77,9 +78,11 @@ export async function POST(req: NextRequest) {
         where: { userId, provider: "github" },
     });
 
+    const accessToken = account?.access_token ? decryptToken(account.access_token) : null;
+
     const isGithubConfigured = Boolean(
-        account?.access_token &&
-        account.access_token !== "mock_token" &&
+        accessToken &&
+        accessToken !== "mock_token" &&
         project.githubOwner &&
         project.githubRepo
     );
@@ -134,7 +137,7 @@ export async function POST(req: NextRequest) {
     }
 
     // GitHub Push Flow
-    const octokit = new Octokit({ auth: account!.access_token! });
+    const octokit = new Octokit({ auth: accessToken! });
     const repoOwner = project.githubOwner!;
     const repoName = project.githubRepo!;
     const repoBranch = project.githubBranch || "main";

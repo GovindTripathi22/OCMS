@@ -34,7 +34,7 @@ export default defineConfig({
       AUTH_SECRET: "/qFU+YZy+FFr7NsaJQvtXEGfccdnOpLwYI7wDt2IEp8=",
       DATABASE_URL: "file:./dev.db",
       NEXTAUTH_URL: "http://127.0.0.1:3000",
-      LOCAL_WORKSPACE_PATH: "D:\\MODEL\\ocms",
+      LOCAL_WORKSPACE_PATH: process.env.LOCAL_WORKSPACE_PATH || process.cwd(),
     },
   },
 });

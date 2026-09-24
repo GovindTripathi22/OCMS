@@ -14,32 +14,38 @@ declare module "next-auth" {
         subscription?: string;
     }
 }
-
-function resolveAuthSecret(): string {
-    const secret = process.env.AUTH_SECRET;
-    if (!secret || secret.trim() === "") {
-        if (process.env.NODE_ENV === "production") {
-            throw new Error(
-                "[OCMS Auth Security] FATAL: AUTH_SECRET must be configured in production. Failing closed."
-            );
-        }
-        if (process.env.NODE_ENV === "test") {
-            return "ocms_test_only_auth_secret_do_not_use_in_production_32_chars";
-        }
-        throw new Error(
-            "[OCMS Auth Security] AUTH_SECRET is not configured in your environment. Please set AUTH_SECRET in .env.local."
-        );
-    }
-    return secret;
-}
+import { encryptToken, decryptToken } from "@/lib/crypto";
+import { getAuthSecret } from "@/lib/env";
 
 // Canonical Prisma Adapter: database failures must remain real failures
-const adapter = PrismaAdapter(prisma);
+const baseAdapter = PrismaAdapter(prisma);
+const secureAdapter = {
+    ...baseAdapter,
+    linkAccount: async (account: Parameters<NonNullable<typeof baseAdapter.linkAccount>>[0]) => {
+        const encryptedAccount = {
+            ...account,
+            access_token: account.access_token ? encryptToken(account.access_token) : account.access_token,
+            refresh_token: account.refresh_token ? encryptToken(account.refresh_token) : account.refresh_token,
+        };
+        if (!baseAdapter.linkAccount) return undefined;
+        return baseAdapter.linkAccount(encryptedAccount);
+    },
+    getAccount: async (providerAccountId: string, provider: string) => {
+        if (!baseAdapter.getAccount) return null;
+        const account = await baseAdapter.getAccount(providerAccountId, provider);
+        if (!account) return null;
+        return {
+            ...account,
+            access_token: account.access_token ? decryptToken(account.access_token) : account.access_token,
+            refresh_token: account.refresh_token ? decryptToken(account.refresh_token) : account.refresh_token,
+        };
+    },
+} as unknown as ReturnType<typeof PrismaAdapter>;
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-    adapter,
+    adapter: secureAdapter,
     trustHost: true,
-    secret: resolveAuthSecret(),
+    secret: getAuthSecret(),
     session: {
         strategy: "jwt",
     },

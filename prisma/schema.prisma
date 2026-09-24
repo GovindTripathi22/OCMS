@@ -181,6 +181,14 @@ model SceneGraph {
 }
 
 
+model WebhookEvent {
+  id          String   @id // Delivery GUID from x-github-delivery
+  event       String
+  processedAt DateTime @default(now())
+
+  @@index([processedAt])
+}
+
 // ─────────────────────────────────────────────────
 // ENUMS
 // ─────────────────────────────────────────────────

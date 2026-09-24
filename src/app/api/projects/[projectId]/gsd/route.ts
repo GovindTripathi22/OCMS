@@ -13,6 +13,7 @@ import {
     serializeState,
 } from "@/lib/gsd-parser";
 import { Prisma } from "@prisma/client";
+import { getUserGitHubAccessToken } from "@/lib/crypto";
 
 interface GsdFiles {
     projectMd: string;
@@ -24,11 +25,7 @@ interface GsdFiles {
 }
 
 async function getAccessToken(userId: string): Promise<string | null> {
-    const account = await prisma.account.findFirst({
-        where: { userId, provider: "github" },
-        select: { access_token: true }
-    });
-    return account?.access_token || null;
+    return getUserGitHubAccessToken(userId);
 }
 
 async function getFile(

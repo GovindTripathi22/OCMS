@@ -10,6 +10,8 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 
+import { decryptToken } from "@/lib/crypto";
+
 export const dynamic = "force-dynamic";
 
 /** Allowlist of safe characters for repo owner / repo name */
@@ -28,7 +30,7 @@ function isPathSafe(filePath: string): boolean {
 
 /**
  * Atomically writes content to a target file by writing to a temporary file,
- * verifying its content, and renaming it to the target.
+ * verifying its content, snapshotting existing content, and renaming it to the target.
  */
 function atomicWriteFile(targetFilePath: string, content: string): void {
     const dir = path.dirname(targetFilePath);
@@ -39,6 +41,12 @@ function atomicWriteFile(targetFilePath: string, content: string): void {
         dir,
         `.${path.basename(targetFilePath)}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
     );
+    let originalBackup: Buffer | null = null;
+    if (fs.existsSync(targetFilePath)) {
+        try {
+            originalBackup = fs.readFileSync(targetFilePath);
+        } catch {}
+    }
     try {
         fs.writeFileSync(tempFilePath, content, "utf8");
         const verified = fs.readFileSync(tempFilePath, "utf8");
@@ -50,6 +58,11 @@ function atomicWriteFile(targetFilePath: string, content: string): void {
         try {
             if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
         } catch {}
+        if (originalBackup !== null) {
+            try {
+                fs.writeFileSync(targetFilePath, originalBackup);
+            } catch {}
+        }
         throw err;
     }
 }
@@ -199,8 +212,10 @@ export async function POST(req: NextRequest) {
             },
         });
 
+        const accessToken = account?.access_token ? decryptToken(account.access_token) : null;
+
         // Fail-closed on missing GitHub connection (zero simulated success)
-        if (!account || !account.access_token) {
+        if (!account || !accessToken) {
             return patchJson({
                 success: false,
                 localSynced: false,
@@ -214,7 +229,7 @@ export async function POST(req: NextRequest) {
         }
 
         // ── Local filesystem mode (mock_token = dev mode) ──
-        if (account.access_token === "mock_token") {
+        if (accessToken === "mock_token") {
             // Block local writes in production
             if (process.env.NODE_ENV === "production") {
                 return patchJson({
@@ -330,7 +345,7 @@ export async function POST(req: NextRequest) {
         }
 
         // ── Real GitHub push ──
-        const octokit = new Octokit({ auth: account.access_token });
+        const octokit = new Octokit({ auth: accessToken });
 
         // STEP 1: Fetch file from GitHub
         let fileData;

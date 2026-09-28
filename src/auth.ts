@@ -1,5 +1,6 @@
 import NextAuth, { type DefaultSession } from "next-auth";
 import GitHub from "next-auth/providers/github";
+import Credentials from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/prisma";
 
@@ -42,6 +43,83 @@ const secureAdapter = {
     },
 } as unknown as ReturnType<typeof PrismaAdapter>;
 
+const rawGithubId = process.env.GITHUB_CLIENT_ID?.trim() ?? "";
+const rawGithubSecret = process.env.GITHUB_CLIENT_SECRET?.trim() ?? "";
+const isGithubConfigured = Boolean(
+    rawGithubId &&
+    rawGithubSecret &&
+    !["your_github_client_id_here", "your_github_client_secret_here", "dummy_client_id", "placeholder"].some((p) =>
+        rawGithubId.toLowerCase().includes(p) || rawGithubSecret.toLowerCase().includes(p)
+    )
+);
+
+const isProd = process.env.NODE_ENV === "production";
+const allowGuest = process.env.ALLOW_GUEST_ACCESS === "true";
+
+// Build list of active authentication providers
+const activeProviders = [];
+
+if (isGithubConfigured) {
+    activeProviders.push(
+        GitHub({
+            clientId: rawGithubId,
+            clientSecret: rawGithubSecret,
+            authorization: {
+                params: {
+                    scope: "read:user user:email repo",
+                },
+            },
+        })
+    );
+}
+
+// In local development or test mode, register Credentials provider for instant guest authentication
+if (!isProd && allowGuest) {
+    activeProviders.push(
+        Credentials({
+            id: "guest",
+            name: "Guest Mode",
+            credentials: {},
+            async authorize() {
+                if (process.env.NODE_ENV === "production" || process.env.ALLOW_GUEST_ACCESS !== "true") {
+                    return null;
+                }
+                let guestUser = await prisma.user.findFirst({
+                    where: {
+                        OR: [
+                            { email: "guest@ocms.dev" },
+                            { email: "guest@ocms.ai" },
+                        ],
+                    },
+                });
+                if (!guestUser) {
+                    guestUser = await prisma.user.create({
+                        data: {
+                            name: "Guest User",
+                            email: "guest@ocms.dev",
+                        },
+                    });
+                }
+                return {
+                    id: guestUser.id,
+                    name: guestUser.name,
+                    email: guestUser.email,
+                };
+            },
+        })
+    );
+}
+
+// Fallback provider so NextAuth always has at least one provider defined
+if (activeProviders.length === 0) {
+    activeProviders.push(
+        GitHub({
+            clientId: rawGithubId || "unconfigured",
+            clientSecret: rawGithubSecret || "unconfigured",
+        })
+    );
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
     adapter: secureAdapter,
     trustHost: true,
@@ -49,17 +127,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     session: {
         strategy: "jwt",
     },
-    providers: [
-        GitHub({
-            clientId: process.env.GITHUB_CLIENT_ID ?? "",
-            clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
-            authorization: {
-                params: {
-                    scope: "read:user user:email repo",
-                },
-            },
-        }),
-    ],
+    pages: {
+        signIn: "/auth/signin",
+        error: "/auth/error",
+    },
+    providers: activeProviders,
     callbacks: {
         jwt: async ({ token, user, account }) => {
             if (user) {
@@ -67,6 +139,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             }
             if (account?.access_token) {
                 token.accessToken = account.access_token;
+            } else if (account?.provider === "guest") {
+                token.accessToken = "mock_token";
             }
             return token;
         },

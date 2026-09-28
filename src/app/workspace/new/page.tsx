@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSession, signIn } from "next-auth/react";
-import { ArrowRight, Globe, Sparkles, Zap, Terminal, ShieldAlert, LogIn, AlertCircle } from "lucide-react";
+import { ArrowRight, Globe, Sparkles, Zap, Terminal, ShieldAlert, LogIn, AlertCircle, UserCheck } from "lucide-react";
 
 const EXAMPLES = [
     "https://stripe.com",
@@ -249,14 +249,26 @@ export default function NewWorkspacePage() {
                                     To create a project workspace and persist your content changes, you must sign in with GitHub.
                                 </p>
                             </div>
-                            <button
-                                type="button"
-                                onClick={() => signIn("github", { callbackUrl: window.location.href })}
-                                className="glow-btn text-xs px-5 py-2.5 flex items-center gap-2 shrink-0 border-2 border-black shadow-[2px_2px_0_0_#000]"
-                            >
-                                <LogIn className="w-4 h-4" />
-                                Sign In with GitHub
-                            </button>
+                            <div className="flex flex-wrap items-center gap-2">
+                                {envInfo?.isGuestMode && (
+                                    <button
+                                        type="button"
+                                        onClick={() => signIn("guest", { callbackUrl: window.location.href })}
+                                        className="glow-btn text-xs px-4 py-2.5 flex items-center gap-1.5 shrink-0 border-2 border-black bg-[var(--ocms-green)] text-black shadow-[2px_2px_0_0_#000]"
+                                    >
+                                        <UserCheck className="w-4 h-4" />
+                                        Continue as Guest
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => router.push(`/auth/signin?callbackUrl=${encodeURIComponent(window.location.href)}`)}
+                                    className="glow-btn text-xs px-4 py-2.5 flex items-center gap-1.5 shrink-0 border-2 border-black shadow-[2px_2px_0_0_#000]"
+                                >
+                                    <LogIn className="w-4 h-4" />
+                                    Sign In Options
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )}

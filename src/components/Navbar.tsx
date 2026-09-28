@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useState, useEffect, useRef } from "react";
 import { ArrowRight, Menu, X, LogIn, LogOut, User } from "lucide-react";
-import { useSession, signIn, signOut } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 
 const NAV_LINKS = ["How it Works", "Features", "Pricing"] as const;
 
@@ -97,13 +97,13 @@ export default function Navbar() {
                                 </button>
                             </div>
                         ) : (
-                            <button
-                                onClick={() => signIn("github")}
+                            <Link
+                                href="/auth/signin"
                                 className="hidden sm:inline-flex items-center gap-1.5 text-sm text-slate-700 hover:text-black font-semibold transition-colors duration-200 px-4 py-2 rounded-md hover:bg-black/5"
                             >
                                 <LogIn className="w-3.5 h-3.5" />
                                 <span>Sign In</span>
-                            </button>
+                            </Link>
                         )}
 
                         {/* Launch button */}
@@ -175,13 +175,14 @@ export default function Navbar() {
                                 Sign Out ({session.user.name || "User"})
                             </button>
                         ) : (
-                            <button
-                                onClick={() => { handleLinkClick(); signIn("github"); }}
+                            <Link
+                                href="/auth/signin"
+                                onClick={handleLinkClick}
                                 className="w-full text-center py-3 text-sm font-black uppercase tracking-wide border-[3px] border-black rounded-md bg-white shadow-[2px_2px_0px_#000] hover:bg-[var(--ocms-yellow)] active:shadow-none active:translate-x-[2px] active:translate-y-[2px] transition-all flex items-center justify-center gap-2"
                             >
                                 <LogIn className="w-4 h-4" />
-                                Sign In with GitHub
-                            </button>
+                                Sign In
+                            </Link>
                         )}
                         <Link
                             href="/workspace/new"

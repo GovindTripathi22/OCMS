@@ -141,6 +141,13 @@ export default function NewWorkspacePage() {
             setStep("validating");
             setProgress(88);
             const project = await response.json();
+            if (typeof window !== "undefined" && project?.id) {
+                try {
+                    localStorage.setItem(`ocms_project_${project.id}`, JSON.stringify(project));
+                } catch {
+                    // Ignore storage quota
+                }
+            }
             const fieldCount = Array.isArray(project.generatedSchema) ? project.generatedSchema.length : 0;
             appendLog(`[VALIDATOR] ${fieldCount} schema fields passed server-side selector checks.`);
             setStep("saving");

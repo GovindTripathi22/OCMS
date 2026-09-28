@@ -315,6 +315,69 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         }
     }, [schema, project.id]);
 
+    // Hydrate project from localStorage if serverless instance has empty schema or missing sourceUrl
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        try {
+            const cachedStr = localStorage.getItem(`ocms_project_${project.id}`);
+            if (cachedStr) {
+                const cached = JSON.parse(cachedStr);
+                if (cached) {
+                    if (cached.sourceUrl && !previewUrl) {
+                        setPreviewUrl(cached.sourceUrl);
+                    }
+                    if (cached.githubOwner && !githubOwner) {
+                        setGithubOwner(cached.githubOwner);
+                    }
+                    if (cached.githubRepo && !githubRepo) {
+                        setGithubRepo(cached.githubRepo);
+                    }
+                    if (cached.githubBranch && !githubBranch) {
+                        setGithubBranch(cached.githubBranch);
+                    }
+                    if (cached.targetFilePath && !targetFilePath) {
+                        setTargetFilePath(cached.targetFilePath);
+                    }
+                    if (Array.isArray(cached.generatedSchema) && cached.generatedSchema.length > 0 && schema.length === 0) {
+                        setSchema(cached.generatedSchema);
+                        setHistory([cached.generatedSchema]);
+                    }
+                    if (typeof cached.schemaRevision === "number" && schemaRevisionRef.current === 0) {
+                        schemaRevisionRef.current = cached.schemaRevision;
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn("Failed to hydrate project from localStorage:", e);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [project.id]);
+
+    // Keep cached project synchronized in localStorage
+    useEffect(() => {
+        if (typeof window === "undefined" || schema.length === 0) return;
+        try {
+            const cachedStr = localStorage.getItem(`ocms_project_${project.id}`);
+            const cached = cachedStr ? JSON.parse(cachedStr) : {};
+            localStorage.setItem(
+                `ocms_project_${project.id}`,
+                JSON.stringify({
+                    ...cached,
+                    id: project.id,
+                    generatedSchema: schema,
+                    sourceUrl: previewUrl || cached.sourceUrl,
+                    githubOwner: githubOwner || cached.githubOwner,
+                    githubRepo: githubRepo || cached.githubRepo,
+                    githubBranch: githubBranch || cached.githubBranch,
+                    targetFilePath: targetFilePath || cached.targetFilePath,
+                    schemaRevision: schemaRevisionRef.current,
+                })
+            );
+        } catch {
+            // ignore
+        }
+    }, [schema, previewUrl, githubOwner, githubRepo, githubBranch, targetFilePath, project.id]);
+
     // Check for local storage backup on mount
     useEffect(() => {
         if (typeof window === "undefined") return;

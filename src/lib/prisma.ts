@@ -143,6 +143,16 @@ CREATE TABLE IF NOT EXISTS "_SceneGraphAssets" (
     CONSTRAINT "_SceneGraphAssets_A_fkey" FOREIGN KEY ("A") REFERENCES "Asset3D" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "_SceneGraphAssets_B_fkey" FOREIGN KEY ("B") REFERENCES "SceneGraph" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
+CREATE UNIQUE INDEX IF NOT EXISTS "Account_provider_providerAccountId_key" ON "Account"("provider", "providerAccountId");
+CREATE INDEX IF NOT EXISTS "Account_userId_idx" ON "Account"("userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "Session_sessionToken_key" ON "Session"("sessionToken");
+CREATE INDEX IF NOT EXISTS "Session_userId_idx" ON "Session"("userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "VerificationToken_token_key" ON "VerificationToken"("token");
+CREATE UNIQUE INDEX IF NOT EXISTS "VerificationToken_identifier_token_key" ON "VerificationToken"("identifier", "token");
+CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key" ON "User"("email");
+CREATE INDEX IF NOT EXISTS "Project_userId_idx" ON "Project"("userId");
+CREATE INDEX IF NOT EXISTS "Asset3D_projectId_idx" ON "Asset3D"("projectId");
+CREATE INDEX IF NOT EXISTS "ModelVariant_assetId_idx" ON "ModelVariant"("assetId");
 `;
 
 let isDbInitialized = false;

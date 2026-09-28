@@ -10,6 +10,15 @@ import { isGuestMode, isProduction } from "@/lib/env";
  * Variable naming: this app uses AUTH_SECRET (not NEXTAUTH_SECRET).
  * Both NextAuth v4 and Auth.js v5 support AUTH_SECRET natively.
  */
+function cleanEnv(val: string | undefined): string {
+    if (!val) return "";
+    let s = val.trim();
+    if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+        s = s.slice(1, -1).trim();
+    }
+    return s;
+}
+
 export async function GET() {
     const missing: string[] = [];
     const warnings: string[] = [];
@@ -38,40 +47,43 @@ export async function GET() {
         "secret",
     ];
 
-    const requiredVars = [
-        "GITHUB_CLIENT_ID",
-        "GITHUB_CLIENT_SECRET",
-        "DATABASE_URL",
-        "AUTH_SECRET",
-    ] as const;
+    const githubId = cleanEnv(
+        process.env.GITHUB_CLIENT_ID ||
+        process.env.GITHUB_ID ||
+        process.env.AUTH_GITHUB_ID
+    );
+    const githubSecret = cleanEnv(
+        process.env.GITHUB_CLIENT_SECRET ||
+        process.env.GITHUB_SECRET ||
+        process.env.AUTH_GITHUB_SECRET
+    );
+    const authSecret = cleanEnv(
+        process.env.AUTH_SECRET ||
+        process.env.NEXTAUTH_SECRET
+    );
 
-    for (const varName of requiredVars) {
-        const value = process.env[varName];
+    if (!githubId) {
+        missing.push("GITHUB_CLIENT_ID");
+    } else if (PLACEHOLDER_PATTERNS.some(p => githubId.toLowerCase().includes(p))) {
+        warnings.push("GITHUB_CLIENT_ID");
+    }
 
-        if (!value || value.trim() === "") {
-            missing.push(varName);
-            continue;
-        }
+    if (!githubSecret) {
+        missing.push("GITHUB_CLIENT_SECRET");
+    } else if (SECRET_PLACEHOLDER_PATTERNS.some(p => githubSecret.toLowerCase().includes(p))) {
+        warnings.push("GITHUB_CLIENT_SECRET");
+    }
 
-        const v = value.trim().toLowerCase();
-
-        if (varName === "GITHUB_CLIENT_ID" && PLACEHOLDER_PATTERNS.some(p => v.includes(p))) {
-            warnings.push(varName);
-        }
-
-        if (varName === "GITHUB_CLIENT_SECRET" && SECRET_PLACEHOLDER_PATTERNS.some(p => v.includes(p))) {
-            warnings.push(varName);
-        }
-
-        if (varName === "AUTH_SECRET" && AUTH_SECRET_PLACEHOLDERS.some(p => v === p)) {
-            warnings.push(varName);
-        }
+    if (!authSecret) {
+        missing.push("AUTH_SECRET");
+    } else if (AUTH_SECRET_PLACEHOLDERS.some(p => authSecret.toLowerCase() === p)) {
+        warnings.push("AUTH_SECRET");
     }
 
     // Optional: warn if NEXTAUTH_URL is missing (needed in production)
-    const nextauthUrl = process.env.NEXTAUTH_URL;
+    const nextauthUrl = cleanEnv(process.env.NEXTAUTH_URL || process.env.AUTH_URL);
     const isProd = isProduction();
-    if (isProd && (!nextauthUrl || nextauthUrl.trim() === "")) {
+    if (isProd && !nextauthUrl) {
         warnings.push("NEXTAUTH_URL");
     }
     const guestModeAllowed = isGuestMode();

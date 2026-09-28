@@ -54,6 +54,15 @@ export function isTest(): boolean {
  *    interact with the app and test the visual editor immediately rather than
  *    encountering a broken configuration screen.
  */
+function cleanEnv(val: string | undefined): string {
+    if (!val) return "";
+    let s = val.trim();
+    if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+        s = s.slice(1, -1).trim();
+    }
+    return s;
+}
+
 export function isGuestMode(): boolean {
     if (process.env.ALLOW_GUEST_ACCESS === "false") {
         return false;
@@ -64,8 +73,16 @@ export function isGuestMode(): boolean {
     if (!isProduction()) {
         return true;
     }
-    const rawGithubId = process.env.GITHUB_CLIENT_ID?.trim() ?? "";
-    const rawGithubSecret = process.env.GITHUB_CLIENT_SECRET?.trim() ?? "";
+    const rawGithubId = cleanEnv(
+        process.env.GITHUB_CLIENT_ID ||
+        process.env.GITHUB_ID ||
+        process.env.AUTH_GITHUB_ID
+    );
+    const rawGithubSecret = cleanEnv(
+        process.env.GITHUB_CLIENT_SECRET ||
+        process.env.GITHUB_SECRET ||
+        process.env.AUTH_GITHUB_SECRET
+    );
     const isGithubConfigured = Boolean(
         rawGithubId &&
         rawGithubSecret &&
@@ -179,8 +196,16 @@ export function validateEnv(): EnvValidationResult {
  * Never leaks any secret strings.
  */
 export function getSafePublicConfig(): SafePublicConfig {
-    const githubId = process.env.GITHUB_CLIENT_ID;
-    const githubSecret = process.env.GITHUB_CLIENT_SECRET;
+    const githubId = cleanEnv(
+        process.env.GITHUB_CLIENT_ID ||
+        process.env.GITHUB_ID ||
+        process.env.AUTH_GITHUB_ID
+    );
+    const githubSecret = cleanEnv(
+        process.env.GITHUB_CLIENT_SECRET ||
+        process.env.GITHUB_SECRET ||
+        process.env.AUTH_GITHUB_SECRET
+    );
     const githubConfigured = Boolean(
         githubId &&
         githubSecret &&
@@ -188,8 +213,8 @@ export function getSafePublicConfig(): SafePublicConfig {
         !isPlaceholder(githubSecret)
     );
 
-    const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
-    const webhookConfigured = Boolean(webhookSecret && webhookSecret.trim().length > 0);
+    const webhookSecret = cleanEnv(process.env.GITHUB_WEBHOOK_SECRET);
+    const webhookConfigured = Boolean(webhookSecret && webhookSecret.length > 0);
 
     return {
         githubConfigured,
@@ -205,8 +230,8 @@ export function getSafePublicConfig(): SafePublicConfig {
  * Resolves the AUTH_SECRET, guaranteeing a valid secret or throwing in production.
  */
 export function getAuthSecret(): string {
-    const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
-    if (!secret || secret.trim() === "") {
+    const secret = cleanEnv(process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET);
+    if (!secret || secret === "") {
         if (isProduction()) {
             if (process.env.VERCEL) {
                 // Running on Vercel without an explicit AUTH_SECRET configured.

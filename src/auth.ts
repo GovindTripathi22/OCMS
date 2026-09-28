@@ -2,7 +2,7 @@ import NextAuth, { type DefaultSession } from "next-auth";
 import GitHub from "next-auth/providers/github";
 import Credentials from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import { prisma } from "@/lib/prisma";
+import { prisma, ensureDatabaseTables } from "@/lib/prisma";
 
 declare module "next-auth" {
     interface Session {
@@ -18,11 +18,26 @@ declare module "next-auth" {
 import { encryptToken, decryptToken } from "@/lib/crypto";
 import { getAuthSecret, isGuestMode } from "@/lib/env";
 
+function cleanEnv(val: string | undefined): string {
+    if (!val) return "";
+    let s = val.trim();
+    if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+        s = s.slice(1, -1).trim();
+    }
+    return s;
+}
+
 // Canonical Prisma Adapter: database failures must remain real failures
 const baseAdapter = PrismaAdapter(prisma);
 const secureAdapter = {
     ...baseAdapter,
+    createUser: async (user: Parameters<NonNullable<typeof baseAdapter.createUser>>[0]) => {
+        await ensureDatabaseTables();
+        if (!baseAdapter.createUser) return undefined;
+        return baseAdapter.createUser(user);
+    },
     linkAccount: async (account: Parameters<NonNullable<typeof baseAdapter.linkAccount>>[0]) => {
+        await ensureDatabaseTables();
         const encryptedAccount = {
             ...account,
             access_token: account.access_token ? encryptToken(account.access_token) : account.access_token,
@@ -32,6 +47,7 @@ const secureAdapter = {
         return baseAdapter.linkAccount(encryptedAccount);
     },
     getAccount: async (providerAccountId: string, provider: string) => {
+        await ensureDatabaseTables();
         if (!baseAdapter.getAccount) return null;
         const account = await baseAdapter.getAccount(providerAccountId, provider);
         if (!account) return null;
@@ -41,10 +57,28 @@ const secureAdapter = {
             refresh_token: account.refresh_token ? decryptToken(account.refresh_token) : account.refresh_token,
         };
     },
+    getUserByAccount: async (providerAccountId: Parameters<NonNullable<typeof baseAdapter.getUserByAccount>>[0]) => {
+        await ensureDatabaseTables();
+        if (!baseAdapter.getUserByAccount) return null;
+        return baseAdapter.getUserByAccount(providerAccountId);
+    },
+    getUserByEmail: async (email: string) => {
+        await ensureDatabaseTables();
+        if (!baseAdapter.getUserByEmail) return null;
+        return baseAdapter.getUserByEmail(email);
+    },
 } as unknown as ReturnType<typeof PrismaAdapter>;
 
-const rawGithubId = process.env.GITHUB_CLIENT_ID?.trim() ?? "";
-const rawGithubSecret = process.env.GITHUB_CLIENT_SECRET?.trim() ?? "";
+const rawGithubId = cleanEnv(
+    process.env.GITHUB_CLIENT_ID ||
+    process.env.GITHUB_ID ||
+    process.env.AUTH_GITHUB_ID
+);
+const rawGithubSecret = cleanEnv(
+    process.env.GITHUB_CLIENT_SECRET ||
+    process.env.GITHUB_SECRET ||
+    process.env.AUTH_GITHUB_SECRET
+);
 const isGithubConfigured = Boolean(
     rawGithubId &&
     rawGithubSecret &&
@@ -83,6 +117,7 @@ if (allowGuest) {
                 if (!isGuestMode()) {
                     return null;
                 }
+                await ensureDatabaseTables();
                 let guestUser = await prisma.user.findFirst({
                     where: {
                         OR: [
@@ -190,6 +225,7 @@ export async function getAuthorizedUser(): Promise<string | null> {
     );
 
     try {
+        await ensureDatabaseTables();
         let guestUser = await prisma.user.findFirst({
             where: {
                 OR: [

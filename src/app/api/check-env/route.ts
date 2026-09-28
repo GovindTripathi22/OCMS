@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isGuestMode, isProduction } from "@/lib/env";
 
 /**
  * GET /api/check-env
@@ -69,12 +70,21 @@ export async function GET() {
 
     // Optional: warn if NEXTAUTH_URL is missing (needed in production)
     const nextauthUrl = process.env.NEXTAUTH_URL;
-    const isProduction = process.env.NODE_ENV === "production";
-    if (isProduction && (!nextauthUrl || nextauthUrl.trim() === "")) {
+    const isProd = isProduction();
+    if (isProd && (!nextauthUrl || nextauthUrl.trim() === "")) {
         warnings.push("NEXTAUTH_URL");
     }
+    const guestModeAllowed = isGuestMode();
+    const githubConfigured = !missing.includes("GITHUB_CLIENT_ID") && !warnings.includes("GITHUB_CLIENT_ID");
 
     const configured = missing.length === 0 && warnings.length === 0;
 
-    return NextResponse.json({ configured, missing, warnings });
+    return NextResponse.json({
+        configured,
+        missing,
+        warnings,
+        isGuestMode: guestModeAllowed,
+        isProduction: isProd,
+        githubConfigured,
+    });
 }

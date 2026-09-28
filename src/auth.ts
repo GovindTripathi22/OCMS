@@ -103,8 +103,7 @@ export async function getAuthorizedUser(): Promise<string | null> {
             return session.user.id;
         }
     } catch (err) {
-        console.error("[Auth] Session validation error:", err);
-        return null;
+        console.warn("[Auth] Session validation notice:", err);
     }
 
     const isProduction = process.env.NODE_ENV === "production";

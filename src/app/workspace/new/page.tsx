@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Globe, Sparkles, Zap, Terminal } from "lucide-react";
+import { useSession, signIn } from "next-auth/react";
+import { ArrowRight, Globe, Sparkles, Zap, Terminal, ShieldAlert, LogIn, AlertCircle } from "lucide-react";
 
 const EXAMPLES = [
     "https://stripe.com",
@@ -17,8 +18,31 @@ export default function NewWorkspacePage() {
     const [step, setStep] = useState<"idle" | "scraping" | "ai" | "validating" | "saving" | "ready">("idle");
     const [logs, setLogs] = useState<string[]>([]);
     const [progress, setProgress] = useState(0);
+    const [authRequiredError, setAuthRequiredError] = useState(false);
+    const [generalError, setGeneralError] = useState<string | null>(null);
+    const [envInfo, setEnvInfo] = useState<{
+        isGuestMode: boolean;
+        isProduction: boolean;
+        githubConfigured: boolean;
+    } | null>(null);
+
+    const { data: session, status: authStatus } = useSession();
     const router = useRouter();
     const consoleEndRef = useRef<HTMLDivElement>(null);
+
+    // Fetch environment authentication capabilities on mount
+    useEffect(() => {
+        fetch("/api/check-env")
+            .then(res => res.json())
+            .then(data => {
+                setEnvInfo({
+                    isGuestMode: Boolean(data.isGuestMode),
+                    isProduction: Boolean(data.isProduction),
+                    githubConfigured: Boolean(data.githubConfigured),
+                });
+            })
+            .catch(() => {});
+    }, []);
 
     // Auto-scroll the terminal logs
     useEffect(() => {
@@ -82,6 +106,8 @@ export default function NewWorkspacePage() {
         e.preventDefault();
         if (!url.trim()) return;
 
+        setAuthRequiredError(false);
+        setGeneralError(null);
         setIsGenerating(true);
         setStep("scraping");
         setProgress(6);
@@ -101,7 +127,13 @@ export default function NewWorkspacePage() {
 
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
-                const errMsg = errData.message || errData.error || (response.status === 401 ? "Please sign in with GitHub to create a project." : "Failed to create project");
+                if (response.status === 401) {
+                    setAuthRequiredError(true);
+                    const errMsg = "Authentication required. Please sign in with GitHub to create a project.";
+                    appendLog(`[ERROR] (401) ${errMsg}`);
+                    throw new Error(errMsg);
+                }
+                const errMsg = errData.message || errData.error || "Failed to create project";
                 appendLog(`[ERROR] (${response.status}) ${errMsg}`);
                 throw new Error(errMsg);
             }
@@ -123,7 +155,11 @@ export default function NewWorkspacePage() {
         } catch (error) {
             console.error("Error creating project:", error);
             const message = error instanceof Error ? error.message : "Failed to initialize workspace.";
-            alert(message);
+            if (message.toLowerCase().includes("authentication")) {
+                setAuthRequiredError(true);
+            } else {
+                setGeneralError(message);
+            }
             setIsGenerating(false);
             setStep("idle");
         }
@@ -159,7 +195,7 @@ export default function NewWorkspacePage() {
             </div>
 
             {/* Top badge */}
-            <div className="animate-slide-up opacity-0 [animation-fill-mode:forwards] [animation-delay:50ms] mb-10">
+            <div className="animate-slide-up opacity-0 [animation-fill-mode:forwards] [animation-delay:50ms] mb-6">
                 <span className="feature-tag bg-[var(--ocms-yellow)] border-2 border-black shadow-[2px_2px_0px_#000] text-black">
                     <Zap className="w-3 h-3 text-black animate-bounce" />
                     New Workspace
@@ -167,7 +203,7 @@ export default function NewWorkspacePage() {
             </div>
 
             {/* Heading */}
-            <div className="animate-slide-up opacity-0 [animation-fill-mode:forwards] [animation-delay:150ms] text-center mb-12">
+            <div className="animate-slide-up opacity-0 [animation-fill-mode:forwards] [animation-delay:150ms] text-center mb-8">
                 <h1 className="text-4xl sm:text-5xl md:text-6xl font-black tracking-tight text-black mb-4">
                     Enter your
                     <span className="shimmer-text"> website URL</span>
@@ -177,8 +213,62 @@ export default function NewWorkspacePage() {
                 </p>
             </div>
 
+            {/* Status Pill Badge */}
+            <div className="animate-slide-up opacity-0 [animation-fill-mode:forwards] [animation-delay:200ms] flex justify-center mb-6">
+                {authStatus === "authenticated" && session?.user ? (
+                    <span className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-white border-2 border-black rounded-md text-xs font-black text-black shadow-[2px_2px_0_0_#000]">
+                        <span className="w-2.5 h-2.5 rounded-full bg-[var(--ocms-green)] border border-black" />
+                        Signed in as <span className="text-[var(--ocms-orange)]">{session.user.name || session.user.email || "User"}</span>
+                    </span>
+                ) : envInfo?.isGuestMode ? (
+                    <span className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-emerald-100 border-2 border-black rounded-md text-xs font-black text-emerald-950 shadow-[2px_2px_0_0_#000]">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse border border-black" />
+                        Offline Guest Mode Active — Instant Local Workspace
+                    </span>
+                ) : envInfo && !envInfo.isGuestMode ? (
+                    <span className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-[var(--ocms-yellow)] border-2 border-black rounded-md text-xs font-black text-black shadow-[2px_2px_0_0_#000]">
+                        <ShieldAlert className="w-4 h-4 text-black" />
+                        GitHub Sign-In Required to Create Projects
+                    </span>
+                ) : null}
+            </div>
+
             {/* Main Interactive Card */}
             <div className="animate-slide-up opacity-0 [animation-fill-mode:forwards] [animation-delay:250ms] w-full max-w-xl">
+
+                {/* Authentication Alert Callout */}
+                {authRequiredError && (
+                    <div className="mb-6 p-5 border-[3px] border-black bg-[var(--ocms-yellow)] shadow-[5px_5px_0_0_#000] rounded-md animate-fade-in">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <ShieldAlert className="w-5 h-5 text-black" />
+                                    <h3 className="font-black text-black uppercase text-sm">Authentication Required</h3>
+                                </div>
+                                <p className="text-xs font-bold text-slate-900 mt-1">
+                                    To create a project workspace and persist your content changes, you must sign in with GitHub.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => signIn("github", { callbackUrl: window.location.href })}
+                                className="glow-btn text-xs px-5 py-2.5 flex items-center gap-2 shrink-0 border-2 border-black shadow-[2px_2px_0_0_#000]"
+                            >
+                                <LogIn className="w-4 h-4" />
+                                Sign In with GitHub
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* General Error Callout */}
+                {generalError && (
+                    <div className="mb-6 p-4 border-[3px] border-black bg-red-100 shadow-[4px_4px_0_0_#000] rounded-md text-red-900 flex items-center gap-3">
+                        <AlertCircle className="w-5 h-5 shrink-0 text-red-700" />
+                        <span className="text-xs font-bold">{generalError}</span>
+                    </div>
+                )}
+
                 {isGenerating ? (
                     /* ─── LOADING TERMINAL CONSOLE ─── */
                     <div className="glass-card p-6 sm:p-8 border-[3px] border-black bg-black text-[#22c55e] font-mono shadow-[6px_6px_0px_#000] min-h-[380px] flex flex-col justify-between relative overflow-hidden">
@@ -191,7 +281,7 @@ export default function NewWorkspacePage() {
                             <span className="w-2.5 h-2.5 rounded-full bg-[#eab308] border border-black" />
                             <span className="w-2.5 h-2.5 rounded-full bg-[#22c55e] border border-black animate-pulse" />
                             <Terminal className="w-3.5 h-3.5 text-[#22c55e] ml-2" />
-                            <span className="font-bold">OCMS Scraper CLI v2.5</span>
+                            <span className="font-bold">OCMS Scraper CLI v2.6</span>
                             <span className="ml-auto text-[10px] text-black bg-[#22c55e] px-1.5 py-0.5 rounded font-black tracking-normal">RUNNING</span>
                         </div>
 
@@ -223,6 +313,7 @@ export default function NewWorkspacePage() {
                                 if (log.startsWith("[SYSTEM]")) color = "text-[var(--ocms-yellow)]";
                                 if (log.startsWith("[PARSER]")) color = "text-pink-400 font-bold";
                                 if (log.startsWith("[CONNECT]")) color = "text-cyan-400";
+                                if (log.startsWith("[ERROR]")) color = "text-red-400 font-bold";
                                 return (
                                     <div key={index} className={`${color} leading-relaxed animate-fade-in`}>
                                         {log}
@@ -276,7 +367,11 @@ export default function NewWorkspacePage() {
                                         type="url"
                                         required
                                         value={url}
-                                        onChange={(e) => setUrl(e.target.value)}
+                                        onChange={(e) => {
+                                            setUrl(e.target.value);
+                                            if (authRequiredError) setAuthRequiredError(false);
+                                            if (generalError) setGeneralError(null);
+                                        }}
                                         placeholder="https://your-website.com"
                                         className="modern-input text-sm sm:text-base py-3.5 sm:py-4 pr-12 font-bold text-black border-[3px] border-black rounded-md shadow-[2px_2px_0px_#000] focus:shadow-[4px_4px_0px_var(--ocms-blue)] outline-none transition-all"
                                         disabled={isGenerating}
@@ -312,7 +407,11 @@ export default function NewWorkspacePage() {
                     {EXAMPLES.map((ex) => (
                         <button
                             key={ex}
-                            onClick={() => setUrl(ex)}
+                            onClick={() => {
+                                setUrl(ex);
+                                if (authRequiredError) setAuthRequiredError(false);
+                                if (generalError) setGeneralError(null);
+                            }}
                             disabled={isGenerating}
                             className="text-xs text-black bg-white border-2 border-black hover:bg-[var(--ocms-yellow)] hover:shadow-[2px_2px_0px_#000] hover:-translate-x-[1px] hover:-translate-y-[1px] rounded-md px-4 py-2 transition-all font-mono font-bold shadow-[1px_1px_0px_#000]"
                         >

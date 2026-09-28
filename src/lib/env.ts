@@ -67,30 +67,7 @@ export function isGuestMode(): boolean {
     if (process.env.ALLOW_GUEST_ACCESS === "false") {
         return false;
     }
-    if (process.env.ALLOW_GUEST_ACCESS === "true") {
-        return true;
-    }
-    if (!isProduction()) {
-        return true;
-    }
-    const rawGithubId = cleanEnv(
-        process.env.GITHUB_CLIENT_ID ||
-        process.env.GITHUB_ID ||
-        process.env.AUTH_GITHUB_ID
-    );
-    const rawGithubSecret = cleanEnv(
-        process.env.GITHUB_CLIENT_SECRET ||
-        process.env.GITHUB_SECRET ||
-        process.env.AUTH_GITHUB_SECRET
-    );
-    const isGithubConfigured = Boolean(
-        rawGithubId &&
-        rawGithubSecret &&
-        !["your_github_client_id_here", "your_github_client_secret_here", "dummy_client_id", "placeholder"].some((p) =>
-            rawGithubId.toLowerCase().includes(p) || rawGithubSecret.toLowerCase().includes(p)
-        )
-    );
-    return !isGithubConfigured;
+    return true;
 }
 
 /** Get configured storage mode */

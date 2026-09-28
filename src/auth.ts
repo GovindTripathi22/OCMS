@@ -157,6 +157,7 @@ if (activeProviders.length === 0) {
 export const { handlers, auth, signIn, signOut } = NextAuth({
     adapter: secureAdapter,
     trustHost: true,
+    debug: process.env.NODE_ENV === "development" || Boolean(process.env.DEBUG_AUTH || process.env.VERCEL),
     secret: getAuthSecret(),
     session: {
         strategy: "jwt",

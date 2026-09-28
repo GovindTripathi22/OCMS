@@ -30,7 +30,7 @@ function AuthErrorContent() {
         Configuration: {
             title: "Authentication Configuration Notice",
             message: "There is an issue with the authentication provider configuration.",
-            hint: "This typically occurs when GitHub OAuth credentials (GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET) are missing, invalid, or left as placeholder strings in .env.local.",
+            hint: "This typically occurs when GITHUB_CLIENT_SECRET does not match what GitHub has on file (e.g. was copied with asterisks ***** from GitHub settings), or when credentials are out of date. Generate a new Client Secret in GitHub Developer Settings and update Vercel, or click 'Continue in Guest Mode' below to edit immediately.",
         },
         AccessDenied: {
             title: "Access Denied",

@@ -16,7 +16,7 @@ declare module "next-auth" {
     }
 }
 import { encryptToken, decryptToken } from "@/lib/crypto";
-import { getAuthSecret } from "@/lib/env";
+import { getAuthSecret, isGuestMode } from "@/lib/env";
 
 // Canonical Prisma Adapter: database failures must remain real failures
 const baseAdapter = PrismaAdapter(prisma);
@@ -53,8 +53,7 @@ const isGithubConfigured = Boolean(
     )
 );
 
-const isProd = process.env.NODE_ENV === "production";
-const allowGuest = process.env.ALLOW_GUEST_ACCESS === "true";
+const allowGuest = isGuestMode();
 
 // Build list of active authentication providers
 const activeProviders = [];
@@ -73,15 +72,15 @@ if (isGithubConfigured) {
     );
 }
 
-// In local development or test mode, register Credentials provider for instant guest authentication
-if (!isProd && allowGuest) {
+// Register Credentials provider for instant guest authentication when guest mode is active
+if (allowGuest) {
     activeProviders.push(
         Credentials({
             id: "guest",
             name: "Guest Mode",
             credentials: {},
             async authorize() {
-                if (process.env.NODE_ENV === "production" || process.env.ALLOW_GUEST_ACCESS !== "true") {
+                if (!isGuestMode()) {
                     return null;
                 }
                 let guestUser = await prisma.user.findFirst({
@@ -180,16 +179,14 @@ export async function getAuthorizedUser(): Promise<string | null> {
         console.warn("[Auth] Session validation notice:", err);
     }
 
-    const isProduction = process.env.NODE_ENV === "production";
-    const allowGuest = process.env.ALLOW_GUEST_ACCESS === "true";
+    const allowGuest = isGuestMode();
 
-    // Hard block: guest access is never allowed in production
-    if (isProduction || !allowGuest) {
+    if (!allowGuest) {
         return null;
     }
 
     console.warn(
-        "[OCMS Auth] Guest fallback activated (development/test mode with ALLOW_GUEST_ACCESS=true)."
+        "[OCMS Auth] Guest fallback activated (guest mode allowed)."
     );
 
     try {

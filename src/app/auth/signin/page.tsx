@@ -117,7 +117,7 @@ function SignInContent() {
                                 className="w-full py-4 glow-btn text-sm font-black uppercase tracking-wide justify-center border-[3px] border-black bg-[var(--ocms-green)] text-black shadow-[4px_4px_0px_#000] hover:shadow-[6px_6px_0px_#000] hover:-translate-x-[2px] hover:-translate-y-[2px] transition-all flex items-center gap-2"
                             >
                                 <UserCheck className="w-4 h-4" />
-                                <span>Continue as Guest (Local Dev)</span>
+                                <span>Continue as Guest (Instant Access)</span>
                                 <ArrowRight className="w-4 h-4" />
                             </button>
                             <p className="text-[11px] font-bold text-slate-600 mt-2 text-center">

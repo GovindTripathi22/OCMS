@@ -110,11 +110,13 @@ export async function PUT(
     const { data, error: jsonError } = await parseJsonSafely<{
         schema?: unknown[];
         clientRevision?: number;
+        force?: boolean;
     }>(req, LIMITS.SCHEMA_MAX_BYTES);
     if (jsonError) return jsonError;
 
     const schema = data?.schema;
     const clientRevision = data?.clientRevision;
+    const force = data?.force === true;
 
     if (!schema || !Array.isArray(schema)) {
         return createErrorResponse("INVALID_SCHEMA", "schema must be an array of fields", 400);
@@ -124,8 +126,8 @@ export async function PUT(
         return createErrorResponse("SCHEMA_TOO_LARGE", `Schema exceeds maximum of ${LIMITS.SCHEMA_MAX_FIELDS} fields`, 400);
     }
 
-    // Stale-write rejection for autosave consistency
-    if (clientRevision !== undefined && typeof clientRevision === "number") {
+    // Stale-write rejection for autosave consistency (bypassed if force === true)
+    if (!force && clientRevision !== undefined && typeof clientRevision === "number") {
         if (clientRevision < currentProject.schemaRevision) {
             return NextResponse.json(
                 {
@@ -133,6 +135,7 @@ export async function PUT(
                     errorCode: "STALE_REVISION",
                     message: `Stale write rejected: server revision (${currentProject.schemaRevision}) is ahead of client revision (${clientRevision})`,
                     serverRevision: currentProject.schemaRevision,
+                    serverSchema: (currentProject.generatedSchema as unknown as SchemaField[]) || [],
                 },
                 { status: 409 }
             );

@@ -195,14 +195,45 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
             if (!response.ok) throw new Error(data.message || data.error || "Failed to scan page");
 
             if (data.schema) {
-                setSchema(data.schema);
+                // If local edits were in-flight, preserve them for fields that match
+                let finalSchema: SchemaField[] = data.schema;
+                if (isDirtyRef.current && schema.length > 0) {
+                    const localMap = new Map(schema.map((f) => [f.id, f]));
+                    finalSchema = data.schema.map((scannedField: SchemaField) => {
+                        const local = localMap.get(scannedField.id);
+                        return local ? { ...scannedField, ...local } : scannedField;
+                    });
+                }
+                setSchema(finalSchema);
+                if (typeof data.schemaRevision === "number") {
+                    schemaRevisionRef.current = data.schemaRevision;
+                }
                 const nextIndex = historyIndexRef.current + 1;
                 historyIndexRef.current = nextIndex;
                 setHistoryIndex(nextIndex);
                 setHistory((prev) => {
-                    return [...prev.slice(0, nextIndex), data.schema];
+                    return [...prev.slice(0, nextIndex), finalSchema];
                 });
-                isDirtyRef.current = true;
+                isDirtyRef.current = false;
+                setHasConflict(false);
+                setConflictData(null);
+                if (typeof window !== "undefined") {
+                    try {
+                        const cachedStr = localStorage.getItem(`ocms_project_${project.id}`);
+                        const cached = cachedStr ? JSON.parse(cachedStr) : {};
+                        localStorage.setItem(
+                            `ocms_project_${project.id}`,
+                            JSON.stringify({
+                                ...cached,
+                                generatedSchema: finalSchema,
+                                schemaRevision: typeof data.schemaRevision === "number" ? data.schemaRevision : schemaRevisionRef.current,
+                            })
+                        );
+                        localStorage.removeItem(`ocms_backup_${project.id}`);
+                    } catch {
+                        // ignore
+                    }
+                }
                 showToast(data.newFieldsCount ? `Scanned ${data.newFieldsCount} editable field${data.newFieldsCount === 1 ? "" : "s"}.` : "Page scanned, but no editable fields were found.");
             }
         } catch (err: unknown) {
@@ -211,7 +242,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         } finally {
             setIsScanning(false);
         }
-    }, [project.id, previewUrl, showToast]);
+    }, [project.id, previewUrl, schema, showToast]);
 
     const handleFieldChange = useCallback((fieldId: string, newValue: string) => {
         setSchema((prev) => {
@@ -250,13 +281,15 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
     const schemaRevisionRef = useRef<number>(project.schemaRevision ?? 0);
     const [hasConflict, setHasConflict] = useState(false);
-    const [pendingRecovery, setPendingRecovery] = useState<SchemaField[] | null>(null);
+    const [conflictData, setConflictData] = useState<{ serverRevision: number; serverSchema: SchemaField[] } | null>(null);
+    const [pendingRecovery, setPendingRecovery] = useState<{ schema: SchemaField[]; revision?: number } | null>(null);
 
     // Debounced autosave effect for persisting schema edits to database
     useEffect(() => {
-        if (!isDirtyRef.current) return;
+        if (!isDirtyRef.current || hasConflict) return;
 
         const timer = setTimeout(async () => {
+            if (!isDirtyRef.current || hasConflict) return;
             try {
                 const response = await fetch(`/api/projects/${project.id}/schema`, {
                     method: "PUT",
@@ -273,9 +306,20 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                     }
                     isDirtyRef.current = false;
                     setHasConflict(false);
+                    setConflictData(null);
                     if (typeof window !== "undefined") {
                         try {
                             localStorage.removeItem(`ocms_backup_${project.id}`);
+                            const cachedStr = localStorage.getItem(`ocms_project_${project.id}`);
+                            const cached = cachedStr ? JSON.parse(cachedStr) : {};
+                            localStorage.setItem(
+                                `ocms_project_${project.id}`,
+                                JSON.stringify({
+                                    ...cached,
+                                    generatedSchema: schema,
+                                    schemaRevision: data.schemaRevision ?? schemaRevisionRef.current,
+                                })
+                            );
                         } catch {
                             // ignore
                         }
@@ -283,9 +327,75 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                 } else if (response.status === 409) {
                     const errData = await response.json().catch(() => ({}));
                     console.warn("[Autosave] Conflict detected:", errData.message);
+                    const serverRev = typeof errData.serverRevision === "number" ? errData.serverRevision : (schemaRevisionRef.current + 1);
+                    const serverSchema: SchemaField[] = Array.isArray(errData.serverSchema) ? errData.serverSchema : [];
+
+                    // Graceful auto-merge attempt:
+                    // Preserve local edits, merge non-colliding fields from server, and update base revision
+                    const localFieldMap = new Map(schema.map((f) => [f.id, f]));
+                    const mergedSchema: SchemaField[] = [...schema];
+                    for (const sf of serverSchema) {
+                        if (!localFieldMap.has(sf.id)) {
+                            mergedSchema.push(sf);
+                        }
+                    }
+
+                    schemaRevisionRef.current = serverRev;
+
+                    try {
+                        const retryResponse = await fetch(`/api/projects/${project.id}/schema`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                schema: mergedSchema,
+                                clientRevision: serverRev,
+                            }),
+                        });
+
+                        if (retryResponse.ok) {
+                            const retryData = await retryResponse.json();
+                            if (retryData.schemaRevision !== undefined) {
+                                schemaRevisionRef.current = retryData.schemaRevision;
+                            }
+                            if (mergedSchema.length !== schema.length) {
+                                setSchema(mergedSchema);
+                            }
+                            isDirtyRef.current = false;
+                            setHasConflict(false);
+                            setConflictData(null);
+                            if (typeof window !== "undefined") {
+                                try {
+                                    localStorage.removeItem(`ocms_backup_${project.id}`);
+                                    const cachedStr = localStorage.getItem(`ocms_project_${project.id}`);
+                                    const cached = cachedStr ? JSON.parse(cachedStr) : {};
+                                    localStorage.setItem(
+                                        `ocms_project_${project.id}`,
+                                        JSON.stringify({
+                                            ...cached,
+                                            generatedSchema: mergedSchema,
+                                            schemaRevision: retryData.schemaRevision ?? schemaRevisionRef.current,
+                                        })
+                                    );
+                                } catch {
+                                    // ignore
+                                }
+                            }
+                            showToast(`Schema synced with server (rev ${retryData.schemaRevision}). Local edits kept.`);
+                            return;
+                        }
+                    } catch (retryErr) {
+                        console.warn("[Autosave] Graceful merge retry error:", retryErr);
+                    }
+
+                    // If auto-merge retry did not persist, halt autosave loop and present manual resolution actions in banner
+                    isDirtyRef.current = false;
+                    setConflictData({
+                        serverRevision: serverRev,
+                        serverSchema,
+                    });
                     setHasConflict(true);
                     showToast(
-                        `Conflict: Project schema was modified in another session (rev ${errData.serverRevision ?? "new"}). Local edits kept.`,
+                        `Conflict: Project schema was modified in another session (rev ${serverRev}). Local edits kept.`,
                         "error"
                     );
                 } else {
@@ -297,7 +407,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         }, 1500);
 
         return () => clearTimeout(timer);
-    }, [schema, project.id, showToast]);
+    }, [schema, project.id, showToast, hasConflict]);
 
     // Local storage backup effect
     useEffect(() => {
@@ -343,7 +453,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         setSchema(cached.generatedSchema);
                         setHistory([cached.generatedSchema]);
                     }
-                    if (typeof cached.schemaRevision === "number" && schemaRevisionRef.current === 0) {
+                    if (typeof cached.schemaRevision === "number" && cached.schemaRevision > schemaRevisionRef.current) {
                         schemaRevisionRef.current = cached.schemaRevision;
                     }
                 }
@@ -390,7 +500,10 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                     const currentSig = JSON.stringify(initialSchema);
                     const backupSig = JSON.stringify(parsed.schema);
                     if (currentSig !== backupSig) {
-                        setPendingRecovery(parsed.schema);
+                        setPendingRecovery({
+                            schema: parsed.schema,
+                            revision: typeof parsed.revision === "number" ? parsed.revision : undefined,
+                        });
                     }
                 }
             }
@@ -401,8 +514,11 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
     const handleRestoreBackup = useCallback(() => {
         if (!pendingRecovery) return;
-        setSchema(pendingRecovery);
-        pushHistory(pendingRecovery);
+        setSchema(pendingRecovery.schema);
+        pushHistory(pendingRecovery.schema);
+        if (typeof pendingRecovery.revision === "number" && pendingRecovery.revision > schemaRevisionRef.current) {
+            schemaRevisionRef.current = pendingRecovery.revision;
+        }
         isDirtyRef.current = true;
         setPendingRecovery(null);
         showToast("Restored unsaved changes from previous session.");
@@ -419,6 +535,140 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
         setPendingRecovery(null);
         showToast("Discarded saved session backup.");
     }, [project.id, showToast]);
+
+    const handleForceSaveLocal = useCallback(async () => {
+        try {
+            const response = await fetch(`/api/projects/${project.id}/schema`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    schema,
+                    force: true,
+                }),
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.schemaRevision !== undefined) {
+                    schemaRevisionRef.current = data.schemaRevision;
+                }
+                isDirtyRef.current = false;
+                setHasConflict(false);
+                setConflictData(null);
+                if (typeof window !== "undefined") {
+                    try {
+                        localStorage.removeItem(`ocms_backup_${project.id}`);
+                        const cachedStr = localStorage.getItem(`ocms_project_${project.id}`);
+                        const cached = cachedStr ? JSON.parse(cachedStr) : {};
+                        localStorage.setItem(
+                            `ocms_project_${project.id}`,
+                            JSON.stringify({
+                                ...cached,
+                                generatedSchema: schema,
+                                schemaRevision: data.schemaRevision ?? schemaRevisionRef.current,
+                            })
+                        );
+                    } catch {
+                        // ignore
+                    }
+                }
+                showToast(`Saved local edits to server (rev ${data.schemaRevision}).`);
+            } else {
+                showToast("Failed to overwrite server schema.", "error");
+            }
+        } catch (err) {
+            console.error("Force save error:", err);
+            showToast("Network error saving schema.", "error");
+        }
+    }, [project.id, schema, showToast]);
+
+    const handleAcceptServerSchema = useCallback(() => {
+        if (!conflictData || !conflictData.serverSchema) {
+            window.location.reload();
+            return;
+        }
+        const serverSchema = conflictData.serverSchema;
+        const serverRev = conflictData.serverRevision;
+        setSchema(serverSchema);
+        pushHistory(serverSchema);
+        schemaRevisionRef.current = serverRev;
+        isDirtyRef.current = false;
+        setHasConflict(false);
+        setConflictData(null);
+        if (typeof window !== "undefined") {
+            try {
+                localStorage.removeItem(`ocms_backup_${project.id}`);
+                const cachedStr = localStorage.getItem(`ocms_project_${project.id}`);
+                const cached = cachedStr ? JSON.parse(cachedStr) : {};
+                localStorage.setItem(
+                    `ocms_project_${project.id}`,
+                    JSON.stringify({
+                        ...cached,
+                        generatedSchema: serverSchema,
+                        schemaRevision: serverRev,
+                    })
+                );
+            } catch {
+                // ignore
+            }
+        }
+        showToast(`Updated to server schema (rev ${serverRev}).`);
+    }, [conflictData, project.id, pushHistory, showToast]);
+
+    const handleMergeConflict = useCallback(async () => {
+        const serverSchema = conflictData?.serverSchema || [];
+        const serverRev = conflictData?.serverRevision ?? schemaRevisionRef.current;
+        const localFieldMap = new Map(schema.map((f) => [f.id, f]));
+        const merged: SchemaField[] = [...schema];
+        for (const sf of serverSchema) {
+            if (!localFieldMap.has(sf.id)) {
+                merged.push(sf);
+            }
+        }
+        setSchema(merged);
+        pushHistory(merged);
+        schemaRevisionRef.current = serverRev;
+        try {
+            const response = await fetch(`/api/projects/${project.id}/schema`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    schema: merged,
+                    force: true,
+                }),
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.schemaRevision !== undefined) {
+                    schemaRevisionRef.current = data.schemaRevision;
+                }
+                isDirtyRef.current = false;
+                setHasConflict(false);
+                setConflictData(null);
+                if (typeof window !== "undefined") {
+                    try {
+                        localStorage.removeItem(`ocms_backup_${project.id}`);
+                        const cachedStr = localStorage.getItem(`ocms_project_${project.id}`);
+                        const cached = cachedStr ? JSON.parse(cachedStr) : {};
+                        localStorage.setItem(
+                            `ocms_project_${project.id}`,
+                            JSON.stringify({
+                                ...cached,
+                                generatedSchema: merged,
+                                schemaRevision: data.schemaRevision ?? schemaRevisionRef.current,
+                            })
+                        );
+                    } catch {
+                        // ignore
+                    }
+                }
+                showToast(`Merged and saved schema (rev ${data.schemaRevision}).`);
+            } else {
+                showToast("Failed to merge with server schema.", "error");
+            }
+        } catch {
+            showToast("Error saving merged schema.", "error");
+        }
+    }, [conflictData, project.id, pushHistory, schema, showToast]);
 
     const broadcastGhostEvent = useCallback((type: "AI_EDIT_START" | "AI_EDIT_END", selector?: string, text?: string) => {
         const iframe = iframeRef.current;
@@ -560,7 +810,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
         window.addEventListener("message", handleMessage);
         return () => window.removeEventListener("message", handleMessage);
-    }, [handleFieldChange, handleModelInjected, project.id, schema, previewUrl, buildChangesPayload, showToast, previewNonce, previewScriptMode]);
+    }, [handleFieldChange, handleModelInjected, handleScanPage, project.id, schema, previewUrl, buildChangesPayload, showToast, previewNonce, previewScriptMode]);
 
     const handleSchemaReplace = useCallback((newSchema: SchemaField[]) => {
         setSchema(newSchema);
@@ -585,7 +835,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                 <div className="bg-[var(--ocms-yellow)] text-black border-b-[3px] border-black px-4 py-2 flex items-center justify-between text-xs font-bold z-40">
                     <span className="flex items-center gap-2">
                         <span>⚠️</span>
-                        <span>Unsaved edits found from a previous session ({pendingRecovery.length} field{pendingRecovery.length === 1 ? "" : "s"}).</span>
+                        <span>Unsaved edits found from a previous session ({pendingRecovery.schema.length} field{pendingRecovery.schema.length === 1 ? "" : "s"}).</span>
                     </span>
                     <div className="flex items-center gap-2">
                         <button
@@ -606,17 +856,41 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
 
             {/* Revision Conflict Banner */}
             {hasConflict && (
-                <div className="bg-[var(--ocms-rose)] text-black border-b-[3px] border-black px-4 py-2 flex items-center justify-between text-xs font-bold z-40">
+                <div className="bg-[var(--ocms-rose)] text-black border-b-[3px] border-black px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs font-bold z-40 animate-slide-down">
                     <span className="flex items-center gap-2">
                         <span>🚨</span>
-                        <span>Revision conflict: Server schema was modified in another session. Local edits are held safely in your browser.</span>
+                        <span>Revision conflict: Server schema was modified in another session (rev {conflictData?.serverRevision ?? "new"}). Your local edits are preserved.</span>
                     </span>
-                    <button
-                        onClick={() => window.location.reload()}
-                        className="bg-black text-white px-3 py-1 rounded text-xs font-black uppercase hover:bg-slate-800 shadow-[2px_2px_0px_#000]"
-                    >
-                        Reload Page
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={handleForceSaveLocal}
+                            className="bg-black text-white px-3 py-1 rounded text-xs font-black uppercase hover:bg-slate-800 shadow-[2px_2px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 transition-all"
+                            title="Overwrite server schema with your current local edits"
+                        >
+                            Keep My Changes
+                        </button>
+                        <button
+                            onClick={handleMergeConflict}
+                            className="bg-[var(--ocms-yellow)] text-black px-3 py-1 rounded text-xs font-black uppercase hover:bg-amber-300 shadow-[2px_2px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 transition-all"
+                            title="Combine server fields with your local edits"
+                        >
+                            Merge Both
+                        </button>
+                        <button
+                            onClick={handleAcceptServerSchema}
+                            className="bg-white text-black px-3 py-1 rounded text-xs font-black uppercase hover:bg-slate-100 shadow-[2px_2px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 transition-all"
+                            title="Discard local edits and load server version"
+                        >
+                            Use Server Version
+                        </button>
+                        <button
+                            onClick={() => setHasConflict(false)}
+                            className="text-black hover:opacity-75 font-bold px-1.5"
+                            title="Dismiss banner"
+                        >
+                            ✕
+                        </button>
+                    </div>
                 </div>
             )}
 

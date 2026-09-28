@@ -58,6 +58,12 @@ export default function PermissionWizard({
     const [fileSearch, setFileSearch] = useState("");
     const [branchName, setBranchName] = useState(currentBranch || "main");
 
+    // Manual repository and file configuration states
+    const [manualRepoMode, setManualRepoMode] = useState(false);
+    const [customOwner, setCustomOwner] = useState(currentOwner);
+    const [customRepo, setCustomRepo] = useState(currentRepo);
+    const [manualFileMode, setManualFileMode] = useState(false);
+
     const [isSaving, setIsSaving] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
 
@@ -200,25 +206,30 @@ export default function PermissionWizard({
     };
 
     const handleSave = async () => {
-        if (!selectedRepo || !selectedFile) {
-            setErrorMessage("Please select both a repository and target file path.");
+        const finalOwner = (manualRepoMode ? customOwner : selectedRepo?.owner)?.trim() || "";
+        const finalRepo = (manualRepoMode ? customRepo : selectedRepo?.name)?.trim() || "";
+        const finalFile = (selectedFile || "").trim();
+
+        if (!finalOwner || !finalRepo || !finalFile) {
+            setErrorMessage("Please specify both a repository (owner & repo) and target file path.");
             return;
         }
 
         setIsSaving(true);
         setErrorMessage("");
         try {
-            const githubRepoUrl = `https://github.com/${selectedRepo.owner}/${selectedRepo.name}`;
+            const githubRepoUrl = `https://github.com/${finalOwner}/${finalRepo}`;
+            const targetBranch = branchName.trim() || "main";
             
             if (projectId) {
                 const response = await fetch(`/api/projects/${projectId}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        githubOwner: selectedRepo.owner,
-                        githubRepo: selectedRepo.name,
-                        githubBranch: branchName,
-                        targetFilePath: selectedFile,
+                        githubOwner: finalOwner,
+                        githubRepo: finalRepo,
+                        githubBranch: targetBranch,
+                        targetFilePath: finalFile,
                         githubRepoUrl,
                     })
                 });
@@ -230,10 +241,10 @@ export default function PermissionWizard({
             // Callback to update parent client state
             if (onSetupCompleted) {
                 onSetupCompleted({
-                    githubOwner: selectedRepo.owner,
-                    githubRepo: selectedRepo.name,
-                    githubBranch: branchName,
-                    targetFilePath: selectedFile,
+                    githubOwner: finalOwner,
+                    githubRepo: finalRepo,
+                    githubBranch: targetBranch,
+                    targetFilePath: finalFile,
                 });
             }
             onClose();
@@ -333,6 +344,16 @@ export default function PermissionWizard({
                                     <div className="font-extrabold text-[10px] uppercase text-pink-800 tracking-wider">3. Commit & Sync</div>
                                     <p className="text-[10px] text-slate-600 mt-1 font-semibold">Changes are pushed straight to GitHub and synced with your local folder.</p>
                                 </div>
+                            </div>
+
+                            {/* Vercel Live Deployment pipeline info */}
+                            <div className="border-[3px] border-black bg-purple-50 p-4 shadow-[4px_4px_0_0_#000] space-y-2">
+                                <h4 className="text-xs font-black uppercase tracking-wide text-purple-900 flex items-center gap-1.5">
+                                    <span>▲</span> How Live Deployment Works with Vercel
+                                </h4>
+                                <p className="text-[11px] font-bold text-slate-700 leading-relaxed">
+                                    When your GitHub repository is connected to Vercel, every save in OCMS creates a commit or pull request. Vercel automatically detects the push via webhook, builds your site, and deploys it live to your domain in ~60 seconds.
+                                </p>
                             </div>
 
                             <div className="bg-slate-100 border-[3px] border-black p-4 shadow-[4px_4px_0_0_#000] flex items-start gap-3">
@@ -491,10 +512,42 @@ export default function PermissionWizard({
 
                             {/* 1. Repository Selection */}
                             <div className="space-y-2">
-                                <label className="text-[10px] font-black uppercase tracking-wider block text-slate-800">
-                                    1. Choose Repository
-                                </label>
-                                {loadingRepos ? (
+                                <div className="flex items-center justify-between">
+                                    <label className="text-[10px] font-black uppercase tracking-wider block text-slate-800">
+                                        1. Choose Repository
+                                    </label>
+                                    <button
+                                        type="button"
+                                        onClick={() => setManualRepoMode(!manualRepoMode)}
+                                        className="text-[10px] text-slate-700 underline font-extrabold hover:text-black cursor-pointer"
+                                    >
+                                        {manualRepoMode ? "← Select from repo list" : "✏️ Enter repo manually"}
+                                    </button>
+                                </div>
+                                {manualRepoMode ? (
+                                    <div className="grid grid-cols-2 gap-2 bg-slate-50 border-[2.5px] border-black p-3 rounded-md animate-fade-in shadow-[2px_2px_0px_#000]">
+                                        <div>
+                                            <label className="text-[9px] font-black uppercase text-slate-600 block mb-1">GitHub Owner / Org</label>
+                                            <input
+                                                type="text"
+                                                value={customOwner}
+                                                onChange={(e) => setCustomOwner(e.target.value)}
+                                                placeholder="e.g. your-github-username"
+                                                className="w-full bg-white border-2 border-black rounded px-2.5 py-1.5 text-xs font-bold outline-none"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] font-black uppercase text-slate-600 block mb-1">Repository Name</label>
+                                            <input
+                                                type="text"
+                                                value={customRepo}
+                                                onChange={(e) => setCustomRepo(e.target.value)}
+                                                placeholder="e.g. my-website"
+                                                className="w-full bg-white border-2 border-black rounded px-2.5 py-1.5 text-xs font-bold outline-none"
+                                            />
+                                        </div>
+                                    </div>
+                                ) : loadingRepos ? (
                                     <div className="flex items-center gap-2 py-3">
                                         <Loader2 className="w-4 h-4 animate-spin text-black" />
                                         <span className="text-xs text-slate-500 font-bold">Loading repositories...</span>
@@ -532,21 +585,37 @@ export default function PermissionWizard({
                                                     </button>
                                                 ))
                                             ) : (
-                                                <div className="p-3.5 text-xs font-bold text-slate-400 text-center">No repositories found.</div>
+                                                <div className="p-3.5 text-xs font-bold text-slate-400 text-center">
+                                                    No repositories found.{" "}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setManualRepoMode(true)}
+                                                        className="underline font-black text-black ml-1"
+                                                    >
+                                                        Enter manually
+                                                    </button>
+                                                </div>
                                             )}
                                         </div>
                                     </div>
                                 )}
                             </div>
 
-                            {/* 2. File Selection (Conditional on Repo Selected) */}
-                            {selectedRepo && (
+                            {/* 2. File Selection */}
+                            {(selectedRepo || manualRepoMode) && (
                                 <div className="space-y-2 animate-fade-in">
                                     <div className="flex justify-between items-center">
                                         <label className="text-[10px] font-black uppercase tracking-wider block text-slate-800">
                                             2. Choose target file path to edit
                                         </label>
                                         <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setManualFileMode(!manualFileMode)}
+                                                className="text-[10px] text-slate-700 underline font-extrabold hover:text-black cursor-pointer mr-1"
+                                            >
+                                                {manualFileMode ? "← Select from file list" : "✏️ Custom path"}
+                                            </button>
                                             <span className="text-[9px] font-black text-slate-500 uppercase">Branch:</span>
                                             <input
                                                 type="text"
@@ -557,10 +626,20 @@ export default function PermissionWizard({
                                         </div>
                                     </div>
 
-                                    {loadingFiles ? (
+                                    {manualFileMode || manualRepoMode ? (
+                                        <div className="bg-slate-50 border-[2.5px] border-black p-2.5 rounded-md shadow-[2px_2px_0px_#000]">
+                                            <input
+                                                type="text"
+                                                value={selectedFile}
+                                                onChange={(e) => setSelectedFile(e.target.value)}
+                                                placeholder="e.g. src/app/page.tsx or index.html"
+                                                className="w-full bg-white border-2 border-black rounded px-2.5 py-1.5 text-xs font-bold outline-none font-mono"
+                                            />
+                                        </div>
+                                    ) : loadingFiles ? (
                                         <div className="flex items-center gap-2 py-3">
                                             <Loader2 className="w-4 h-4 animate-spin text-black" />
-                                            <span className="text-xs text-slate-500 font-bold">Scanning files in {selectedRepo.name}...</span>
+                                            <span className="text-xs text-slate-500 font-bold">Scanning files in {selectedRepo?.name}...</span>
                                         </div>
                                     ) : (
                                         <div className="space-y-2">
@@ -595,7 +674,16 @@ export default function PermissionWizard({
                                                         </button>
                                                     ))
                                                 ) : (
-                                                    <div className="p-3.5 text-xs font-bold text-slate-400 text-center">No matching files found. Select another repository.</div>
+                                                    <div className="p-3.5 text-xs font-bold text-slate-400 text-center">
+                                                        No matching files found.{" "}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setManualFileMode(true)}
+                                                            className="underline font-black text-black ml-1"
+                                                        >
+                                                            Type custom path
+                                                        </button>
+                                                    </div>
                                                 )}
                                             </div>
                                         </div>
@@ -604,13 +692,16 @@ export default function PermissionWizard({
                             )}
 
                             {/* 3. Confirm Summary */}
-                            {selectedRepo && selectedFile && (
+                            {((selectedRepo && !manualRepoMode) || (manualRepoMode && customOwner && customRepo)) && selectedFile && (
                                 <div className="border-[3px] border-black bg-cyan-50/50 p-3.5 rounded-md text-xs font-bold space-y-1 shadow-[2px_2px_0_0_#000]">
                                     <div className="uppercase tracking-wider text-cyan-800 text-[10px] font-black">Sync Target Summary:</div>
                                     <div className="text-black leading-relaxed">
-                                        Repository: <code className="bg-white px-1 border rounded">{selectedRepo.full_name}</code><br />
+                                        Repository: <code className="bg-white px-1 border rounded">{manualRepoMode ? `${customOwner}/${customRepo}` : selectedRepo?.full_name}</code><br />
                                         Target File: <code className="bg-white px-1 border rounded">{selectedFile}</code><br />
                                         Branch: <code className="bg-white px-1 border rounded">{branchName}</code>
+                                    </div>
+                                    <div className="text-[10px] text-purple-900 font-bold pt-1.5 border-t border-cyan-200 flex items-center gap-1.5">
+                                        <span>▲</span> <span><strong>Vercel Live Deploy:</strong> Commits to branch <code>{branchName}</code> will automatically trigger a live production build on Vercel.</span>
                                     </div>
                                 </div>
                             )}
@@ -625,7 +716,7 @@ export default function PermissionWizard({
                                 </button>
                                 <button
                                     onClick={handleSave}
-                                    disabled={isSaving || !selectedRepo || !selectedFile}
+                                    disabled={isSaving || (manualRepoMode ? (!customOwner.trim() || !customRepo.trim()) : !selectedRepo) || !selectedFile.trim()}
                                     className="glow-btn py-2.5 px-6 text-xs uppercase font-black tracking-wide flex items-center gap-1.5"
                                 >
                                     {isSaving ? (

@@ -5,7 +5,7 @@ import {
     Type, ImageIcon, Link2, Box, Loader2, Check, AlertCircle,
     Mic, MicOff, Palette, Code2, Clock, Gauge, Sparkles,
     MousePointer2, Copy, Wand2, ChevronDown, ChevronRight,
-    GitBranch, Zap, Eye, ShieldCheck, ShieldAlert, Clipboard, List, Settings
+    GitBranch, Zap, Eye, ShieldCheck, ShieldAlert, Clipboard, List, Settings, ExternalLink
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import ModelDropzone from "./ModelDropzone";
@@ -286,6 +286,15 @@ export default function ContentEditor({
     const [accessibilityScore, setAccessibilityScore] = useState(0);
     const [seoScore, setSeoScore] = useState(0);
     const [isAuditingLighthouse, setIsAuditingLighthouse] = useState(false);
+    const [lastSyncResult, setLastSyncResult] = useState<{
+        commitUrl: string | null;
+        message: string;
+        isPullRequest?: boolean;
+        deploymentNotice?: string;
+        branch?: string;
+        targetBranch?: string;
+    } | null>(null);
+    const [directCommit, setDirectCommit] = useState(true);
 
     useEffect(() => {
         if (historyCount && historyCount > 1) {
@@ -296,8 +305,25 @@ export default function ContentEditor({
     }, [historyIndex, historyCount]);
 
     useEffect(() => {
-        setSyncedSchema(initialSchema);
+        if (initialSchema && initialSchema.length > 0) {
+            setSyncedSchema(initialSchema);
+        }
     }, [initialSchema]);
+
+    // Keep syncedSchema baseline updated when schema is first loaded or scanned
+    useEffect(() => {
+        setSyncedSchema((prev) => {
+            if (prev.length === 0 && schema.length > 0) {
+                return schema;
+            }
+            const existingIds = new Set(prev.map((f) => f.id));
+            const newFields = schema.filter((f) => !existingIds.has(f.id));
+            if (newFields.length > 0) {
+                return [...prev, ...newFields];
+            }
+            return prev;
+        });
+    }, [schema]);
 
     const handleRunLighthouseAudit = async () => {
         if (!previewUrl) return;
@@ -513,6 +539,16 @@ export default function ContentEditor({
     const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
     const handleSaveAndSync = async () => {
+        if (!githubOwner || !githubRepo || !targetFilePath) {
+            setErrorMessage("GitHub repository not configured. Click 'Configure' below to select your repository and target file.");
+            setSyncStatus("error");
+            if (openPermissionWizard) {
+                openPermissionWizard();
+            }
+            setTimeout(() => setSyncStatus("idle"), 5000);
+            return;
+        }
+
         const changedFields = schema.filter((field) => {
             const original = syncedSchema.find((item) => item.id === field.id);
             return !original || SYNCED_FIELD_PROPERTIES.some((property) => field[property] !== original[property]);
@@ -595,11 +631,20 @@ export default function ContentEditor({
                     repoName: githubRepo,
                     filePath: targetFilePath,
                     changes,
+                    directCommit,
                 }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.message || data.error || "Unknown error");
             setSyncStatus("success");
+            setLastSyncResult({
+                commitUrl: data.commitUrl || null,
+                message: data.message || "Changes synced to GitHub.",
+                isPullRequest: data.isPullRequest,
+                deploymentNotice: data.deploymentNotice || "Pushed to GitHub. Live deployment triggered on Vercel.",
+                branch: data.branch,
+                targetBranch: data.targetBranch,
+            });
             const unmatchedSelectors = new Set(
                 Array.isArray(data.unmatchedSelectors) ? data.unmatchedSelectors : []
             );
@@ -619,7 +664,7 @@ export default function ContentEditor({
             if (isGhostModeActive && broadcastGhostEvent) {
                 broadcastGhostEvent("AI_EDIT_END");
             }
-            setTimeout(() => setSyncStatus("idle"), 3000);
+            setTimeout(() => setSyncStatus("idle"), 4000);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : "Failed to sync";
             setErrorMessage(message);
@@ -1739,19 +1784,77 @@ export default function ContentEditor({
                     </div>
                 )}
                 
-                <div className="flex items-center justify-between text-[9px] font-black uppercase text-slate-500 mb-2.5 px-1 select-none">
-                    <span className="truncate max-w-[220px]" title={`${githubOwner}/${githubRepo}@${githubBranch}:${targetFilePath}`}>
-                        Sync: {githubOwner}/{githubRepo}@{githubBranch}:{targetFilePath?.split("/").pop()}
+                {/* Live Deployment Feedback Card */}
+                {lastSyncResult && (
+                    <div className="border-[3px] border-black rounded-md p-3 bg-emerald-50 text-black shadow-[3px_3px_0px_#000] space-y-2 animate-slide-up text-xs">
+                        <div className="flex items-center justify-between">
+                            <span className="font-black uppercase flex items-center gap-1.5 text-emerald-950 text-[10px]">
+                                <span>🚀</span> Vercel Live Deployment Triggered
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setLastSyncResult(null)}
+                                className="text-slate-600 hover:text-black font-black text-xs px-1"
+                                title="Dismiss"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <p className="text-[10px] font-bold text-slate-800 leading-snug">
+                            {lastSyncResult.deploymentNotice}
+                        </p>
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-emerald-200">
+                            {lastSyncResult.commitUrl ? (
+                                <a
+                                    href={lastSyncResult.commitUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-black text-white text-[10px] font-black uppercase rounded hover:bg-slate-800 shadow-[1px_1px_0px_#000] transition-colors"
+                                >
+                                    <span>{lastSyncResult.isPullRequest ? "View PR on GitHub" : "View Commit"}</span>
+                                    <ExternalLink className="w-3 h-3" />
+                                </a>
+                            ) : (
+                                <span className="text-[9px] font-mono text-slate-600">Local workspace synced</span>
+                            )}
+                            <span className="text-[9px] text-emerald-900 font-extrabold flex items-center gap-1">
+                                <span>⚡</span> Deploys live in ~60s
+                            </span>
+                        </div>
+                    </div>
+                )}
+
+                <div className="flex items-center justify-between text-[9px] font-black uppercase text-slate-500 mb-1 px-1 select-none">
+                    <span className="truncate max-w-[210px]" title={`${githubOwner || ""}/${githubRepo || ""}@${githubBranch || "main"}:${targetFilePath || ""}`}>
+                        {githubOwner && githubRepo ? (
+                            `Sync: ${githubOwner}/${githubRepo}@${githubBranch}:${targetFilePath?.split("/").pop() || "all"}`
+                        ) : (
+                            <span className="text-[var(--ocms-orange)] font-extrabold flex items-center gap-1">
+                                <span>⚠️</span> Repo Not Configured
+                            </span>
+                        )}
                     </span>
                     {openPermissionWizard && (
                         <button
                             type="button"
                             onClick={openPermissionWizard}
-                            className="hover:text-black flex items-center gap-1 shrink-0 font-extrabold transition-colors"
+                            className="hover:text-black flex items-center gap-1 shrink-0 font-extrabold transition-colors text-slate-800 hover:text-[var(--ocms-blue)] underline"
                         >
                             <Settings className="w-3.5 h-3.5" /> Configure
                         </button>
                     )}
+                </div>
+
+                <div className="flex items-center justify-between text-[9px] font-bold text-slate-700 px-1 mb-2 select-none">
+                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-black transition-colors" title="Commit directly to the configured branch to trigger immediate production Vercel deployment">
+                        <input
+                            type="checkbox"
+                            checked={directCommit}
+                            onChange={(e) => setDirectCommit(e.target.checked)}
+                            className="w-3 h-3 accent-black rounded cursor-pointer"
+                        />
+                        <span>Push directly to {githubBranch || "main"} (instant live Vercel deploy)</span>
+                    </label>
                 </div>
 
                 <button onClick={handleSaveAndSync} disabled={syncStatus === "syncing"}

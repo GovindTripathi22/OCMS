@@ -122,6 +122,7 @@ export async function POST(
             scrapeFailed: true,
             error: "Could not fetch page content. The URL may be unreachable or return invalid HTML.",
             schema: (existingProject.generatedSchema as unknown as SchemaField[]) ?? [],
+            schemaRevision: existingProject.schemaRevision ?? 0,
             newFieldsCount: 0,
         }, { status: 200 });
     }

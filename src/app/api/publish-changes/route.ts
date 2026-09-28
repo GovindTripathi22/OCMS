@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json().catch(() => ({}));
-        const { projectId, repoOwner, repoName, filePath, changes, baseSha, baseHash } = body;
+        const { projectId, repoOwner, repoName, filePath, changes, baseSha, baseHash, directCommit } = body;
 
         // Require project ownership
         if (!projectId) {
@@ -326,6 +326,7 @@ export async function POST(req: NextRequest) {
                     commitUrl: null,
                     conflicts: false,
                     errors: [],
+                    deploymentNotice: "Local file updated directly in workspace (Dev Mode). Connect your GitHub repository to trigger automatic Vercel live deployments.",
                     message: buildCommitMessage(patchResult, "Local file updated atomically (Dev Mode).", astChanges, projectName, targetPath),
                 }, { status: 200 }, patchResult);
             } catch (err) {
@@ -450,9 +451,10 @@ export async function POST(req: NextRequest) {
         const encodedContent = Buffer.from(patchResult.code).toString("base64");
 
         const isDefaultBranch = targetBranch === "main" || targetBranch === "master";
-        const publishBranch = isDefaultBranch ? `ocms/update-${Date.now()}` : targetBranch;
+        const shouldCreatePR = isDefaultBranch && directCommit !== true;
+        const publishBranch = shouldCreatePR ? `ocms/update-${Date.now()}` : targetBranch;
 
-        if (isDefaultBranch) {
+        if (shouldCreatePR) {
             try {
                 const refData = await octokit.git.getRef({
                     owner: targetOwner,
@@ -512,7 +514,7 @@ export async function POST(req: NextRequest) {
         }
 
         let commitUrl = updateResult.commit.html_url;
-        if (isDefaultBranch) {
+        if (shouldCreatePR) {
             try {
                 const prResult = await octokit.pulls.create({
                     owner: targetOwner,
@@ -520,7 +522,7 @@ export async function POST(req: NextRequest) {
                     title: commitMessage,
                     head: publishBranch,
                     base: targetBranch,
-                    body: "Automated content update published via OCMS.",
+                    body: "Automated content update published via OCMS. Merge to trigger live production Vercel deployment.",
                 });
                 commitUrl = prResult.data.html_url;
             } catch (prErr) {
@@ -528,17 +530,29 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        const isPR = Boolean(shouldCreatePR && commitUrl?.includes("/pull/"));
+        const deploymentNotice = isPR
+            ? `Pull Request opened against "${targetBranch}". Merge it on GitHub to deploy live to Vercel (or view Vercel preview deployment on the PR).`
+            : shouldCreatePR
+            ? `Changes pushed to branch "${publishBranch}". Create a Pull Request against "${targetBranch}" to trigger Vercel deployment.`
+            : `Pushed directly to "${targetBranch}". Vercel is now automatically building and deploying your live site.`;
+
         return patchJson({
             success: true,
             localSynced,
             githubSynced: true,
             validationPassed: true,
             commitUrl,
+            commitSha: updateResult.commit.sha,
+            branch: publishBranch,
+            targetBranch,
+            isPullRequest: isPR,
+            deploymentNotice,
             errors: [],
             conflicts: false,
             message: buildCommitMessage(
                 patchResult,
-                isDefaultBranch ? `Created pull request against "${targetBranch}".` : `Pushed to branch "${targetBranch}" successfully.`,
+                isPR ? `Created pull request against "${targetBranch}".` : `Pushed to branch "${targetBranch}" successfully.`,
                 astChanges,
                 projectName,
                 targetPath

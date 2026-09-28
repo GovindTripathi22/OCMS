@@ -25,12 +25,6 @@ export async function POST(
     }
     const userId = authCheck.userId;
 
-    const projectCheck = await requireOwnedProject(params.projectId, userId);
-    if (projectCheck.error) {
-        return createErrorResponse(projectCheck.error.code, projectCheck.error.message, projectCheck.error.status);
-    }
-    const existingProject = projectCheck.project;
-
     const { data, error: jsonError } = await parseJsonSafely<{ url?: string; html?: string }>(
         req,
         LIMITS.HTML_PAYLOAD_MAX_BYTES + 1024
@@ -45,6 +39,32 @@ export async function POST(
     const urlValidation = validateHttpUrl(url);
     if (!urlValidation.valid) {
         return createErrorResponse("INVALID_URL", urlValidation.error || "Invalid URL format", 400);
+    }
+
+    const projectCheck = await requireOwnedProject(params.projectId, userId);
+    let existingProject = projectCheck.project;
+    if (projectCheck.error) {
+        if (projectCheck.error.status === 403) {
+            return createErrorResponse(projectCheck.error.code, projectCheck.error.message, projectCheck.error.status);
+        }
+        try {
+            existingProject = await prisma.project.create({
+                data: {
+                    id: params.projectId,
+                    name: "Workspace Project",
+                    userId,
+                    sourceUrl: url,
+                    generatedSchema: [],
+                    schemaRevision: 0,
+                },
+            });
+        } catch {
+            return createErrorResponse(projectCheck.error.code, projectCheck.error.message, projectCheck.error.status);
+        }
+    }
+
+    if (!existingProject) {
+        return createErrorResponse("NOT_FOUND", "Project not found", 404);
     }
 
     let pathname = "/";

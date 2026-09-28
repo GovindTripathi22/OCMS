@@ -83,10 +83,29 @@ export async function PUT(
     const userId = authCheck.userId;
 
     const projectCheck = await requireOwnedProject(params.projectId, userId);
+    let currentProject = projectCheck.project;
     if (projectCheck.error) {
-        return createErrorResponse(projectCheck.error.code, projectCheck.error.message, projectCheck.error.status);
+        if (projectCheck.error.status === 403) {
+            return createErrorResponse(projectCheck.error.code, projectCheck.error.message, projectCheck.error.status);
+        }
+        try {
+            currentProject = await prisma.project.create({
+                data: {
+                    id: params.projectId,
+                    name: "Workspace Project",
+                    userId,
+                    generatedSchema: [],
+                    schemaRevision: 0,
+                },
+            });
+        } catch {
+            return createErrorResponse(projectCheck.error.code, projectCheck.error.message, projectCheck.error.status);
+        }
     }
-    const currentProject = projectCheck.project;
+
+    if (!currentProject) {
+        return createErrorResponse("NOT_FOUND", "Project not found", 404);
+    }
 
     const { data, error: jsonError } = await parseJsonSafely<{
         schema?: unknown[];

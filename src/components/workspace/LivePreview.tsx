@@ -43,8 +43,8 @@ export default function LivePreview({
             action: 'toggle-inspector',
             enabled: isInspecting,
             nonce: previewNonce,
-        }, scriptMode === "static" ? window.location.origin : "*");
-    }, [isInspecting, iframeRef, previewUrl, isLoading, previewNonce, scriptMode]);
+        }, "*");
+    }, [isInspecting, iframeRef, previewUrl, isLoading, previewNonce]);
 
     // Mobile: whether the URL bar is expanded
     const [urlBarExpanded, setUrlBarExpanded] = useState(false);
@@ -371,7 +371,11 @@ export default function LivePreview({
                         setHasError(true);
                         setErrorMessage("The preview request failed to load.");
                     }}
-                    sandbox="allow-scripts allow-forms allow-popups allow-modals"
+                    sandbox={
+                        scriptMode === "static"
+                            ? "allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                            : "allow-scripts allow-forms allow-popups allow-modals"
+                    }
                     title="Live Website Preview"
                 />
             </div>

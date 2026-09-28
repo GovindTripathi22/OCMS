@@ -66,9 +66,15 @@ export async function GET(req: NextRequest) {
     if (projectId) {
         const ownership = await requireOwnedProject(projectId, userId);
         if (ownership.error) {
-            return NextResponse.json({ error: ownership.error.message }, { status: ownership.error.status });
+            // Reject IDOR access if project explicitly belongs to another user
+            if (ownership.error.status === 403) {
+                return NextResponse.json({ error: ownership.error.message }, { status: 403 });
+            }
+            // On ephemeral serverless instances, project might not exist in local SQLite yet.
+            // Continue proxying the target site without server-side pre-patching.
+        } else {
+            ownedProject = ownership.project;
         }
-        ownedProject = ownership.project;
     }
 
     const scriptMode: ScriptMode = req.nextUrl.searchParams.get("scriptMode") === "dynamic" ? "dynamic" : "static";

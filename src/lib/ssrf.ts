@@ -48,11 +48,12 @@ const IPV4_BLOCKED_CIDRS: Ipv4Cidr[] = [
     parseIpv4Cidr("255.255.255.255/32", "Limited broadcast (RFC 8190)"),
 ];
 
+const V4_MAPPED_CIDR = parseIpv6Cidr("::ffff:0:0/96", "IPv4-mapped IPv6");
+const NAT64_CIDR = parseIpv6Cidr("64:ff9b::/96", "IPv4-IPv6 translation (NAT64)");
+
 const IPV6_BLOCKED_CIDRS: Ipv6Cidr[] = [
     parseIpv6Cidr("::/128", "Unspecified address"),
     parseIpv6Cidr("::1/128", "Loopback address"),
-    parseIpv6Cidr("::ffff:0:0/96", "IPv4-mapped IPv6"),
-    parseIpv6Cidr("64:ff9b::/96", "IPv4-IPv6 translation"),
     parseIpv6Cidr("100::/64", "Discard prefix"),
     parseIpv6Cidr("2001::/23", "IETF protocol assignments"),
     parseIpv6Cidr("2001:db8::/32", "Documentation prefix"),
@@ -170,9 +171,19 @@ export function isPrivateIp(ip: string): boolean {
             cleanIp = cleanIp.slice(1, -1);
         }
 
-        // IPv4-mapped IPv6 check
+        // IPv4-mapped IPv6 check (::ffff:0:0/96)
         if (cleanIp.startsWith("::ffff:")) {
             const mapped = cleanIp.slice(7);
+            if (mapped.includes(".")) {
+                return isPrivateIp(mapped);
+            }
+            const num = normalizeNumericHost(mapped);
+            if (num) return isPrivateIp(num);
+        }
+
+        // NAT64 check (64:ff9b::/96)
+        if (cleanIp.startsWith("64:ff9b::")) {
+            const mapped = cleanIp.slice(9);
             if (mapped.includes(".")) {
                 return isPrivateIp(mapped);
             }
@@ -198,6 +209,14 @@ export function isPrivateIp(ip: string): boolean {
 
         if (family === 6) {
             const big = ipv6ToBigInt(cleanIp);
+
+            // Check if address is in IPv4-mapped (::ffff:0:0/96) or NAT64 (64:ff9b::/96)
+            if ((big & V4_MAPPED_CIDR.mask) === V4_MAPPED_CIDR.net || (big & NAT64_CIDR.mask) === NAT64_CIDR.net) {
+                const v4Num = Number(big & BigInt(0xffffffff));
+                const v4String = `${(v4Num >>> 24) & 255}.${(v4Num >>> 16) & 255}.${(v4Num >>> 8) & 255}.${v4Num & 255}`;
+                return isPrivateIp(v4String);
+            }
+
             for (const cidr of IPV6_BLOCKED_CIDRS) {
                 if ((big & cidr.mask) === cidr.net) {
                     return true;
@@ -293,7 +312,9 @@ export async function validateUrlForSsrf(urlStr: string): Promise<SsrfValidation
                 }
             }
 
-            const approved = lookupResult[0];
+            // Prefer an IPv4 address if available for reliable connection
+            const ipv4Addr = lookupResult.find((a) => a.family === 4);
+            const approved = ipv4Addr || lookupResult[0];
             return {
                 safe: true,
                 resolvedIp: approved.address,

@@ -82,6 +82,7 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
     const historyIndexRef = useRef(0);
     const isDirtyRef = useRef(false);
     const lastEditRef = useRef<{ fieldId: string; timestamp: number } | null>(null);
+    const hasAutoScannedRef = useRef(false);
 
     // Shared postMessage payload builder
     const buildChangesPayload = useCallback((fields: SchemaField[]) => {
@@ -463,6 +464,12 @@ export default function WorkspaceClient({ project, initialSchema }: WorkspaceCli
                         { source: "ocms-live-bridge", changes: changesPayload, nonce: previewNonce },
                         "*"
                     );
+
+                    // If workspace has no editable fields yet, automatically trigger scan
+                    if (schema.length === 0 && !hasAutoScannedRef.current) {
+                        hasAutoScannedRef.current = true;
+                        handleScanPage(false);
+                    }
                     return;
                 }
 

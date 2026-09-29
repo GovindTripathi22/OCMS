@@ -45,6 +45,18 @@ export const prisma =
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS "User" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "name" TEXT,
+    "email" TEXT,
+    "emailVerified" DATETIME,
+    "image" TEXT,
+    "subscription" TEXT NOT NULL DEFAULT 'FREE',
+    "generationsUsed" INTEGER NOT NULL DEFAULT 0,
+    "generationsReset" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS "Account" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "userId" TEXT NOT NULL,
@@ -72,18 +84,6 @@ CREATE TABLE IF NOT EXISTS "VerificationToken" (
     "token" TEXT NOT NULL,
     "expires" DATETIME NOT NULL
 );
-CREATE TABLE IF NOT EXISTS "User" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "name" TEXT,
-    "email" TEXT,
-    "emailVerified" DATETIME,
-    "image" TEXT,
-    "subscription" TEXT NOT NULL DEFAULT 'FREE',
-    "generationsUsed" INTEGER NOT NULL DEFAULT 0,
-    "generationsReset" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
-);
 CREATE TABLE IF NOT EXISTS "Project" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL,
@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS "Project" (
     "gsdPlan" JSONB,
     "brandGuidelines" JSONB,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
+    "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "Project_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE IF NOT EXISTS "Asset3D" (
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS "Asset3D" (
     "urlLowPoly" TEXT,
     "projectId" TEXT NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
+    "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "Asset3D_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE IF NOT EXISTS "ModelVariant" (
@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS "ModelVariant" (
     "textureUrl" TEXT,
     "materialProperties" JSONB,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
+    "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "ModelVariant_assetId_fkey" FOREIGN KEY ("assetId") REFERENCES "Asset3D" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE IF NOT EXISTS "SceneGraph" (
@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS "SceneGraph" (
     "name" TEXT NOT NULL,
     "sceneData" JSONB NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS "WebhookEvent" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -156,18 +156,27 @@ CREATE INDEX IF NOT EXISTS "ModelVariant_assetId_idx" ON "ModelVariant"("assetId
 `;
 
 let isDbInitialized = false;
+let dbInitPromise: Promise<void> | null = null;
 
 export async function ensureDatabaseTables(): Promise<void> {
     if (isDbInitialized) return;
-    try {
-        const statements = SCHEMA_SQL.split(";")
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0);
-        for (const sql of statements) {
-            await prisma.$executeRawUnsafe(sql);
+    if (dbInitPromise) return dbInitPromise;
+
+    dbInitPromise = (async () => {
+        try {
+            const statements = SCHEMA_SQL.split(";")
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0);
+            for (const sql of statements) {
+                await prisma.$executeRawUnsafe(sql);
+            }
+            isDbInitialized = true;
+        } catch (err) {
+            console.warn("[Prisma] Table verification notice:", err);
+        } finally {
+            dbInitPromise = null;
         }
-        isDbInitialized = true;
-    } catch (err) {
-        console.warn("[Prisma] Table verification notice:", err);
-    }
+    })();
+
+    return dbInitPromise;
 }

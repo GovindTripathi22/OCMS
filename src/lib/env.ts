@@ -109,9 +109,10 @@ const DUMMY_PATTERNS = [
     "secret",
 ];
 
-function isPlaceholder(value: string | undefined): boolean {
+export function isPlaceholder(value: string | undefined): boolean {
     if (!value) return true;
     const v = value.trim().toLowerCase();
+    if (v.includes("*")) return true;
     return DUMMY_PATTERNS.some((pattern) => v.includes(pattern));
 }
 

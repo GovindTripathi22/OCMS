@@ -19,6 +19,10 @@ function SignInContent() {
         isGuestMode: boolean;
         isProduction: boolean;
         githubConfigured: boolean;
+        secretHasAsterisks?: boolean;
+        clientIdHasAsterisks?: boolean;
+        callbackUrl?: string;
+        homepageUrl?: string;
     } | null>(null);
     const [loading, setLoading] = useState(false);
     const [showWizard, setShowWizard] = useState(false);
@@ -31,6 +35,10 @@ function SignInContent() {
                     isGuestMode: Boolean(data.isGuestMode),
                     isProduction: Boolean(data.isProduction),
                     githubConfigured: Boolean(data.githubConfigured),
+                    secretHasAsterisks: Boolean(data.secretHasAsterisks),
+                    clientIdHasAsterisks: Boolean(data.clientIdHasAsterisks),
+                    callbackUrl: data.callbackUrl,
+                    homepageUrl: data.homepageUrl,
                 });
             })
             .catch(() => {});
@@ -93,13 +101,15 @@ function SignInContent() {
                 </div>
 
                 {/* Error Banner if redirected from an error */}
-                {errorParam && (
+                {(errorParam || envInfo?.secretHasAsterisks) && (
                     <div className="mb-6 p-4 border-[3px] border-black bg-[var(--ocms-yellow)] shadow-[4px_4px_0_0_#000] rounded-md text-xs font-bold text-black flex items-start gap-2.5">
                         <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
                         <div>
                             <span className="font-black uppercase block mb-0.5">Authentication Notice</span>
-                            {errorParam === "Configuration"
-                                ? "GitHub OAuth is not fully configured in your environment. You can continue instantly in Guest Mode below."
+                            {envInfo?.secretHasAsterisks
+                                ? "GITHUB_CLIENT_SECRET appears to contain asterisks (*****). Generate a new Client Secret in GitHub Developer Settings and copy the raw value into Vercel, or click Guest Mode below."
+                                : errorParam === "Configuration"
+                                ? "GitHub OAuth configuration issue detected. You can configure GitHub settings or continue instantly in Guest Mode below."
                                 : "An authentication error occurred. Please try again or continue as Guest."}
                         </div>
                     </div>

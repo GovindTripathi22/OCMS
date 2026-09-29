@@ -12,7 +12,25 @@ function AuthErrorContent() {
     const searchParams = useSearchParams();
     const error = searchParams?.get("error") || "Default";
     const [showWizard, setShowWizard] = useState(false);
-    const [envInfo, setEnvInfo] = useState<{ isGuestMode: boolean; isProduction: boolean } | null>(null);
+    const [envInfo, setEnvInfo] = useState<{
+        isGuestMode: boolean;
+        isProduction: boolean;
+        githubConfigured: boolean;
+        secretHasAsterisks?: boolean;
+        clientIdHasAsterisks?: boolean;
+        callbackUrl?: string;
+        homepageUrl?: string;
+    } | null>(null);
+
+    const [origin, setOrigin] = useState("https://ocms-one.vercel.app");
+    const [copiedCallback, setCopiedCallback] = useState(false);
+    const [copiedHomepage, setCopiedHomepage] = useState(false);
+
+    useEffect(() => {
+        if (typeof window !== "undefined" && window.location.origin) {
+            setOrigin(window.location.origin);
+        }
+    }, []);
 
     useEffect(() => {
         fetch("/api/check-env")
@@ -21,16 +39,37 @@ function AuthErrorContent() {
                 setEnvInfo({
                     isGuestMode: Boolean(data.isGuestMode),
                     isProduction: Boolean(data.isProduction),
+                    githubConfigured: Boolean(data.githubConfigured),
+                    secretHasAsterisks: Boolean(data.secretHasAsterisks),
+                    clientIdHasAsterisks: Boolean(data.clientIdHasAsterisks),
+                    callbackUrl: data.callbackUrl,
+                    homepageUrl: data.homepageUrl,
                 });
             })
             .catch(() => {});
     }, []);
 
+    const effectiveCallbackUrl = envInfo?.callbackUrl || `${origin}/api/auth/callback/github`;
+    const effectiveHomepageUrl = envInfo?.homepageUrl || origin;
+
+    const copyToClipboard = (text: string, type: "callback" | "homepage") => {
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text);
+            if (type === "callback") {
+                setCopiedCallback(true);
+                setTimeout(() => setCopiedCallback(false), 2000);
+            } else {
+                setCopiedHomepage(true);
+                setTimeout(() => setCopiedHomepage(false), 2000);
+            }
+        }
+    };
+
     const errorDetails: Record<string, { title: string; message: string; hint?: string }> = {
         Configuration: {
             title: "Authentication Configuration Notice",
             message: "There is an issue with the authentication provider configuration.",
-            hint: "This typically occurs when GITHUB_CLIENT_SECRET does not match what GitHub has on file (e.g. was copied with asterisks ***** from GitHub settings), or when credentials are out of date. Generate a new Client Secret in GitHub Developer Settings and update Vercel, or click 'Continue in Guest Mode' below to edit immediately.",
+            hint: "This typically occurs when GITHUB_CLIENT_SECRET does not match what GitHub has on file (e.g. was copied with asterisks ***** from GitHub settings), or when credentials or callback URLs are mismatched. Generate a new Client Secret in GitHub Developer Settings and update Vercel, or click 'Continue in Guest Mode' below to edit immediately.",
         },
         AccessDenied: {
             title: "Access Denied",
@@ -91,6 +130,21 @@ function AuthErrorContent() {
                         </div>
                     </div>
 
+                    {/* Masked Secret Alert if Asterisks Detected */}
+                    {envInfo?.secretHasAsterisks && (
+                        <div className="p-4 bg-amber-50 border-2 border-amber-500 rounded-md text-xs font-bold text-amber-900 space-y-1 shadow-[2px_2px_0_0_#000]">
+                            <span className="font-black uppercase text-amber-800 flex items-center gap-1.5">
+                                <span>⚠️</span> Asterisks Detected in GITHUB_CLIENT_SECRET
+                            </span>
+                            <p className="text-[11px] font-semibold text-amber-950 leading-relaxed">
+                                GitHub masks client secrets once generated. If your environment variable contains <code className="bg-white border px-1 py-0.5 rounded font-mono font-bold">*****</code>, GitHub OAuth cannot exchange authentication tokens.
+                            </p>
+                            <p className="text-[11px] font-semibold text-amber-950 leading-relaxed">
+                                Go to <a href="https://github.com/settings/developers" target="_blank" rel="noopener noreferrer" className="underline font-bold text-amber-900 hover:text-black">GitHub Developer Settings &gt; OAuth Apps</a>, generate a new client secret, copy the unmasked value immediately, and update Vercel.
+                            </p>
+                        </div>
+                    )}
+
                     {currentError.hint && (
                         <div className="p-4 bg-slate-50 border-2 border-black rounded-md text-xs font-semibold text-slate-800 leading-relaxed">
                             <span className="font-black text-black block mb-1 uppercase text-[11px]">Why this happened:</span>
@@ -98,10 +152,63 @@ function AuthErrorContent() {
                         </div>
                     )}
 
+                    {/* Diagnostic GitHub OAuth Configuration Box */}
+                    {error === "Configuration" && (
+                        <div className="p-4 bg-slate-50 border-2 border-dashed border-black/40 rounded-md space-y-3">
+                            <span className="font-black uppercase text-black text-[11px] block">
+                                GitHub OAuth App URL Settings:
+                            </span>
+
+                            <div className="space-y-2 text-xs">
+                                <div>
+                                    <div className="text-[10px] font-bold text-slate-600 uppercase mb-0.5">Authorization Callback URL</div>
+                                    <div className="flex gap-2 items-center">
+                                        <input
+                                            type="text"
+                                            readOnly
+                                            value={effectiveCallbackUrl}
+                                            className="flex-1 bg-white border border-black font-mono text-[11px] px-2 py-1 rounded shadow-inner select-all"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => copyToClipboard(effectiveCallbackUrl, "callback")}
+                                            className="px-2.5 py-1 text-[11px] font-black uppercase border border-black bg-white shadow-[1px_1px_0_0_#000] hover:bg-slate-100 rounded"
+                                        >
+                                            {copiedCallback ? "Copied!" : "Copy"}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div className="text-[10px] font-bold text-slate-600 uppercase mb-0.5">Homepage URL</div>
+                                    <div className="flex gap-2 items-center">
+                                        <input
+                                            type="text"
+                                            readOnly
+                                            value={effectiveHomepageUrl}
+                                            className="flex-1 bg-white border border-black font-mono text-[11px] px-2 py-1 rounded shadow-inner select-all"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => copyToClipboard(effectiveHomepageUrl, "homepage")}
+                                            className="px-2.5 py-1 text-[11px] font-black uppercase border border-black bg-white shadow-[1px_1px_0_0_#000] hover:bg-slate-100 rounded"
+                                        >
+                                            {copiedHomepage ? "Copied!" : "Copy"}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <p className="text-[11px] text-slate-600 font-semibold leading-relaxed">
+                                Ensure your GitHub OAuth App settings match these exact URLs. Then add <code className="bg-white border px-1 rounded font-mono font-bold">GITHUB_CLIENT_ID</code> and <code className="bg-white border px-1 rounded font-mono font-bold">GITHUB_CLIENT_SECRET</code> to your Vercel Project Settings.
+                            </p>
+                        </div>
+                    )}
+
                     {/* Action buttons */}
                     <div className="space-y-3 pt-2">
                         {/* Guest Mode Fallback */}
-                        {envInfo?.isGuestMode && (
+                        {envInfo?.isGuestMode !== false && (
                             <button
                                 type="button"
                                 onClick={() => signIn("guest", { callbackUrl: "/workspace/new" })}

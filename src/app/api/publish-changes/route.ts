@@ -10,7 +10,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 
-import { decryptToken } from "@/lib/crypto";
+import { decryptToken, getUserGitHubAccessToken } from "@/lib/crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -204,7 +204,7 @@ export async function POST(req: NextRequest) {
             }, { status: 400 });
         }
 
-        // Fetch GitHub access token from the Account table
+        // Fetch GitHub access token from the Account table or active session
         const account = await prisma.account.findFirst({
             where: {
                 userId: userId,
@@ -212,10 +212,13 @@ export async function POST(req: NextRequest) {
             },
         });
 
-        const accessToken = account?.access_token ? decryptToken(account.access_token) : null;
+        let accessToken = account?.access_token ? decryptToken(account.access_token) : null;
+        if (!accessToken) {
+            accessToken = await getUserGitHubAccessToken(userId);
+        }
 
         // Fail-closed on missing GitHub connection (zero simulated success)
-        if (!account || !accessToken) {
+        if (!accessToken) {
             return patchJson({
                 success: false,
                 localSynced: false,

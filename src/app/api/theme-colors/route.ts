@@ -8,7 +8,7 @@ import fs from "fs/promises";
 import path from "path";
 
 import { patchCssWithThemeColors } from "@/lib/theme-css-patcher";
-import { decryptToken } from "@/lib/crypto";
+import { decryptToken, getUserGitHubAccessToken } from "@/lib/crypto";
 
 interface ThemeColorsRequestBody {
     projectId: string;
@@ -78,7 +78,10 @@ export async function POST(req: NextRequest) {
         where: { userId, provider: "github" },
     });
 
-    const accessToken = account?.access_token ? decryptToken(account.access_token) : null;
+    let accessToken = account?.access_token ? decryptToken(account.access_token) : null;
+    if (!accessToken) {
+        accessToken = await getUserGitHubAccessToken(userId);
+    }
 
     const isGithubConfigured = Boolean(
         accessToken &&

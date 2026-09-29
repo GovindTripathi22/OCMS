@@ -45,6 +45,8 @@ export default function PermissionWizard({
     const [envConfigured, setEnvConfigured] = useState<boolean | null>(null);
     const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
     const [loadingAuth, setLoadingAuth] = useState(true);
+    const [appOrigin, setAppOrigin] = useState("http://localhost:3000");
+    const [callbackUrl, setCallbackUrl] = useState("http://localhost:3000/api/auth/callback/github");
 
     // Repo list & file selection state
     const [repos, setRepos] = useState<GithubRepo[]>([]);
@@ -69,14 +71,22 @@ export default function PermissionWizard({
 
     // Fetch env status and repository credentials
     useEffect(() => {
+        if (typeof window !== "undefined" && window.location.origin) {
+            setAppOrigin(window.location.origin);
+            setCallbackUrl(`${window.location.origin}/api/auth/callback/github`);
+        }
+
         const checkStatus = async () => {
             try {
                 // 1. Check environment variables config
                 const envRes = await fetch("/api/check-env");
                 const envData = await envRes.json();
+
+                if (envData.callbackUrl) setCallbackUrl(envData.callbackUrl);
+                if (envData.homepageUrl) setAppOrigin(envData.homepageUrl);
                 
                 // If DATABASE_URL/AUTH_SECRET are configured, check GITHUB_CLIENT_ID
-                const githubConfigured = !envData.missing.some((v: string) => v.startsWith("GITHUB_"));
+                const githubConfigured = Boolean(envData.githubConfigured);
                 setEnvConfigured(githubConfigured);
 
                 // 2. Check if GitHub token is present by calling the repos API
@@ -405,9 +415,9 @@ export default function PermissionWizard({
                                     </div>
                                     <ol className="text-[11px] text-slate-700 list-decimal pl-4 font-bold space-y-1.5">
                                         <li>Go to GitHub Developer Settings &gt; OAuth Apps &gt; New OAuth App.</li>
-                                        <li>Set Homepage URL to <code className="bg-slate-100 border px-1 rounded">http://localhost:3000</code>.</li>
-                                        <li>Set Authorization Callback URL to <code className="bg-slate-100 border px-1 rounded">http://localhost:3000/api/auth/callback/github</code>.</li>
-                                        <li>Copy client ID and secret into your env file, then restart the server.</li>
+                                        <li>Set Homepage URL to <code className="bg-slate-100 border px-1 rounded font-mono font-bold">{appOrigin}</code>.</li>
+                                        <li>Set Authorization Callback URL to <code className="bg-slate-100 border px-1 rounded font-mono font-bold">{callbackUrl}</code>.</li>
+                                        <li>Copy client ID and unmasked secret into your environment (or Vercel Settings), then restart or redeploy.</li>
                                     </ol>
 
                                     <div className="pt-4 text-center border-t-2 border-dashed border-red-200">

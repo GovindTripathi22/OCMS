@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthorizedUser } from "@/auth";
-import { prisma } from "@/lib/prisma";
 import { Octokit } from "@octokit/rest";
 import fs from "fs";
 import path from "path";
-import { decryptToken } from "@/lib/crypto";
+import { getUserGitHubAccessToken } from "@/lib/crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -16,16 +15,9 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const account = await prisma.account.findFirst({
-            where: {
-                userId: userId,
-                provider: "github",
-            },
-        });
+        const accessToken = await getUserGitHubAccessToken(userId);
 
-        const accessToken = account?.access_token ? decryptToken(account.access_token) : null;
-
-        if (!account || !accessToken) {
+        if (!accessToken) {
             return NextResponse.json({ authenticated: false, repos: [] });
         }
 

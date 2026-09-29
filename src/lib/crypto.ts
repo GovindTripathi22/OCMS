@@ -99,13 +99,23 @@ export async function getUserGitHubAccessToken(userId: string): Promise<string |
             },
         });
 
-        if (!account || !account.access_token) {
-            return null;
+        if (account && account.access_token) {
+            return decryptToken(account.access_token);
         }
-
-        return decryptToken(account.access_token);
     } catch (err) {
-        console.error("[OCMS Crypto] Failed to retrieve GitHub access token:", err);
-        return null;
+        console.warn("[OCMS Crypto] Failed to retrieve GitHub access token from DB:", err);
     }
+
+    // Fallback: Retrieve access token from active NextAuth JWT session
+    try {
+        const { auth } = await import("@/auth");
+        const session = await auth();
+        if (session?.accessToken && (!userId || session.user?.id === userId || userId === "user" || userId === "guest_user_default")) {
+            return session.accessToken;
+        }
+    } catch (sessionErr) {
+        console.warn("[OCMS Crypto] Session token fallback notice:", sessionErr);
+    }
+
+    return null;
 }

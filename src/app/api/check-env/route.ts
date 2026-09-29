@@ -62,32 +62,44 @@ export async function GET() {
         process.env.NEXTAUTH_SECRET
     );
 
+    const hasAsterisks = (str: string) => str.includes("*");
+    const secretHasAsterisks = hasAsterisks(githubSecret);
+    const clientIdHasAsterisks = hasAsterisks(githubId);
+
     if (!githubId) {
         missing.push("GITHUB_CLIENT_ID");
-    } else if (PLACEHOLDER_PATTERNS.some(p => githubId.toLowerCase().includes(p))) {
+    } else if (PLACEHOLDER_PATTERNS.some(p => githubId.toLowerCase().includes(p)) || clientIdHasAsterisks) {
         warnings.push("GITHUB_CLIENT_ID");
     }
 
     if (!githubSecret) {
         missing.push("GITHUB_CLIENT_SECRET");
-    } else if (SECRET_PLACEHOLDER_PATTERNS.some(p => githubSecret.toLowerCase().includes(p))) {
+    } else if (SECRET_PLACEHOLDER_PATTERNS.some(p => githubSecret.toLowerCase().includes(p)) || secretHasAsterisks) {
         warnings.push("GITHUB_CLIENT_SECRET");
     }
 
     if (!authSecret) {
         missing.push("AUTH_SECRET");
-    } else if (AUTH_SECRET_PLACEHOLDERS.some(p => authSecret.toLowerCase() === p)) {
+    } else if (AUTH_SECRET_PLACEHOLDERS.some(p => authSecret.toLowerCase() === p) || hasAsterisks(authSecret)) {
         warnings.push("AUTH_SECRET");
     }
 
     // Optional: warn if NEXTAUTH_URL is missing (needed in production)
     const nextauthUrl = cleanEnv(process.env.NEXTAUTH_URL || process.env.AUTH_URL);
     const isProd = isProduction();
-    if (isProd && !nextauthUrl) {
+    if (isProd && !nextauthUrl && !process.env.VERCEL) {
         warnings.push("NEXTAUTH_URL");
     }
+
+    const host = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || "ocms-one.vercel.app";
+    const resolvedOrigin = nextauthUrl || (host ? (host.startsWith("http") ? host : `https://${host}`) : "http://localhost:3000");
+
     const guestModeAllowed = isGuestMode();
-    const githubConfigured = !missing.includes("GITHUB_CLIENT_ID") && !warnings.includes("GITHUB_CLIENT_ID");
+    const githubConfigured =
+        !missing.includes("GITHUB_CLIENT_ID") &&
+        !warnings.includes("GITHUB_CLIENT_ID") &&
+        !missing.includes("GITHUB_CLIENT_SECRET") &&
+        !warnings.includes("GITHUB_CLIENT_SECRET");
 
     const configured = missing.length === 0 && warnings.length === 0;
 
@@ -98,5 +110,9 @@ export async function GET() {
         isGuestMode: guestModeAllowed,
         isProduction: isProd,
         githubConfigured,
+        secretHasAsterisks,
+        clientIdHasAsterisks,
+        callbackUrl: `${resolvedOrigin.replace(/\/+$/, "")}/api/auth/callback/github`,
+        homepageUrl: resolvedOrigin.replace(/\/+$/, ""),
     });
 }
